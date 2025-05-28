@@ -1,6 +1,7 @@
 package now.calypso.backendapi;
 
 import now.calypso.backend.*;
+import now.calypso.backend.modules.*;
 import now.calypso.backend.serialization.CalypsoSerialization;
 
 import com.rpl.rama.*;
@@ -8,10 +9,7 @@ import com.rpl.rama.test.*;
 
 import software.amazon.awssdk.core.exception.SdkClientException;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
+import java.util.*;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -52,6 +50,14 @@ public class CalypsoApiApplication {
         List<Class> sers = new ArrayList<>();
         sers.add(CalypsoSerialization.class);
         InProcessCluster ipc = InProcessCluster.create(sers);
+
+        Relationships relationshipsModule = new Relationships();
+        ipc.launchModule(relationshipsModule, new LaunchConfig(2, 1));
+
+        Core coreModule = new Core();
+        ipc.launchModule(coreModule, new LaunchConfig(2, 1));
+
+        CalypsoApiController.manager = new CalypsoApiManager(ipc);
         return ipc;
     }
 

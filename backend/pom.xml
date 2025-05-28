@@ -25,6 +25,13 @@
         <id>nexus-releases</id>
         <url>https://nexus.redplanetlabs.com/repository/maven-public-releases</url>
       </repository>
+        <repository>
+    <id>redhat-ga</id>
+    <name>Red Hat GA Repository</name>
+    <url>https://maven.repository.redhat.com/ga/</url>
+    <releases><enabled>true</enabled></releases>
+    <snapshots><enabled>false</enabled></snapshots>
+  </repository>
     </repositories>
 
     <dependencies>
@@ -34,6 +41,17 @@
             <version>1.0.0</version>
             <scope>provided</scope>
         </dependency>
+        <dependency>
+            <groupId>com.rpl</groupId>
+            <artifactId>rama-helpers</artifactId>
+            <version>0.10.0</version>
+        </dependency>
+        <dependency>
+  <groupId>org.bouncycastle</groupId>
+  <artifactId>bcprov-jdk18on</artifactId>
+  <version>1.80.0.redhat-00001</version>
+</dependency>
+
     </dependencies>
 
     <build>
