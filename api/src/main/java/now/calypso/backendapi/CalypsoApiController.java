@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.WebSession;
 
+import now.calypso.backend.CalypsoHelpers;
 import now.calypso.backend.data.AccountWithId;
 import now.calypso.backendapi.pojos.*;
 import reactor.core.publisher.Mono;
@@ -113,5 +114,26 @@ public class CalypsoApiController {
                     }
                 });
     }
+
+     @GetMapping("/api/accounts/{id}")
+    public Mono<GetAccount> getAccount(@PathVariable("id") String accountId) {
+        return Mono.fromFuture(manager.getAccountWithId(CalypsoHelpers.parseAccountId(accountId)))
+                   .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND)))
+                   .map(GetAccount::new);
+    }
+
+    // For testing
+
+    @GetMapping("/api/accounts/me")
+public Mono<GetAccount> whoami(WebSession session) {
+  Long id = (Long) session.getAttribute("accountId");
+  if (id == null) {
+    return Mono.error(new ResponseStatusException(HttpStatus.UNAUTHORIZED));
+  }
+  return Mono.fromFuture(manager.getAccountWithId(id))
+             .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND)))
+             .map(GetAccount::new);
+}
+
 
 }

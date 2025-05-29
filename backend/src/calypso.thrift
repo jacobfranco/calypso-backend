@@ -4,6 +4,11 @@ typedef i64 AccountId
 typedef i64 Timestamp
 typedef i64 Index
 
+enum AttachmentKind {
+  Image = 1,
+  Video = 2
+}
+
 struct Account {
   1: required string name;
   2: required string email;
@@ -13,6 +18,7 @@ struct Account {
   6: required string publicKey; 
   7: required Timestamp timestamp;
   8: required bool admin;
+  9: optional AttachmentWithId avatar;
 }
 
 struct AccountWithId {
@@ -32,4 +38,15 @@ struct AddAuthCode {
 
 struct RemoveAuthCode {
   1: required string code;
+}
+
+struct Attachment {
+  1: required AttachmentKind kind;
+  2: required string path;
+  3: required string description;
+}
+
+struct AttachmentWithId {
+  1: required string uuid;
+  2: required Attachment attachment;
 }

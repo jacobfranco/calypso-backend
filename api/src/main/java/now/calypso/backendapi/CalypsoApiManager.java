@@ -67,7 +67,7 @@ public class CalypsoApiManager {
         return accountDepot
                 .appendAsync(new Account(params.name, params.email, pwdHash, params.locale, uuid, keys.publicKey,
                         System.currentTimeMillis(), false))
-                .thenCompose(res -> this.getAccountUUID(params.name))
+                .thenCompose(res -> this.getAccountUUID(params.email))
                 .thenApply(accountUUID -> accountUUID.equals(uuid));
     }
 

@@ -18,6 +18,7 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
   private static final org.apache.thrift.protocol.TField PUBLIC_KEY_FIELD_DESC = new org.apache.thrift.protocol.TField("publicKey", org.apache.thrift.protocol.TType.STRING, (short)6);
   private static final org.apache.thrift.protocol.TField TIMESTAMP_FIELD_DESC = new org.apache.thrift.protocol.TField("timestamp", org.apache.thrift.protocol.TType.I64, (short)7);
   private static final org.apache.thrift.protocol.TField ADMIN_FIELD_DESC = new org.apache.thrift.protocol.TField("admin", org.apache.thrift.protocol.TType.BOOL, (short)8);
+  private static final org.apache.thrift.protocol.TField AVATAR_FIELD_DESC = new org.apache.thrift.protocol.TField("avatar", org.apache.thrift.protocol.TType.STRUCT, (short)9);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new AccountStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new AccountTupleSchemeFactory();
@@ -30,6 +31,7 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
   public @org.apache.thrift.annotation.Nullable java.lang.String publicKey; // required
   public long timestamp; // required
   public boolean admin; // required
+  public @org.apache.thrift.annotation.Nullable AttachmentWithId avatar; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
@@ -40,7 +42,8 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     UUID((short)5, "uuid"),
     PUBLIC_KEY((short)6, "publicKey"),
     TIMESTAMP((short)7, "timestamp"),
-    ADMIN((short)8, "admin");
+    ADMIN((short)8, "admin"),
+    AVATAR((short)9, "avatar");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -72,6 +75,8 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
           return TIMESTAMP;
         case 8: // ADMIN
           return ADMIN;
+        case 9: // AVATAR
+          return AVATAR;
         default:
           return null;
       }
@@ -118,6 +123,7 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
   private static final int __TIMESTAMP_ISSET_ID = 0;
   private static final int __ADMIN_ISSET_ID = 1;
   private byte __isset_bitfield = 0;
+  private static final _Fields optionals[] = {_Fields.AVATAR};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
@@ -137,6 +143,8 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I64        , "Timestamp")));
     tmpMap.put(_Fields.ADMIN, new org.apache.thrift.meta_data.FieldMetaData("admin", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.BOOL)));
+    tmpMap.put(_Fields.AVATAR, new org.apache.thrift.meta_data.FieldMetaData("avatar", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+        new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, AttachmentWithId.class)));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(Account.class, metaDataMap);
   }
@@ -192,6 +200,9 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     }
     this.timestamp = other.timestamp;
     this.admin = other.admin;
+    if (other.isSetAvatar()) {
+      this.avatar = new AttachmentWithId(other.avatar);
+    }
   }
 
   @Override
@@ -211,6 +222,7 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     this.timestamp = 0;
     setAdminIsSet(false);
     this.admin = false;
+    this.avatar = null;
   }
 
   @org.apache.thrift.annotation.Nullable
@@ -409,6 +421,31 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     __isset_bitfield = org.apache.thrift.EncodingUtils.setBit(__isset_bitfield, __ADMIN_ISSET_ID, value);
   }
 
+  @org.apache.thrift.annotation.Nullable
+  public AttachmentWithId getAvatar() {
+    return this.avatar;
+  }
+
+  public Account setAvatar(@org.apache.thrift.annotation.Nullable AttachmentWithId avatar) {
+    this.avatar = avatar;
+    return this;
+  }
+
+  public void unsetAvatar() {
+    this.avatar = null;
+  }
+
+  /** Returns true if field avatar is set (has been assigned a value) and false otherwise */
+  public boolean isSetAvatar() {
+    return this.avatar != null;
+  }
+
+  public void setAvatarIsSet(boolean value) {
+    if (!value) {
+      this.avatar = null;
+    }
+  }
+
   @Override
   public void setFieldValue(_Fields field, @org.apache.thrift.annotation.Nullable java.lang.Object value) {
     switch (field) {
@@ -476,6 +513,14 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       }
       break;
 
+    case AVATAR:
+      if (value == null) {
+        unsetAvatar();
+      } else {
+        setAvatar((AttachmentWithId)value);
+      }
+      break;
+
     }
   }
 
@@ -507,6 +552,9 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     case ADMIN:
       return isAdmin();
 
+    case AVATAR:
+      return getAvatar();
+
     }
     throw new java.lang.IllegalStateException();
   }
@@ -535,6 +583,8 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       return isSetTimestamp();
     case ADMIN:
       return isSetAdmin();
+    case AVATAR:
+      return isSetAvatar();
     }
     throw new java.lang.IllegalStateException();
   }
@@ -624,6 +674,15 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
         return false;
     }
 
+    boolean this_present_avatar = true && this.isSetAvatar();
+    boolean that_present_avatar = true && that.isSetAvatar();
+    if (this_present_avatar || that_present_avatar) {
+      if (!(this_present_avatar && that_present_avatar))
+        return false;
+      if (!this.avatar.equals(that.avatar))
+        return false;
+    }
+
     return true;
   }
 
@@ -658,6 +717,10 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     hashCode = hashCode * 8191 + org.apache.thrift.TBaseHelper.hashCode(timestamp);
 
     hashCode = hashCode * 8191 + ((admin) ? 131071 : 524287);
+
+    hashCode = hashCode * 8191 + ((isSetAvatar()) ? 131071 : 524287);
+    if (isSetAvatar())
+      hashCode = hashCode * 8191 + avatar.hashCode();
 
     return hashCode;
   }
@@ -750,6 +813,16 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
         return lastComparison;
       }
     }
+    lastComparison = java.lang.Boolean.compare(isSetAvatar(), other.isSetAvatar());
+    if (lastComparison != 0) {
+      return lastComparison;
+    }
+    if (isSetAvatar()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.avatar, other.avatar);
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+    }
     return 0;
   }
 
@@ -829,6 +902,16 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     sb.append("admin:");
     sb.append(this.admin);
     first = false;
+    if (isSetAvatar()) {
+      if (!first) sb.append(", ");
+      sb.append("avatar:");
+      if (this.avatar == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.avatar);
+      }
+      first = false;
+    }
     sb.append(")");
     return sb.toString();
   }
@@ -856,6 +939,9 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     // alas, we cannot check 'timestamp' because it's a primitive and you chose the non-beans generator.
     // alas, we cannot check 'admin' because it's a primitive and you chose the non-beans generator.
     // check for sub-struct validity
+    if (avatar != null) {
+      avatar.validate();
+    }
   }
 
   private void writeObject(java.io.ObjectOutputStream out) throws java.io.IOException {
@@ -960,6 +1046,15 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
+          case 9: // AVATAR
+            if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
+              struct.avatar = new AttachmentWithId();
+              struct.avatar.read(iprot);
+              struct.setAvatarIsSet(true);
+            } else { 
+              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+            }
+            break;
           default:
             org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
         }
@@ -1018,6 +1113,13 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       oprot.writeFieldBegin(ADMIN_FIELD_DESC);
       oprot.writeBool(struct.admin);
       oprot.writeFieldEnd();
+      if (struct.avatar != null) {
+        if (struct.isSetAvatar()) {
+          oprot.writeFieldBegin(AVATAR_FIELD_DESC);
+          struct.avatar.write(oprot);
+          oprot.writeFieldEnd();
+        }
+      }
       oprot.writeFieldStop();
       oprot.writeStructEnd();
     }
@@ -1044,6 +1146,14 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       oprot.writeString(struct.publicKey);
       oprot.writeI64(struct.timestamp);
       oprot.writeBool(struct.admin);
+      java.util.BitSet optionals = new java.util.BitSet();
+      if (struct.isSetAvatar()) {
+        optionals.set(0);
+      }
+      oprot.writeBitSet(optionals, 1);
+      if (struct.isSetAvatar()) {
+        struct.avatar.write(oprot);
+      }
     }
 
     @Override
@@ -1065,6 +1175,12 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       struct.setTimestampIsSet(true);
       struct.admin = iprot.readBool();
       struct.setAdminIsSet(true);
+      java.util.BitSet incoming = iprot.readBitSet(1);
+      if (incoming.get(0)) {
+        struct.avatar = new AttachmentWithId();
+        struct.avatar.read(iprot);
+        struct.setAvatarIsSet(true);
+      }
     }
   }
 
