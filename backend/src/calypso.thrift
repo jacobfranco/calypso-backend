@@ -19,6 +19,7 @@ struct Account {
   7: required Timestamp timestamp;
   8: required bool admin;
   9: optional AttachmentWithId avatar;
+  10: optional Preferences preferences;
 }
 
 struct AccountWithId {
@@ -49,4 +50,34 @@ struct Attachment {
 struct AttachmentWithId {
   1: required string uuid;
   2: required Attachment attachment;
+}
+
+struct Preferences {
+  1: optional Filters filters;
+}
+
+struct Filters {
+  1: optional OneToManyFilter gender;
+  2: optional RangeFilter age;
+  3: optional OneToManyFilter religion;
+  4: optional OneToManyFilter politics;
+  5: optional ManyToManyFilter lifestyle;
+  6: optional ManyToManyFilter interests;
+}
+
+struct OneToManyFilter {
+  1: optional string self;              // e.g. "male"
+  2: optional list<string> seeking;     // e.g. ["female", "nonbinary"]
+}
+
+struct RangeFilter {
+  1: optional i32 self;                 // e.g. 29
+  2: optional i32 min;                  // e.g. 24
+  3: optional i32 max;                  // e.g. 35
+}
+
+struct ManyToManyFilter {
+  1: optional list<string> self;        // e.g. ["vegan", "night owl"]
+  2: optional list<string> mustHave;    // tags partner must have
+  3: optional list<string> niceToHave;  // tags that would be a plus
 }
