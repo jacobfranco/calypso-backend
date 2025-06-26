@@ -57,27 +57,49 @@ struct Preferences {
 }
 
 struct Filters {
-  1: optional OneToManyFilter gender;
-  2: optional RangeFilter age;
-  3: optional OneToManyFilter religion;
-  4: optional OneToManyFilter politics;
-  5: optional ManyToManyFilter lifestyle;
-  6: optional ManyToManyFilter interests;
+  1: optional ModeFilter relationshipMode;         // casual, serious, open to both
+  2: optional OneToManyFilter gender;              // self + seeking genders
+  3: optional RangeFilter age;                     // self + desired age range
+  4: optional LocationFilter location;             // self location + scope (e.g. city, state)
+  5: optional OneToManyFilter religion;            // self label + importance level
+  6: optional OneToManyFilter politics;            // same as above
+  7: optional ManyToManyFilter lifestyle;          // tags like "vegan", "non-drinker"
+  8: optional ManyToManyFilter interests;          // tags like "video games", "surfing"
 }
 
+// For filters like gender, religion, politics
 struct OneToManyFilter {
-  1: optional string self;              // e.g. "male"
-  2: optional list<string> seeking;     // e.g. ["female", "nonbinary"]
+  1: optional string self;              // Your own label (e.g. "female", "agnostic")
+  2: optional list<string> seeking;     // Who you're open to (e.g. ["male", "nonbinary"])
+  3: optional string importance;        // "not_important", "preference", "dealbreaker"
 }
 
+// For numeric ranges like age
 struct RangeFilter {
-  1: optional i32 self;                 // e.g. 29
-  2: optional i32 min;                  // e.g. 24
-  3: optional i32 max;                  // e.g. 35
+  1: optional i32 self;                 // e.g. 26
+  2: optional i32 min;                  // e.g. 22
+  3: optional i32 max;                  // e.g. 30
+  4: optional string importance;        // optional: how strict this is
 }
 
+// For tag-based filters (lifestyle, interests)
 struct ManyToManyFilter {
   1: optional list<string> self;        // e.g. ["vegan", "night owl"]
-  2: optional list<string> mustHave;    // tags partner must have
-  3: optional list<string> niceToHave;  // tags that would be a plus
+  2: optional list<TagPreference> preferences; // per-tag importance
 }
+
+struct TagPreference {
+  1: required string tag;
+  2: required string importance;        // "not_important", "preference", "dealbreaker"
+}
+
+struct LocationFilter {
+  1: optional string city;              // e.g. "Charlotte, NC"
+  2: optional string radius;            // e.g. "my_city", "my_state", "worldwide"
+  3: optional string importance;        // optional: for scoring
+}
+
+struct ModeFilter {
+  1: required string self;              // "casual", "serious", "open"
+}
+

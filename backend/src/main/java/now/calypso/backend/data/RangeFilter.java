@@ -13,6 +13,7 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
   private static final org.apache.thrift.protocol.TField SELF_FIELD_DESC = new org.apache.thrift.protocol.TField("self", org.apache.thrift.protocol.TType.I32, (short)1);
   private static final org.apache.thrift.protocol.TField MIN_FIELD_DESC = new org.apache.thrift.protocol.TField("min", org.apache.thrift.protocol.TType.I32, (short)2);
   private static final org.apache.thrift.protocol.TField MAX_FIELD_DESC = new org.apache.thrift.protocol.TField("max", org.apache.thrift.protocol.TType.I32, (short)3);
+  private static final org.apache.thrift.protocol.TField IMPORTANCE_FIELD_DESC = new org.apache.thrift.protocol.TField("importance", org.apache.thrift.protocol.TType.STRING, (short)4);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new RangeFilterStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new RangeFilterTupleSchemeFactory();
@@ -20,12 +21,14 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
   public int self; // optional
   public int min; // optional
   public int max; // optional
+  public @org.apache.thrift.annotation.Nullable java.lang.String importance; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
     SELF((short)1, "self"),
     MIN((short)2, "min"),
-    MAX((short)3, "max");
+    MAX((short)3, "max"),
+    IMPORTANCE((short)4, "importance");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -47,6 +50,8 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
           return MIN;
         case 3: // MAX
           return MAX;
+        case 4: // IMPORTANCE
+          return IMPORTANCE;
         default:
           return null;
       }
@@ -94,7 +99,7 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
   private static final int __MIN_ISSET_ID = 1;
   private static final int __MAX_ISSET_ID = 2;
   private byte __isset_bitfield = 0;
-  private static final _Fields optionals[] = {_Fields.SELF,_Fields.MIN,_Fields.MAX};
+  private static final _Fields optionals[] = {_Fields.SELF,_Fields.MIN,_Fields.MAX,_Fields.IMPORTANCE};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
@@ -104,6 +109,8 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I32)));
     tmpMap.put(_Fields.MAX, new org.apache.thrift.meta_data.FieldMetaData("max", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I32)));
+    tmpMap.put(_Fields.IMPORTANCE, new org.apache.thrift.meta_data.FieldMetaData("importance", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(RangeFilter.class, metaDataMap);
   }
@@ -119,6 +126,9 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
     this.self = other.self;
     this.min = other.min;
     this.max = other.max;
+    if (other.isSetImportance()) {
+      this.importance = other.importance;
+    }
   }
 
   @Override
@@ -134,6 +144,7 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
     this.min = 0;
     setMaxIsSet(false);
     this.max = 0;
+    this.importance = null;
   }
 
   public int getSelf() {
@@ -205,6 +216,31 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
     __isset_bitfield = org.apache.thrift.EncodingUtils.setBit(__isset_bitfield, __MAX_ISSET_ID, value);
   }
 
+  @org.apache.thrift.annotation.Nullable
+  public java.lang.String getImportance() {
+    return this.importance;
+  }
+
+  public RangeFilter setImportance(@org.apache.thrift.annotation.Nullable java.lang.String importance) {
+    this.importance = importance;
+    return this;
+  }
+
+  public void unsetImportance() {
+    this.importance = null;
+  }
+
+  /** Returns true if field importance is set (has been assigned a value) and false otherwise */
+  public boolean isSetImportance() {
+    return this.importance != null;
+  }
+
+  public void setImportanceIsSet(boolean value) {
+    if (!value) {
+      this.importance = null;
+    }
+  }
+
   @Override
   public void setFieldValue(_Fields field, @org.apache.thrift.annotation.Nullable java.lang.Object value) {
     switch (field) {
@@ -232,6 +268,14 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
       }
       break;
 
+    case IMPORTANCE:
+      if (value == null) {
+        unsetImportance();
+      } else {
+        setImportance((java.lang.String)value);
+      }
+      break;
+
     }
   }
 
@@ -247,6 +291,9 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
 
     case MAX:
       return getMax();
+
+    case IMPORTANCE:
+      return getImportance();
 
     }
     throw new java.lang.IllegalStateException();
@@ -266,6 +313,8 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
       return isSetMin();
     case MAX:
       return isSetMax();
+    case IMPORTANCE:
+      return isSetImportance();
     }
     throw new java.lang.IllegalStateException();
   }
@@ -310,6 +359,15 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
         return false;
     }
 
+    boolean this_present_importance = true && this.isSetImportance();
+    boolean that_present_importance = true && that.isSetImportance();
+    if (this_present_importance || that_present_importance) {
+      if (!(this_present_importance && that_present_importance))
+        return false;
+      if (!this.importance.equals(that.importance))
+        return false;
+    }
+
     return true;
   }
 
@@ -328,6 +386,10 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
     hashCode = hashCode * 8191 + ((isSetMax()) ? 131071 : 524287);
     if (isSetMax())
       hashCode = hashCode * 8191 + max;
+
+    hashCode = hashCode * 8191 + ((isSetImportance()) ? 131071 : 524287);
+    if (isSetImportance())
+      hashCode = hashCode * 8191 + importance.hashCode();
 
     return hashCode;
   }
@@ -366,6 +428,16 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
     }
     if (isSetMax()) {
       lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.max, other.max);
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+    }
+    lastComparison = java.lang.Boolean.compare(isSetImportance(), other.isSetImportance());
+    if (lastComparison != 0) {
+      return lastComparison;
+    }
+    if (isSetImportance()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.importance, other.importance);
       if (lastComparison != 0) {
         return lastComparison;
       }
@@ -409,6 +481,16 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
       if (!first) sb.append(", ");
       sb.append("max:");
       sb.append(this.max);
+      first = false;
+    }
+    if (isSetImportance()) {
+      if (!first) sb.append(", ");
+      sb.append("importance:");
+      if (this.importance == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.importance);
+      }
       first = false;
     }
     sb.append(")");
@@ -482,6 +564,14 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
+          case 4: // IMPORTANCE
+            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
+              struct.importance = iprot.readString();
+              struct.setImportanceIsSet(true);
+            } else { 
+              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+            }
+            break;
           default:
             org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
         }
@@ -513,6 +603,13 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
         oprot.writeI32(struct.max);
         oprot.writeFieldEnd();
       }
+      if (struct.importance != null) {
+        if (struct.isSetImportance()) {
+          oprot.writeFieldBegin(IMPORTANCE_FIELD_DESC);
+          oprot.writeString(struct.importance);
+          oprot.writeFieldEnd();
+        }
+      }
       oprot.writeFieldStop();
       oprot.writeStructEnd();
     }
@@ -541,7 +638,10 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
       if (struct.isSetMax()) {
         optionals.set(2);
       }
-      oprot.writeBitSet(optionals, 3);
+      if (struct.isSetImportance()) {
+        optionals.set(3);
+      }
+      oprot.writeBitSet(optionals, 4);
       if (struct.isSetSelf()) {
         oprot.writeI32(struct.self);
       }
@@ -551,12 +651,15 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
       if (struct.isSetMax()) {
         oprot.writeI32(struct.max);
       }
+      if (struct.isSetImportance()) {
+        oprot.writeString(struct.importance);
+      }
     }
 
     @Override
     public void read(org.apache.thrift.protocol.TProtocol prot, RangeFilter struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
-      java.util.BitSet incoming = iprot.readBitSet(3);
+      java.util.BitSet incoming = iprot.readBitSet(4);
       if (incoming.get(0)) {
         struct.self = iprot.readI32();
         struct.setSelfIsSet(true);
@@ -568,6 +671,10 @@ public class RangeFilter implements org.apache.thrift.TBase<RangeFilter, RangeFi
       if (incoming.get(2)) {
         struct.max = iprot.readI32();
         struct.setMaxIsSet(true);
+      }
+      if (incoming.get(3)) {
+        struct.importance = iprot.readString();
+        struct.setImportanceIsSet(true);
       }
     }
   }

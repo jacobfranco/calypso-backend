@@ -11,21 +11,18 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
   private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("ManyToManyFilter");
 
   private static final org.apache.thrift.protocol.TField SELF_FIELD_DESC = new org.apache.thrift.protocol.TField("self", org.apache.thrift.protocol.TType.LIST, (short)1);
-  private static final org.apache.thrift.protocol.TField MUST_HAVE_FIELD_DESC = new org.apache.thrift.protocol.TField("mustHave", org.apache.thrift.protocol.TType.LIST, (short)2);
-  private static final org.apache.thrift.protocol.TField NICE_TO_HAVE_FIELD_DESC = new org.apache.thrift.protocol.TField("niceToHave", org.apache.thrift.protocol.TType.LIST, (short)3);
+  private static final org.apache.thrift.protocol.TField PREFERENCES_FIELD_DESC = new org.apache.thrift.protocol.TField("preferences", org.apache.thrift.protocol.TType.LIST, (short)2);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new ManyToManyFilterStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new ManyToManyFilterTupleSchemeFactory();
 
   public @org.apache.thrift.annotation.Nullable java.util.List<java.lang.String> self; // optional
-  public @org.apache.thrift.annotation.Nullable java.util.List<java.lang.String> mustHave; // optional
-  public @org.apache.thrift.annotation.Nullable java.util.List<java.lang.String> niceToHave; // optional
+  public @org.apache.thrift.annotation.Nullable java.util.List<TagPreference> preferences; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
     SELF((short)1, "self"),
-    MUST_HAVE((short)2, "mustHave"),
-    NICE_TO_HAVE((short)3, "niceToHave");
+    PREFERENCES((short)2, "preferences");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -43,10 +40,8 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
       switch(fieldId) {
         case 1: // SELF
           return SELF;
-        case 2: // MUST_HAVE
-          return MUST_HAVE;
-        case 3: // NICE_TO_HAVE
-          return NICE_TO_HAVE;
+        case 2: // PREFERENCES
+          return PREFERENCES;
         default:
           return null;
       }
@@ -90,19 +85,16 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
   }
 
   // isset id assignments
-  private static final _Fields optionals[] = {_Fields.SELF,_Fields.MUST_HAVE,_Fields.NICE_TO_HAVE};
+  private static final _Fields optionals[] = {_Fields.SELF,_Fields.PREFERENCES};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
     tmpMap.put(_Fields.SELF, new org.apache.thrift.meta_data.FieldMetaData("self", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.ListMetaData(org.apache.thrift.protocol.TType.LIST, 
             new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING))));
-    tmpMap.put(_Fields.MUST_HAVE, new org.apache.thrift.meta_data.FieldMetaData("mustHave", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+    tmpMap.put(_Fields.PREFERENCES, new org.apache.thrift.meta_data.FieldMetaData("preferences", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.ListMetaData(org.apache.thrift.protocol.TType.LIST, 
-            new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING))));
-    tmpMap.put(_Fields.NICE_TO_HAVE, new org.apache.thrift.meta_data.FieldMetaData("niceToHave", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
-        new org.apache.thrift.meta_data.ListMetaData(org.apache.thrift.protocol.TType.LIST, 
-            new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING))));
+            new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, TagPreference.class))));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(ManyToManyFilter.class, metaDataMap);
   }
@@ -118,13 +110,12 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
       java.util.List<java.lang.String> __this__self = new java.util.ArrayList<java.lang.String>(other.self);
       this.self = __this__self;
     }
-    if (other.isSetMustHave()) {
-      java.util.List<java.lang.String> __this__mustHave = new java.util.ArrayList<java.lang.String>(other.mustHave);
-      this.mustHave = __this__mustHave;
-    }
-    if (other.isSetNiceToHave()) {
-      java.util.List<java.lang.String> __this__niceToHave = new java.util.ArrayList<java.lang.String>(other.niceToHave);
-      this.niceToHave = __this__niceToHave;
+    if (other.isSetPreferences()) {
+      java.util.List<TagPreference> __this__preferences = new java.util.ArrayList<TagPreference>(other.preferences.size());
+      for (TagPreference other_element : other.preferences) {
+        __this__preferences.add(new TagPreference(other_element));
+      }
+      this.preferences = __this__preferences;
     }
   }
 
@@ -136,8 +127,7 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
   @Override
   public void clear() {
     this.self = null;
-    this.mustHave = null;
-    this.niceToHave = null;
+    this.preferences = null;
   }
 
   public int getSelfSize() {
@@ -181,85 +171,44 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
     }
   }
 
-  public int getMustHaveSize() {
-    return (this.mustHave == null) ? 0 : this.mustHave.size();
+  public int getPreferencesSize() {
+    return (this.preferences == null) ? 0 : this.preferences.size();
   }
 
   @org.apache.thrift.annotation.Nullable
-  public java.util.Iterator<java.lang.String> getMustHaveIterator() {
-    return (this.mustHave == null) ? null : this.mustHave.iterator();
+  public java.util.Iterator<TagPreference> getPreferencesIterator() {
+    return (this.preferences == null) ? null : this.preferences.iterator();
   }
 
-  public void addToMustHave(java.lang.String elem) {
-    if (this.mustHave == null) {
-      this.mustHave = new java.util.ArrayList<java.lang.String>();
+  public void addToPreferences(TagPreference elem) {
+    if (this.preferences == null) {
+      this.preferences = new java.util.ArrayList<TagPreference>();
     }
-    this.mustHave.add(elem);
+    this.preferences.add(elem);
   }
 
   @org.apache.thrift.annotation.Nullable
-  public java.util.List<java.lang.String> getMustHave() {
-    return this.mustHave;
+  public java.util.List<TagPreference> getPreferences() {
+    return this.preferences;
   }
 
-  public ManyToManyFilter setMustHave(@org.apache.thrift.annotation.Nullable java.util.List<java.lang.String> mustHave) {
-    this.mustHave = mustHave;
+  public ManyToManyFilter setPreferences(@org.apache.thrift.annotation.Nullable java.util.List<TagPreference> preferences) {
+    this.preferences = preferences;
     return this;
   }
 
-  public void unsetMustHave() {
-    this.mustHave = null;
+  public void unsetPreferences() {
+    this.preferences = null;
   }
 
-  /** Returns true if field mustHave is set (has been assigned a value) and false otherwise */
-  public boolean isSetMustHave() {
-    return this.mustHave != null;
+  /** Returns true if field preferences is set (has been assigned a value) and false otherwise */
+  public boolean isSetPreferences() {
+    return this.preferences != null;
   }
 
-  public void setMustHaveIsSet(boolean value) {
+  public void setPreferencesIsSet(boolean value) {
     if (!value) {
-      this.mustHave = null;
-    }
-  }
-
-  public int getNiceToHaveSize() {
-    return (this.niceToHave == null) ? 0 : this.niceToHave.size();
-  }
-
-  @org.apache.thrift.annotation.Nullable
-  public java.util.Iterator<java.lang.String> getNiceToHaveIterator() {
-    return (this.niceToHave == null) ? null : this.niceToHave.iterator();
-  }
-
-  public void addToNiceToHave(java.lang.String elem) {
-    if (this.niceToHave == null) {
-      this.niceToHave = new java.util.ArrayList<java.lang.String>();
-    }
-    this.niceToHave.add(elem);
-  }
-
-  @org.apache.thrift.annotation.Nullable
-  public java.util.List<java.lang.String> getNiceToHave() {
-    return this.niceToHave;
-  }
-
-  public ManyToManyFilter setNiceToHave(@org.apache.thrift.annotation.Nullable java.util.List<java.lang.String> niceToHave) {
-    this.niceToHave = niceToHave;
-    return this;
-  }
-
-  public void unsetNiceToHave() {
-    this.niceToHave = null;
-  }
-
-  /** Returns true if field niceToHave is set (has been assigned a value) and false otherwise */
-  public boolean isSetNiceToHave() {
-    return this.niceToHave != null;
-  }
-
-  public void setNiceToHaveIsSet(boolean value) {
-    if (!value) {
-      this.niceToHave = null;
+      this.preferences = null;
     }
   }
 
@@ -274,19 +223,11 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
       }
       break;
 
-    case MUST_HAVE:
+    case PREFERENCES:
       if (value == null) {
-        unsetMustHave();
+        unsetPreferences();
       } else {
-        setMustHave((java.util.List<java.lang.String>)value);
-      }
-      break;
-
-    case NICE_TO_HAVE:
-      if (value == null) {
-        unsetNiceToHave();
-      } else {
-        setNiceToHave((java.util.List<java.lang.String>)value);
+        setPreferences((java.util.List<TagPreference>)value);
       }
       break;
 
@@ -300,11 +241,8 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
     case SELF:
       return getSelf();
 
-    case MUST_HAVE:
-      return getMustHave();
-
-    case NICE_TO_HAVE:
-      return getNiceToHave();
+    case PREFERENCES:
+      return getPreferences();
 
     }
     throw new java.lang.IllegalStateException();
@@ -320,10 +258,8 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
     switch (field) {
     case SELF:
       return isSetSelf();
-    case MUST_HAVE:
-      return isSetMustHave();
-    case NICE_TO_HAVE:
-      return isSetNiceToHave();
+    case PREFERENCES:
+      return isSetPreferences();
     }
     throw new java.lang.IllegalStateException();
   }
@@ -350,21 +286,12 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
         return false;
     }
 
-    boolean this_present_mustHave = true && this.isSetMustHave();
-    boolean that_present_mustHave = true && that.isSetMustHave();
-    if (this_present_mustHave || that_present_mustHave) {
-      if (!(this_present_mustHave && that_present_mustHave))
+    boolean this_present_preferences = true && this.isSetPreferences();
+    boolean that_present_preferences = true && that.isSetPreferences();
+    if (this_present_preferences || that_present_preferences) {
+      if (!(this_present_preferences && that_present_preferences))
         return false;
-      if (!this.mustHave.equals(that.mustHave))
-        return false;
-    }
-
-    boolean this_present_niceToHave = true && this.isSetNiceToHave();
-    boolean that_present_niceToHave = true && that.isSetNiceToHave();
-    if (this_present_niceToHave || that_present_niceToHave) {
-      if (!(this_present_niceToHave && that_present_niceToHave))
-        return false;
-      if (!this.niceToHave.equals(that.niceToHave))
+      if (!this.preferences.equals(that.preferences))
         return false;
     }
 
@@ -379,13 +306,9 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
     if (isSetSelf())
       hashCode = hashCode * 8191 + self.hashCode();
 
-    hashCode = hashCode * 8191 + ((isSetMustHave()) ? 131071 : 524287);
-    if (isSetMustHave())
-      hashCode = hashCode * 8191 + mustHave.hashCode();
-
-    hashCode = hashCode * 8191 + ((isSetNiceToHave()) ? 131071 : 524287);
-    if (isSetNiceToHave())
-      hashCode = hashCode * 8191 + niceToHave.hashCode();
+    hashCode = hashCode * 8191 + ((isSetPreferences()) ? 131071 : 524287);
+    if (isSetPreferences())
+      hashCode = hashCode * 8191 + preferences.hashCode();
 
     return hashCode;
   }
@@ -408,22 +331,12 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
         return lastComparison;
       }
     }
-    lastComparison = java.lang.Boolean.compare(isSetMustHave(), other.isSetMustHave());
+    lastComparison = java.lang.Boolean.compare(isSetPreferences(), other.isSetPreferences());
     if (lastComparison != 0) {
       return lastComparison;
     }
-    if (isSetMustHave()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.mustHave, other.mustHave);
-      if (lastComparison != 0) {
-        return lastComparison;
-      }
-    }
-    lastComparison = java.lang.Boolean.compare(isSetNiceToHave(), other.isSetNiceToHave());
-    if (lastComparison != 0) {
-      return lastComparison;
-    }
-    if (isSetNiceToHave()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.niceToHave, other.niceToHave);
+    if (isSetPreferences()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.preferences, other.preferences);
       if (lastComparison != 0) {
         return lastComparison;
       }
@@ -461,23 +374,13 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
       }
       first = false;
     }
-    if (isSetMustHave()) {
+    if (isSetPreferences()) {
       if (!first) sb.append(", ");
-      sb.append("mustHave:");
-      if (this.mustHave == null) {
+      sb.append("preferences:");
+      if (this.preferences == null) {
         sb.append("null");
       } else {
-        sb.append(this.mustHave);
-      }
-      first = false;
-    }
-    if (isSetNiceToHave()) {
-      if (!first) sb.append(", ");
-      sb.append("niceToHave:");
-      if (this.niceToHave == null) {
-        sb.append("null");
-      } else {
-        sb.append(this.niceToHave);
+        sb.append(this.preferences);
       }
       first = false;
     }
@@ -544,38 +447,21 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 2: // MUST_HAVE
+          case 2: // PREFERENCES
             if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
               {
                 org.apache.thrift.protocol.TList _list11 = iprot.readListBegin();
-                struct.mustHave = new java.util.ArrayList<java.lang.String>(_list11.size);
-                @org.apache.thrift.annotation.Nullable java.lang.String _elem12;
+                struct.preferences = new java.util.ArrayList<TagPreference>(_list11.size);
+                @org.apache.thrift.annotation.Nullable TagPreference _elem12;
                 for (int _i13 = 0; _i13 < _list11.size; ++_i13)
                 {
-                  _elem12 = iprot.readString();
-                  struct.mustHave.add(_elem12);
+                  _elem12 = new TagPreference();
+                  _elem12.read(iprot);
+                  struct.preferences.add(_elem12);
                 }
                 iprot.readListEnd();
               }
-              struct.setMustHaveIsSet(true);
-            } else { 
-              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
-            }
-            break;
-          case 3: // NICE_TO_HAVE
-            if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
-              {
-                org.apache.thrift.protocol.TList _list14 = iprot.readListBegin();
-                struct.niceToHave = new java.util.ArrayList<java.lang.String>(_list14.size);
-                @org.apache.thrift.annotation.Nullable java.lang.String _elem15;
-                for (int _i16 = 0; _i16 < _list14.size; ++_i16)
-                {
-                  _elem15 = iprot.readString();
-                  struct.niceToHave.add(_elem15);
-                }
-                iprot.readListEnd();
-              }
-              struct.setNiceToHaveIsSet(true);
+              struct.setPreferencesIsSet(true);
             } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
@@ -601,37 +487,23 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
           oprot.writeFieldBegin(SELF_FIELD_DESC);
           {
             oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRING, struct.self.size()));
-            for (java.lang.String _iter17 : struct.self)
+            for (java.lang.String _iter14 : struct.self)
             {
-              oprot.writeString(_iter17);
+              oprot.writeString(_iter14);
             }
             oprot.writeListEnd();
           }
           oprot.writeFieldEnd();
         }
       }
-      if (struct.mustHave != null) {
-        if (struct.isSetMustHave()) {
-          oprot.writeFieldBegin(MUST_HAVE_FIELD_DESC);
+      if (struct.preferences != null) {
+        if (struct.isSetPreferences()) {
+          oprot.writeFieldBegin(PREFERENCES_FIELD_DESC);
           {
-            oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRING, struct.mustHave.size()));
-            for (java.lang.String _iter18 : struct.mustHave)
+            oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRUCT, struct.preferences.size()));
+            for (TagPreference _iter15 : struct.preferences)
             {
-              oprot.writeString(_iter18);
-            }
-            oprot.writeListEnd();
-          }
-          oprot.writeFieldEnd();
-        }
-      }
-      if (struct.niceToHave != null) {
-        if (struct.isSetNiceToHave()) {
-          oprot.writeFieldBegin(NICE_TO_HAVE_FIELD_DESC);
-          {
-            oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRING, struct.niceToHave.size()));
-            for (java.lang.String _iter19 : struct.niceToHave)
-            {
-              oprot.writeString(_iter19);
+              _iter15.write(oprot);
             }
             oprot.writeListEnd();
           }
@@ -660,37 +532,25 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
       if (struct.isSetSelf()) {
         optionals.set(0);
       }
-      if (struct.isSetMustHave()) {
+      if (struct.isSetPreferences()) {
         optionals.set(1);
       }
-      if (struct.isSetNiceToHave()) {
-        optionals.set(2);
-      }
-      oprot.writeBitSet(optionals, 3);
+      oprot.writeBitSet(optionals, 2);
       if (struct.isSetSelf()) {
         {
           oprot.writeI32(struct.self.size());
-          for (java.lang.String _iter20 : struct.self)
+          for (java.lang.String _iter16 : struct.self)
           {
-            oprot.writeString(_iter20);
+            oprot.writeString(_iter16);
           }
         }
       }
-      if (struct.isSetMustHave()) {
+      if (struct.isSetPreferences()) {
         {
-          oprot.writeI32(struct.mustHave.size());
-          for (java.lang.String _iter21 : struct.mustHave)
+          oprot.writeI32(struct.preferences.size());
+          for (TagPreference _iter17 : struct.preferences)
           {
-            oprot.writeString(_iter21);
-          }
-        }
-      }
-      if (struct.isSetNiceToHave()) {
-        {
-          oprot.writeI32(struct.niceToHave.size());
-          for (java.lang.String _iter22 : struct.niceToHave)
-          {
-            oprot.writeString(_iter22);
+            _iter17.write(oprot);
           }
         }
       }
@@ -699,45 +559,33 @@ public class ManyToManyFilter implements org.apache.thrift.TBase<ManyToManyFilte
     @Override
     public void read(org.apache.thrift.protocol.TProtocol prot, ManyToManyFilter struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
-      java.util.BitSet incoming = iprot.readBitSet(3);
+      java.util.BitSet incoming = iprot.readBitSet(2);
       if (incoming.get(0)) {
         {
-          org.apache.thrift.protocol.TList _list23 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
-          struct.self = new java.util.ArrayList<java.lang.String>(_list23.size);
-          @org.apache.thrift.annotation.Nullable java.lang.String _elem24;
-          for (int _i25 = 0; _i25 < _list23.size; ++_i25)
+          org.apache.thrift.protocol.TList _list18 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
+          struct.self = new java.util.ArrayList<java.lang.String>(_list18.size);
+          @org.apache.thrift.annotation.Nullable java.lang.String _elem19;
+          for (int _i20 = 0; _i20 < _list18.size; ++_i20)
           {
-            _elem24 = iprot.readString();
-            struct.self.add(_elem24);
+            _elem19 = iprot.readString();
+            struct.self.add(_elem19);
           }
         }
         struct.setSelfIsSet(true);
       }
       if (incoming.get(1)) {
         {
-          org.apache.thrift.protocol.TList _list26 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
-          struct.mustHave = new java.util.ArrayList<java.lang.String>(_list26.size);
-          @org.apache.thrift.annotation.Nullable java.lang.String _elem27;
-          for (int _i28 = 0; _i28 < _list26.size; ++_i28)
+          org.apache.thrift.protocol.TList _list21 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRUCT);
+          struct.preferences = new java.util.ArrayList<TagPreference>(_list21.size);
+          @org.apache.thrift.annotation.Nullable TagPreference _elem22;
+          for (int _i23 = 0; _i23 < _list21.size; ++_i23)
           {
-            _elem27 = iprot.readString();
-            struct.mustHave.add(_elem27);
+            _elem22 = new TagPreference();
+            _elem22.read(iprot);
+            struct.preferences.add(_elem22);
           }
         }
-        struct.setMustHaveIsSet(true);
-      }
-      if (incoming.get(2)) {
-        {
-          org.apache.thrift.protocol.TList _list29 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
-          struct.niceToHave = new java.util.ArrayList<java.lang.String>(_list29.size);
-          @org.apache.thrift.annotation.Nullable java.lang.String _elem30;
-          for (int _i31 = 0; _i31 < _list29.size; ++_i31)
-          {
-            _elem30 = iprot.readString();
-            struct.niceToHave.add(_elem30);
-          }
-        }
-        struct.setNiceToHaveIsSet(true);
+        struct.setPreferencesIsSet(true);
       }
     }
   }

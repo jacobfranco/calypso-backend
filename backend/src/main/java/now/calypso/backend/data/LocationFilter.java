@@ -7,24 +7,24 @@
 package now.calypso.backend.data;
 
 @SuppressWarnings({"cast", "rawtypes", "serial", "unchecked", "unused"})
-public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter, OneToManyFilter._Fields>, java.io.Serializable, Cloneable, Comparable<OneToManyFilter> {
-  private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("OneToManyFilter");
+public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, LocationFilter._Fields>, java.io.Serializable, Cloneable, Comparable<LocationFilter> {
+  private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("LocationFilter");
 
-  private static final org.apache.thrift.protocol.TField SELF_FIELD_DESC = new org.apache.thrift.protocol.TField("self", org.apache.thrift.protocol.TType.STRING, (short)1);
-  private static final org.apache.thrift.protocol.TField SEEKING_FIELD_DESC = new org.apache.thrift.protocol.TField("seeking", org.apache.thrift.protocol.TType.LIST, (short)2);
+  private static final org.apache.thrift.protocol.TField CITY_FIELD_DESC = new org.apache.thrift.protocol.TField("city", org.apache.thrift.protocol.TType.STRING, (short)1);
+  private static final org.apache.thrift.protocol.TField RADIUS_FIELD_DESC = new org.apache.thrift.protocol.TField("radius", org.apache.thrift.protocol.TType.STRING, (short)2);
   private static final org.apache.thrift.protocol.TField IMPORTANCE_FIELD_DESC = new org.apache.thrift.protocol.TField("importance", org.apache.thrift.protocol.TType.STRING, (short)3);
 
-  private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new OneToManyFilterStandardSchemeFactory();
-  private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new OneToManyFilterTupleSchemeFactory();
+  private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new LocationFilterStandardSchemeFactory();
+  private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new LocationFilterTupleSchemeFactory();
 
-  public @org.apache.thrift.annotation.Nullable java.lang.String self; // optional
-  public @org.apache.thrift.annotation.Nullable java.util.List<java.lang.String> seeking; // optional
+  public @org.apache.thrift.annotation.Nullable java.lang.String city; // optional
+  public @org.apache.thrift.annotation.Nullable java.lang.String radius; // optional
   public @org.apache.thrift.annotation.Nullable java.lang.String importance; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
-    SELF((short)1, "self"),
-    SEEKING((short)2, "seeking"),
+    CITY((short)1, "city"),
+    RADIUS((short)2, "radius"),
     IMPORTANCE((short)3, "importance");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
@@ -41,10 +41,10 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
     @org.apache.thrift.annotation.Nullable
     public static _Fields findByThriftId(int fieldId) {
       switch(fieldId) {
-        case 1: // SELF
-          return SELF;
-        case 2: // SEEKING
-          return SEEKING;
+        case 1: // CITY
+          return CITY;
+        case 2: // RADIUS
+          return RADIUS;
         case 3: // IMPORTANCE
           return IMPORTANCE;
         default:
@@ -90,34 +90,32 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
   }
 
   // isset id assignments
-  private static final _Fields optionals[] = {_Fields.SELF,_Fields.SEEKING,_Fields.IMPORTANCE};
+  private static final _Fields optionals[] = {_Fields.CITY,_Fields.RADIUS,_Fields.IMPORTANCE};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
-    tmpMap.put(_Fields.SELF, new org.apache.thrift.meta_data.FieldMetaData("self", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+    tmpMap.put(_Fields.CITY, new org.apache.thrift.meta_data.FieldMetaData("city", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
-    tmpMap.put(_Fields.SEEKING, new org.apache.thrift.meta_data.FieldMetaData("seeking", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
-        new org.apache.thrift.meta_data.ListMetaData(org.apache.thrift.protocol.TType.LIST, 
-            new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING))));
+    tmpMap.put(_Fields.RADIUS, new org.apache.thrift.meta_data.FieldMetaData("radius", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
     tmpMap.put(_Fields.IMPORTANCE, new org.apache.thrift.meta_data.FieldMetaData("importance", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
-    org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(OneToManyFilter.class, metaDataMap);
+    org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(LocationFilter.class, metaDataMap);
   }
 
-  public OneToManyFilter() {
+  public LocationFilter() {
   }
 
   /**
    * Performs a deep copy on <i>other</i>.
    */
-  public OneToManyFilter(OneToManyFilter other) {
-    if (other.isSetSelf()) {
-      this.self = other.self;
+  public LocationFilter(LocationFilter other) {
+    if (other.isSetCity()) {
+      this.city = other.city;
     }
-    if (other.isSetSeeking()) {
-      java.util.List<java.lang.String> __this__seeking = new java.util.ArrayList<java.lang.String>(other.seeking);
-      this.seeking = __this__seeking;
+    if (other.isSetRadius()) {
+      this.radius = other.radius;
     }
     if (other.isSetImportance()) {
       this.importance = other.importance;
@@ -125,80 +123,64 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
   }
 
   @Override
-  public OneToManyFilter deepCopy() {
-    return new OneToManyFilter(this);
+  public LocationFilter deepCopy() {
+    return new LocationFilter(this);
   }
 
   @Override
   public void clear() {
-    this.self = null;
-    this.seeking = null;
+    this.city = null;
+    this.radius = null;
     this.importance = null;
   }
 
   @org.apache.thrift.annotation.Nullable
-  public java.lang.String getSelf() {
-    return this.self;
+  public java.lang.String getCity() {
+    return this.city;
   }
 
-  public OneToManyFilter setSelf(@org.apache.thrift.annotation.Nullable java.lang.String self) {
-    this.self = self;
+  public LocationFilter setCity(@org.apache.thrift.annotation.Nullable java.lang.String city) {
+    this.city = city;
     return this;
   }
 
-  public void unsetSelf() {
-    this.self = null;
+  public void unsetCity() {
+    this.city = null;
   }
 
-  /** Returns true if field self is set (has been assigned a value) and false otherwise */
-  public boolean isSetSelf() {
-    return this.self != null;
+  /** Returns true if field city is set (has been assigned a value) and false otherwise */
+  public boolean isSetCity() {
+    return this.city != null;
   }
 
-  public void setSelfIsSet(boolean value) {
+  public void setCityIsSet(boolean value) {
     if (!value) {
-      this.self = null;
+      this.city = null;
     }
   }
 
-  public int getSeekingSize() {
-    return (this.seeking == null) ? 0 : this.seeking.size();
-  }
-
   @org.apache.thrift.annotation.Nullable
-  public java.util.Iterator<java.lang.String> getSeekingIterator() {
-    return (this.seeking == null) ? null : this.seeking.iterator();
+  public java.lang.String getRadius() {
+    return this.radius;
   }
 
-  public void addToSeeking(java.lang.String elem) {
-    if (this.seeking == null) {
-      this.seeking = new java.util.ArrayList<java.lang.String>();
-    }
-    this.seeking.add(elem);
-  }
-
-  @org.apache.thrift.annotation.Nullable
-  public java.util.List<java.lang.String> getSeeking() {
-    return this.seeking;
-  }
-
-  public OneToManyFilter setSeeking(@org.apache.thrift.annotation.Nullable java.util.List<java.lang.String> seeking) {
-    this.seeking = seeking;
+  public LocationFilter setRadius(@org.apache.thrift.annotation.Nullable java.lang.String radius) {
+    this.radius = radius;
     return this;
   }
 
-  public void unsetSeeking() {
-    this.seeking = null;
+  public void unsetRadius() {
+    this.radius = null;
   }
 
-  /** Returns true if field seeking is set (has been assigned a value) and false otherwise */
-  public boolean isSetSeeking() {
-    return this.seeking != null;
+  /** Returns true if field radius is set (has been assigned a value) and false otherwise */
+  public boolean isSetRadius() {
+    return this.radius != null;
   }
 
-  public void setSeekingIsSet(boolean value) {
+  public void setRadiusIsSet(boolean value) {
     if (!value) {
-      this.seeking = null;
+      this.radius = null;
     }
   }
 
@@ -207,7 +189,7 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
     return this.importance;
   }
 
-  public OneToManyFilter setImportance(@org.apache.thrift.annotation.Nullable java.lang.String importance) {
+  public LocationFilter setImportance(@org.apache.thrift.annotation.Nullable java.lang.String importance) {
     this.importance = importance;
     return this;
   }
@@ -230,19 +212,19 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
   @Override
   public void setFieldValue(_Fields field, @org.apache.thrift.annotation.Nullable java.lang.Object value) {
     switch (field) {
-    case SELF:
+    case CITY:
       if (value == null) {
-        unsetSelf();
+        unsetCity();
       } else {
-        setSelf((java.lang.String)value);
+        setCity((java.lang.String)value);
       }
       break;
 
-    case SEEKING:
+    case RADIUS:
       if (value == null) {
-        unsetSeeking();
+        unsetRadius();
       } else {
-        setSeeking((java.util.List<java.lang.String>)value);
+        setRadius((java.lang.String)value);
       }
       break;
 
@@ -261,11 +243,11 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
   @Override
   public java.lang.Object getFieldValue(_Fields field) {
     switch (field) {
-    case SELF:
-      return getSelf();
+    case CITY:
+      return getCity();
 
-    case SEEKING:
-      return getSeeking();
+    case RADIUS:
+      return getRadius();
 
     case IMPORTANCE:
       return getImportance();
@@ -282,10 +264,10 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
     }
 
     switch (field) {
-    case SELF:
-      return isSetSelf();
-    case SEEKING:
-      return isSetSeeking();
+    case CITY:
+      return isSetCity();
+    case RADIUS:
+      return isSetRadius();
     case IMPORTANCE:
       return isSetImportance();
     }
@@ -294,32 +276,32 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
 
   @Override
   public boolean equals(java.lang.Object that) {
-    if (that instanceof OneToManyFilter)
-      return this.equals((OneToManyFilter)that);
+    if (that instanceof LocationFilter)
+      return this.equals((LocationFilter)that);
     return false;
   }
 
-  public boolean equals(OneToManyFilter that) {
+  public boolean equals(LocationFilter that) {
     if (that == null)
       return false;
     if (this == that)
       return true;
 
-    boolean this_present_self = true && this.isSetSelf();
-    boolean that_present_self = true && that.isSetSelf();
-    if (this_present_self || that_present_self) {
-      if (!(this_present_self && that_present_self))
+    boolean this_present_city = true && this.isSetCity();
+    boolean that_present_city = true && that.isSetCity();
+    if (this_present_city || that_present_city) {
+      if (!(this_present_city && that_present_city))
         return false;
-      if (!this.self.equals(that.self))
+      if (!this.city.equals(that.city))
         return false;
     }
 
-    boolean this_present_seeking = true && this.isSetSeeking();
-    boolean that_present_seeking = true && that.isSetSeeking();
-    if (this_present_seeking || that_present_seeking) {
-      if (!(this_present_seeking && that_present_seeking))
+    boolean this_present_radius = true && this.isSetRadius();
+    boolean that_present_radius = true && that.isSetRadius();
+    if (this_present_radius || that_present_radius) {
+      if (!(this_present_radius && that_present_radius))
         return false;
-      if (!this.seeking.equals(that.seeking))
+      if (!this.radius.equals(that.radius))
         return false;
     }
 
@@ -339,13 +321,13 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
   public int hashCode() {
     int hashCode = 1;
 
-    hashCode = hashCode * 8191 + ((isSetSelf()) ? 131071 : 524287);
-    if (isSetSelf())
-      hashCode = hashCode * 8191 + self.hashCode();
+    hashCode = hashCode * 8191 + ((isSetCity()) ? 131071 : 524287);
+    if (isSetCity())
+      hashCode = hashCode * 8191 + city.hashCode();
 
-    hashCode = hashCode * 8191 + ((isSetSeeking()) ? 131071 : 524287);
-    if (isSetSeeking())
-      hashCode = hashCode * 8191 + seeking.hashCode();
+    hashCode = hashCode * 8191 + ((isSetRadius()) ? 131071 : 524287);
+    if (isSetRadius())
+      hashCode = hashCode * 8191 + radius.hashCode();
 
     hashCode = hashCode * 8191 + ((isSetImportance()) ? 131071 : 524287);
     if (isSetImportance())
@@ -355,29 +337,29 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
   }
 
   @Override
-  public int compareTo(OneToManyFilter other) {
+  public int compareTo(LocationFilter other) {
     if (!getClass().equals(other.getClass())) {
       return getClass().getName().compareTo(other.getClass().getName());
     }
 
     int lastComparison = 0;
 
-    lastComparison = java.lang.Boolean.compare(isSetSelf(), other.isSetSelf());
+    lastComparison = java.lang.Boolean.compare(isSetCity(), other.isSetCity());
     if (lastComparison != 0) {
       return lastComparison;
     }
-    if (isSetSelf()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.self, other.self);
+    if (isSetCity()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.city, other.city);
       if (lastComparison != 0) {
         return lastComparison;
       }
     }
-    lastComparison = java.lang.Boolean.compare(isSetSeeking(), other.isSetSeeking());
+    lastComparison = java.lang.Boolean.compare(isSetRadius(), other.isSetRadius());
     if (lastComparison != 0) {
       return lastComparison;
     }
-    if (isSetSeeking()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.seeking, other.seeking);
+    if (isSetRadius()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.radius, other.radius);
       if (lastComparison != 0) {
         return lastComparison;
       }
@@ -413,25 +395,25 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
 
   @Override
   public java.lang.String toString() {
-    java.lang.StringBuilder sb = new java.lang.StringBuilder("OneToManyFilter(");
+    java.lang.StringBuilder sb = new java.lang.StringBuilder("LocationFilter(");
     boolean first = true;
 
-    if (isSetSelf()) {
-      sb.append("self:");
-      if (this.self == null) {
+    if (isSetCity()) {
+      sb.append("city:");
+      if (this.city == null) {
         sb.append("null");
       } else {
-        sb.append(this.self);
+        sb.append(this.city);
       }
       first = false;
     }
-    if (isSetSeeking()) {
+    if (isSetRadius()) {
       if (!first) sb.append(", ");
-      sb.append("seeking:");
-      if (this.seeking == null) {
+      sb.append("radius:");
+      if (this.radius == null) {
         sb.append("null");
       } else {
-        sb.append(this.seeking);
+        sb.append(this.radius);
       }
       first = false;
     }
@@ -470,17 +452,17 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
     }
   }
 
-  private static class OneToManyFilterStandardSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
+  private static class LocationFilterStandardSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
     @Override
-    public OneToManyFilterStandardScheme getScheme() {
-      return new OneToManyFilterStandardScheme();
+    public LocationFilterStandardScheme getScheme() {
+      return new LocationFilterStandardScheme();
     }
   }
 
-  private static class OneToManyFilterStandardScheme extends org.apache.thrift.scheme.StandardScheme<OneToManyFilter> {
+  private static class LocationFilterStandardScheme extends org.apache.thrift.scheme.StandardScheme<LocationFilter> {
 
     @Override
-    public void read(org.apache.thrift.protocol.TProtocol iprot, OneToManyFilter struct) throws org.apache.thrift.TException {
+    public void read(org.apache.thrift.protocol.TProtocol iprot, LocationFilter struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TField schemeField;
       iprot.readStructBegin();
       while (true)
@@ -490,28 +472,18 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
           break;
         }
         switch (schemeField.id) {
-          case 1: // SELF
+          case 1: // CITY
             if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
-              struct.self = iprot.readString();
-              struct.setSelfIsSet(true);
+              struct.city = iprot.readString();
+              struct.setCityIsSet(true);
             } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 2: // SEEKING
-            if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
-              {
-                org.apache.thrift.protocol.TList _list0 = iprot.readListBegin();
-                struct.seeking = new java.util.ArrayList<java.lang.String>(_list0.size);
-                @org.apache.thrift.annotation.Nullable java.lang.String _elem1;
-                for (int _i2 = 0; _i2 < _list0.size; ++_i2)
-                {
-                  _elem1 = iprot.readString();
-                  struct.seeking.add(_elem1);
-                }
-                iprot.readListEnd();
-              }
-              struct.setSeekingIsSet(true);
+          case 2: // RADIUS
+            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
+              struct.radius = iprot.readString();
+              struct.setRadiusIsSet(true);
             } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
@@ -536,28 +508,21 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
     }
 
     @Override
-    public void write(org.apache.thrift.protocol.TProtocol oprot, OneToManyFilter struct) throws org.apache.thrift.TException {
+    public void write(org.apache.thrift.protocol.TProtocol oprot, LocationFilter struct) throws org.apache.thrift.TException {
       struct.validate();
 
       oprot.writeStructBegin(STRUCT_DESC);
-      if (struct.self != null) {
-        if (struct.isSetSelf()) {
-          oprot.writeFieldBegin(SELF_FIELD_DESC);
-          oprot.writeString(struct.self);
+      if (struct.city != null) {
+        if (struct.isSetCity()) {
+          oprot.writeFieldBegin(CITY_FIELD_DESC);
+          oprot.writeString(struct.city);
           oprot.writeFieldEnd();
         }
       }
-      if (struct.seeking != null) {
-        if (struct.isSetSeeking()) {
-          oprot.writeFieldBegin(SEEKING_FIELD_DESC);
-          {
-            oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRING, struct.seeking.size()));
-            for (java.lang.String _iter3 : struct.seeking)
-            {
-              oprot.writeString(_iter3);
-            }
-            oprot.writeListEnd();
-          }
+      if (struct.radius != null) {
+        if (struct.isSetRadius()) {
+          oprot.writeFieldBegin(RADIUS_FIELD_DESC);
+          oprot.writeString(struct.radius);
           oprot.writeFieldEnd();
         }
       }
@@ -574,40 +539,34 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
 
   }
 
-  private static class OneToManyFilterTupleSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
+  private static class LocationFilterTupleSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
     @Override
-    public OneToManyFilterTupleScheme getScheme() {
-      return new OneToManyFilterTupleScheme();
+    public LocationFilterTupleScheme getScheme() {
+      return new LocationFilterTupleScheme();
     }
   }
 
-  private static class OneToManyFilterTupleScheme extends org.apache.thrift.scheme.TupleScheme<OneToManyFilter> {
+  private static class LocationFilterTupleScheme extends org.apache.thrift.scheme.TupleScheme<LocationFilter> {
 
     @Override
-    public void write(org.apache.thrift.protocol.TProtocol prot, OneToManyFilter struct) throws org.apache.thrift.TException {
+    public void write(org.apache.thrift.protocol.TProtocol prot, LocationFilter struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol oprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       java.util.BitSet optionals = new java.util.BitSet();
-      if (struct.isSetSelf()) {
+      if (struct.isSetCity()) {
         optionals.set(0);
       }
-      if (struct.isSetSeeking()) {
+      if (struct.isSetRadius()) {
         optionals.set(1);
       }
       if (struct.isSetImportance()) {
         optionals.set(2);
       }
       oprot.writeBitSet(optionals, 3);
-      if (struct.isSetSelf()) {
-        oprot.writeString(struct.self);
+      if (struct.isSetCity()) {
+        oprot.writeString(struct.city);
       }
-      if (struct.isSetSeeking()) {
-        {
-          oprot.writeI32(struct.seeking.size());
-          for (java.lang.String _iter4 : struct.seeking)
-          {
-            oprot.writeString(_iter4);
-          }
-        }
+      if (struct.isSetRadius()) {
+        oprot.writeString(struct.radius);
       }
       if (struct.isSetImportance()) {
         oprot.writeString(struct.importance);
@@ -615,25 +574,16 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
     }
 
     @Override
-    public void read(org.apache.thrift.protocol.TProtocol prot, OneToManyFilter struct) throws org.apache.thrift.TException {
+    public void read(org.apache.thrift.protocol.TProtocol prot, LocationFilter struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       java.util.BitSet incoming = iprot.readBitSet(3);
       if (incoming.get(0)) {
-        struct.self = iprot.readString();
-        struct.setSelfIsSet(true);
+        struct.city = iprot.readString();
+        struct.setCityIsSet(true);
       }
       if (incoming.get(1)) {
-        {
-          org.apache.thrift.protocol.TList _list5 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
-          struct.seeking = new java.util.ArrayList<java.lang.String>(_list5.size);
-          @org.apache.thrift.annotation.Nullable java.lang.String _elem6;
-          for (int _i7 = 0; _i7 < _list5.size; ++_i7)
-          {
-            _elem6 = iprot.readString();
-            struct.seeking.add(_elem6);
-          }
-        }
-        struct.setSeekingIsSet(true);
+        struct.radius = iprot.readString();
+        struct.setRadiusIsSet(true);
       }
       if (incoming.get(2)) {
         struct.importance = iprot.readString();
