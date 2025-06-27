@@ -19,7 +19,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
   private static final org.apache.thrift.protocol.TField TIMESTAMP_FIELD_DESC = new org.apache.thrift.protocol.TField("timestamp", org.apache.thrift.protocol.TType.I64, (short)7);
   private static final org.apache.thrift.protocol.TField ADMIN_FIELD_DESC = new org.apache.thrift.protocol.TField("admin", org.apache.thrift.protocol.TType.BOOL, (short)8);
   private static final org.apache.thrift.protocol.TField AVATAR_FIELD_DESC = new org.apache.thrift.protocol.TField("avatar", org.apache.thrift.protocol.TType.STRUCT, (short)9);
-  private static final org.apache.thrift.protocol.TField PREFERENCES_FIELD_DESC = new org.apache.thrift.protocol.TField("preferences", org.apache.thrift.protocol.TType.STRUCT, (short)10);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new AccountStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new AccountTupleSchemeFactory();
@@ -33,7 +32,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
   public long timestamp; // required
   public boolean admin; // required
   public @org.apache.thrift.annotation.Nullable AttachmentWithId avatar; // optional
-  public @org.apache.thrift.annotation.Nullable Preferences preferences; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
@@ -45,8 +43,7 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     PUBLIC_KEY((short)6, "publicKey"),
     TIMESTAMP((short)7, "timestamp"),
     ADMIN((short)8, "admin"),
-    AVATAR((short)9, "avatar"),
-    PREFERENCES((short)10, "preferences");
+    AVATAR((short)9, "avatar");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -80,8 +77,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
           return ADMIN;
         case 9: // AVATAR
           return AVATAR;
-        case 10: // PREFERENCES
-          return PREFERENCES;
         default:
           return null;
       }
@@ -128,7 +123,7 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
   private static final int __TIMESTAMP_ISSET_ID = 0;
   private static final int __ADMIN_ISSET_ID = 1;
   private byte __isset_bitfield = 0;
-  private static final _Fields optionals[] = {_Fields.AVATAR,_Fields.PREFERENCES};
+  private static final _Fields optionals[] = {_Fields.AVATAR};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
@@ -150,8 +145,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.BOOL)));
     tmpMap.put(_Fields.AVATAR, new org.apache.thrift.meta_data.FieldMetaData("avatar", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, AttachmentWithId.class)));
-    tmpMap.put(_Fields.PREFERENCES, new org.apache.thrift.meta_data.FieldMetaData("preferences", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
-        new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, Preferences.class)));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(Account.class, metaDataMap);
   }
@@ -210,9 +203,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     if (other.isSetAvatar()) {
       this.avatar = new AttachmentWithId(other.avatar);
     }
-    if (other.isSetPreferences()) {
-      this.preferences = new Preferences(other.preferences);
-    }
   }
 
   @Override
@@ -233,7 +223,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     setAdminIsSet(false);
     this.admin = false;
     this.avatar = null;
-    this.preferences = null;
   }
 
   @org.apache.thrift.annotation.Nullable
@@ -457,31 +446,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     }
   }
 
-  @org.apache.thrift.annotation.Nullable
-  public Preferences getPreferences() {
-    return this.preferences;
-  }
-
-  public Account setPreferences(@org.apache.thrift.annotation.Nullable Preferences preferences) {
-    this.preferences = preferences;
-    return this;
-  }
-
-  public void unsetPreferences() {
-    this.preferences = null;
-  }
-
-  /** Returns true if field preferences is set (has been assigned a value) and false otherwise */
-  public boolean isSetPreferences() {
-    return this.preferences != null;
-  }
-
-  public void setPreferencesIsSet(boolean value) {
-    if (!value) {
-      this.preferences = null;
-    }
-  }
-
   @Override
   public void setFieldValue(_Fields field, @org.apache.thrift.annotation.Nullable java.lang.Object value) {
     switch (field) {
@@ -557,14 +521,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       }
       break;
 
-    case PREFERENCES:
-      if (value == null) {
-        unsetPreferences();
-      } else {
-        setPreferences((Preferences)value);
-      }
-      break;
-
     }
   }
 
@@ -599,9 +555,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     case AVATAR:
       return getAvatar();
 
-    case PREFERENCES:
-      return getPreferences();
-
     }
     throw new java.lang.IllegalStateException();
   }
@@ -632,8 +585,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       return isSetAdmin();
     case AVATAR:
       return isSetAvatar();
-    case PREFERENCES:
-      return isSetPreferences();
     }
     throw new java.lang.IllegalStateException();
   }
@@ -732,15 +683,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
         return false;
     }
 
-    boolean this_present_preferences = true && this.isSetPreferences();
-    boolean that_present_preferences = true && that.isSetPreferences();
-    if (this_present_preferences || that_present_preferences) {
-      if (!(this_present_preferences && that_present_preferences))
-        return false;
-      if (!this.preferences.equals(that.preferences))
-        return false;
-    }
-
     return true;
   }
 
@@ -779,10 +721,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     hashCode = hashCode * 8191 + ((isSetAvatar()) ? 131071 : 524287);
     if (isSetAvatar())
       hashCode = hashCode * 8191 + avatar.hashCode();
-
-    hashCode = hashCode * 8191 + ((isSetPreferences()) ? 131071 : 524287);
-    if (isSetPreferences())
-      hashCode = hashCode * 8191 + preferences.hashCode();
 
     return hashCode;
   }
@@ -885,16 +823,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
         return lastComparison;
       }
     }
-    lastComparison = java.lang.Boolean.compare(isSetPreferences(), other.isSetPreferences());
-    if (lastComparison != 0) {
-      return lastComparison;
-    }
-    if (isSetPreferences()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.preferences, other.preferences);
-      if (lastComparison != 0) {
-        return lastComparison;
-      }
-    }
     return 0;
   }
 
@@ -984,16 +912,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       }
       first = false;
     }
-    if (isSetPreferences()) {
-      if (!first) sb.append(", ");
-      sb.append("preferences:");
-      if (this.preferences == null) {
-        sb.append("null");
-      } else {
-        sb.append(this.preferences);
-      }
-      first = false;
-    }
     sb.append(")");
     return sb.toString();
   }
@@ -1023,9 +941,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     // check for sub-struct validity
     if (avatar != null) {
       avatar.validate();
-    }
-    if (preferences != null) {
-      preferences.validate();
     }
   }
 
@@ -1140,15 +1055,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 10: // PREFERENCES
-            if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
-              struct.preferences = new Preferences();
-              struct.preferences.read(iprot);
-              struct.setPreferencesIsSet(true);
-            } else { 
-              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
-            }
-            break;
           default:
             org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
         }
@@ -1214,13 +1120,6 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
           oprot.writeFieldEnd();
         }
       }
-      if (struct.preferences != null) {
-        if (struct.isSetPreferences()) {
-          oprot.writeFieldBegin(PREFERENCES_FIELD_DESC);
-          struct.preferences.write(oprot);
-          oprot.writeFieldEnd();
-        }
-      }
       oprot.writeFieldStop();
       oprot.writeStructEnd();
     }
@@ -1251,15 +1150,9 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       if (struct.isSetAvatar()) {
         optionals.set(0);
       }
-      if (struct.isSetPreferences()) {
-        optionals.set(1);
-      }
-      oprot.writeBitSet(optionals, 2);
+      oprot.writeBitSet(optionals, 1);
       if (struct.isSetAvatar()) {
         struct.avatar.write(oprot);
-      }
-      if (struct.isSetPreferences()) {
-        struct.preferences.write(oprot);
       }
     }
 
@@ -1282,16 +1175,11 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       struct.setTimestampIsSet(true);
       struct.admin = iprot.readBool();
       struct.setAdminIsSet(true);
-      java.util.BitSet incoming = iprot.readBitSet(2);
+      java.util.BitSet incoming = iprot.readBitSet(1);
       if (incoming.get(0)) {
         struct.avatar = new AttachmentWithId();
         struct.avatar.read(iprot);
         struct.setAvatarIsSet(true);
-      }
-      if (incoming.get(1)) {
-        struct.preferences = new Preferences();
-        struct.preferences.read(iprot);
-        struct.setPreferencesIsSet(true);
       }
     }
   }

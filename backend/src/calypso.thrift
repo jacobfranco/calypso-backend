@@ -19,7 +19,6 @@ struct Account {
   7: required Timestamp timestamp;
   8: required bool admin;
   9: optional AttachmentWithId avatar;
-  10: optional Preferences preferences;
 }
 
 struct AccountWithId {
@@ -52,19 +51,16 @@ struct AttachmentWithId {
   2: required Attachment attachment;
 }
 
-struct Preferences {
-  1: optional Filters filters;
-}
-
 struct Filters {
-  1: optional ModeFilter relationshipMode;         // casual, serious, open to both
-  2: optional OneToManyFilter gender;              // self + seeking genders
-  3: optional RangeFilter age;                     // self + desired age range
-  4: optional LocationFilter location;             // self location + scope (e.g. city, state)
-  5: optional OneToManyFilter religion;            // self label + importance level
-  6: optional OneToManyFilter politics;            // same as above
-  7: optional ManyToManyFilter lifestyle;          // tags like "vegan", "non-drinker"
-  8: optional ManyToManyFilter interests;          // tags like "video games", "surfing"
+  1: required string accountId;
+  2: optional ModeFilter relationshipMode;         // casual, serious, open to both
+  3: optional OneToManyFilter gender;              // self + seeking genders
+  4: optional RangeFilter age;                     // self + desired age range
+  5: optional LocationFilter location;             // self location + scope (e.g. city, state)
+  6: optional OneToManyFilter religion;            // self label + importance level
+  7: optional OneToManyFilter politics;            // same as above
+  8: optional ManyToManyFilter lifestyle;          // tags like "vegan", "non-drinker"
+  9: optional ManyToManyFilter interests;          // tags like "video games", "surfing"
 }
 
 // For filters like gender, religion, politics
@@ -100,6 +96,6 @@ struct LocationFilter {
 }
 
 struct ModeFilter {
-  1: required string self;              // "casual", "serious", "open"
+  1: required string self;              // "casual", "serious"
 }
 
