@@ -24,12 +24,14 @@ public class CalypsoApiManager {
 
     // Core Depots
     private final Depot accountDepot;
+    private final Depot filtersDepot;
 
     // Core PStates
     private final PState emailToUser;
 
     // Core Queries
     private final QueryTopologyClient<List<AccountWithId>> getAccountsFromAccountIds;
+    private final QueryTopologyClient<Filters> getFiltersFromAccountId;
 
     // Relationships Depots
     private final Depot authCodeDepot;
@@ -41,12 +43,14 @@ public class CalypsoApiManager {
 
         // Core Depots
         accountDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*accountDepot");
-        
+        filtersDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*filtersDepot");
+
         // Core PStates
         emailToUser = cluster.clusterPState(CORE_MODULE_NAME, "$$emailToUser");
 
         // Core Queries
         getAccountsFromAccountIds = cluster.clusterQuery(CORE_MODULE_NAME, "getAccountsFromAccountIds");
+        getFiltersFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getFiltersFromAccountId");
 
         // Relationships Depots
         authCodeDepot = cluster.clusterDepot(RELATIONSHIPS_MODULE_NAME, "*authCodeDepot");
@@ -71,7 +75,7 @@ public class CalypsoApiManager {
                 .thenApply(accountUUID -> accountUUID.equals(uuid));
     }
 
-     public CompletableFuture<String> getAccountUUID(String email) {
+    public CompletableFuture<String> getAccountUUID(String email) {
         return emailToUser.selectOneAsync(Path.key(email, "uuid"));
     }
 
@@ -88,16 +92,27 @@ public class CalypsoApiManager {
         return this.getAccountWithId(null, accountId);
     }
 
-     public CompletableFuture<Long> getAccountId(String email) {
+    public CompletableFuture<Long> getAccountId(String email) {
         return emailToUser.selectOneAsync(Path.key(email, "accountId"));
     }
 
-     public CompletableFuture<Boolean> postAuthCode(long accountId, String code) {
+    public CompletableFuture<Boolean> postAuthCode(long accountId, String code) {
         return authCodeDepot.appendAsync(new AddAuthCode(code, accountId)).thenApply(res -> true);
     }
 
-     public CompletableFuture<Long> getAccountIdFromAuthCode(String code) {
+    public CompletableFuture<Long> getAccountIdFromAuthCode(String code) {
         return authCodeToAccountId.selectOneAsync(Path.key(code));
     }
-    
+
+    public CompletableFuture<Boolean> postFilters(PostFilters p, long accountId) {
+        Filters thrift = p.toThrift(accountId);
+        return filtersDepot.appendAsync(thrift)
+                .thenApply(res -> true);
+    }
+
+    /** Fetch the latest Filters for accountId */
+    public CompletableFuture<Filters> getFilters(long requesterId, long accountId) {
+        return getFiltersFromAccountId.invokeAsync(requesterId, accountId);
+    }
+
 }

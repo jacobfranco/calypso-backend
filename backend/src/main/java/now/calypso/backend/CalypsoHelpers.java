@@ -30,6 +30,12 @@ public class CalypsoHelpers {
         }
     }
 
+    public static class ExtractAccountId extends ExtractField {
+        public ExtractAccountId() {
+            super("accountId");
+        }
+    }
+
     public static Block extractFields(Object from, String... fieldVars) {
         Block.Impl ret = Block.create();
         for (String f : fieldVars) {
@@ -74,14 +80,17 @@ public class CalypsoHelpers {
     }
 
     public static Long parseAccountId(String id) {
-    if (id == null) return null;
-    String[] parts = id.split("-");
-    if ("a".equals(parts[parts.length-1]) && parts.length == 2) return Long.parseLong(parts[0]);
-    else throw new RuntimeException("Not an account id: " + id);
-  }
+        if (id == null)
+            return null;
+        String[] parts = id.split("-");
+        if ("a".equals(parts[parts.length - 1]) && parts.length == 2)
+            return Long.parseLong(parts[0]);
+        else
+            throw new RuntimeException("Not an account id: " + id);
+    }
 
-  public static String serializeAccountId(long accountId) {
-    return String.format("%019d", accountId) + "-a";
-  }
+    public static String serializeAccountId(long accountId) {
+        return String.format("%019d", accountId) + "-a";
+    }
 
 }

@@ -2,221 +2,217 @@ package now.calypso.backendapi;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
 import java.util.concurrent.CompletableFuture;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
-import static org.springframework.http.HttpStatus.*;
 
+import now.calypso.backendapi.pojos.GetFilters;
+import now.calypso.backendapi.pojos.GetToken;
 import now.calypso.backendapi.pojos.PostAccount;
+import now.calypso.backendapi.pojos.PostFilters;
 import now.calypso.backend.CalypsoHelpers;
 import now.calypso.backend.data.Account;
 import now.calypso.backend.data.AccountWithId;
+import now.calypso.backend.data.Filters;
 
-/**
- * Slice tests for CalypsoApiController, using the correct serialized ID format
- * and stubbing postAuthCode(...) so loginWithAccount(...) does not NPE.
- */
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@AutoConfigureWebTestClient
 class CalypsoApiControllerTest {
 
-    private WebTestClient client;
-    private CalypsoApiManager mockManager;
+    @LocalServerPort
+    int port;
+
+    @Autowired
+    WebTestClient client;
+
+    @MockBean
+    CalypsoApiManager mockManager;
+
+    private String sessionToken;
+    private String serializedId;
 
     @BeforeEach
-    void setUp() {
-        // 1) Mock the manager
-        mockManager = mock(CalypsoApiManager.class);
+    void loginAndCaptureSession() {
+        // ensure controller static manager is set
         CalypsoApiController.manager = mockManager;
 
-        // 2) Bind only the controller (no Spring context)
-        CalypsoApiController controller = new CalypsoApiController();
-        client = WebTestClient.bindToController(controller).build();
+        // stub session lookup: map session token back to account ID
+        when(mockManager.getAccountIdFromAuthCode(anyString()))
+                .thenReturn(CompletableFuture.completedFuture(7L));
+
+        // Stub account creation flow
+        when(mockManager.postAccount(any(PostAccount.class)))
+                .thenReturn(CompletableFuture.completedFuture(true));
+        when(mockManager.getAccountId("foo@bar.com"))
+                .thenReturn(CompletableFuture.completedFuture(7L));
+        Account acct = new Account()
+                .setName("Foo").setEmail("foo@bar.com")
+                .setPwdHash("x").setLocale("en_US")
+                .setUuid("u").setPublicKey("p")
+                .setTimestamp(0L).setAdmin(false);
+        when(mockManager.getAccountWithId(7L))
+                .thenReturn(CompletableFuture.completedFuture(new AccountWithId(7L, acct)));
+        // stub postAuthCode for login and account endpoints
+        when(mockManager.postAuthCode(anyLong(), anyString()))
+                .thenReturn(CompletableFuture.completedFuture(true));
+
+        // Perform real login and capture session token
+        PostAccount login = new PostAccount("Foo", "foo@bar.com", "pw", true, "en_US", "");
+        GetToken tokenBody = client.post()
+                .uri("/api/accounts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(login)
+                .exchange()
+                .expectStatus().isOk()
+                .returnResult(GetToken.class)
+                .getResponseBody()
+                .blockFirst();
+
+        sessionToken = tokenBody.access_token;
+        serializedId = CalypsoHelpers.serializeAccountId(7L);
     }
 
-    //
-    // POST /api/accounts → 422 on invalid name/agreement, 200 on valid.
-    //
-
+    // POST /api/accounts → validation
     @Test
     void postAccount_emptyName_returns422() {
-        PostAccount badReq = new PostAccount(
-            "",                         // name (blank)
-            "foo@bar.com",             // email
-            "dummyPass",               // password
-            true,                      // agreement
-            "en_US",                   // locale
-            ""                         // reason
-        );
-
-        client.post()
-              .uri("/api/accounts")
-              .contentType(MediaType.APPLICATION_JSON)
-              .bodyValue(badReq)
-              .exchange()
-              .expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+        client.post().uri("/api/accounts")
+                .bodyValue(new PostAccount("", "x@x.com", "pw", true, "en_US", ""))
+                .exchange().expectStatus().isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
     }
 
     @Test
     void postAccount_nameTooLong_returns422() {
         String longName = "X".repeat(CalypsoApiConfig.MAX_NAME_LENGTH + 1);
-
-        PostAccount req = new PostAccount(
-            longName,
-            "foo@bar.com",
-            "dummyPass",
-            true,
-            "en_US",
-            ""
-        );
-
-        client.post()
-              .uri("/api/accounts")
-              .contentType(MediaType.APPLICATION_JSON)
-              .bodyValue(req)
-              .exchange()
-              .expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+        client.post().uri("/api/accounts")
+                .bodyValue(new PostAccount(longName, "x@x.com", "pw", true, "en_US", ""))
+                .exchange().expectStatus().isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
     }
 
     @Test
     void postAccount_invalidCharactersInName_returns422() {
-        PostAccount req = new PostAccount(
-            "Bad🌟Name",
-            "foo@bar.com",
-            "dummyPass",
-            true,
-            "en_US",
-            ""
-        );
-
-        client.post()
-              .uri("/api/accounts")
-              .contentType(MediaType.APPLICATION_JSON)
-              .bodyValue(req)
-              .exchange()
-              .expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+        client.post().uri("/api/accounts")
+                .bodyValue(new PostAccount("Bad🌟Name", "x@x.com", "pw", true, "en_US", ""))
+                .exchange().expectStatus().isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
     }
 
     @Test
     void postAccount_agreementFalse_returns422() {
-        PostAccount req = new PostAccount(
-            "Alice",
-            "alice@x.com",
-            "dummyPass",
-            false,
-            "en_US",
-            ""
-        );
-
-        client.post()
-              .uri("/api/accounts")
-              .contentType(MediaType.APPLICATION_JSON)
-              .bodyValue(req)
-              .exchange()
-              .expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+        client.post().uri("/api/accounts")
+                .bodyValue(new PostAccount("Alice", "a@x.com", "pw", false, "en_US", ""))
+                .exchange().expectStatus().isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
     }
 
     @Test
     void postAccount_valid_createsToken200() {
-        // 1) Stub manager.postAccount(...) → true
-        when(mockManager.postAccount(any(PostAccount.class)))
-            .thenReturn(CompletableFuture.completedFuture(true));
-
-        // 2) Stub manager.getAccountId(...) → 42
         when(mockManager.getAccountId("user@example.com"))
-            .thenReturn(CompletableFuture.completedFuture(42L));
-
-        // 3) Build a Thrift Account with all required fields
-        Account thriftAcct = new Account()
-            .setName("Alice")
-            .setEmail("user@example.com")
-            .setPwdHash("dummyHash")
-            .setLocale("en_US")
-            .setUuid("uuid-1234")
-            .setPublicKey("pubKey")
-            .setTimestamp(0L)
-            .setAdmin(false);
-
-        // 4) Stub manager.getAccountWithId(42) → AccountWithId(42, thriftAcct)
+                .thenReturn(CompletableFuture.completedFuture(42L));
+        Account thriftAcct = new Account().setName("Alice").setEmail("user@example.com")
+                .setPwdHash("h").setLocale("en_US").setUuid("u").setPublicKey("p")
+                .setTimestamp(0L).setAdmin(false);
         when(mockManager.getAccountWithId(42L))
-            .thenReturn(CompletableFuture.completedFuture(new AccountWithId(42L, thriftAcct)));
-
-        // 5) IMPORTANT: Stub manager.postAuthCode(42, anyString()) so loginWithAccount does not NPE
-        when(mockManager.postAuthCode(eq(42L), anyString()))
-            .thenReturn(CompletableFuture.completedFuture(true));
-
-        PostAccount goodReq = new PostAccount(
-            "Alice",
-            "user@example.com",
-            "dummyPass",
-            true,
-            "en_US",
-            ""
-        );
-
-        client.post()
-              .uri("/api/accounts")
-              .contentType(MediaType.APPLICATION_JSON)
-              .bodyValue(goodReq)
-              .exchange()
-              .expectStatus().isOk();
+                .thenReturn(CompletableFuture.completedFuture(new AccountWithId(42L, thriftAcct)));
+        client.post().uri("/api/accounts")
+                .bodyValue(new PostAccount("Alice", "user@example.com", "pw", true, "en_US", ""))
+                .exchange().expectStatus().isOk();
     }
 
-    //
     // GET /api/accounts/{id}
-    //   • If parseAccountId(...) blows up, it becomes a 500.
-    //   • If parse succeeds but manager returns null, it becomes a 404.
-    //   • If parse succeeds and manager returns an AccountWithId, we get 200.
-    //
-
     @Test
     void getAccount_invalidIdFormat_returns500() {
-        // “100” is not in the correct serialized format → parseAccountId throws → 500
-        client.get()
-              .uri("/api/accounts/100")
-              .exchange()
-              .expectStatus().isEqualTo(INTERNAL_SERVER_ERROR);
+        client.get().uri("/api/accounts/100").exchange()
+                .expectStatus().isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
     @Test
     void getAccount_validIdButNotFound_returns404() {
-        // Use CalypsoHelpers.serializeAccountId so parseAccountId(...) succeeds.
-        String serializedId = CalypsoHelpers.serializeAccountId(999L);
-
-        // Stub manager.getAccountWithId(999) → null
+        String id = CalypsoHelpers.serializeAccountId(999L);
         when(mockManager.getAccountWithId(999L))
-            .thenReturn(CompletableFuture.completedFuture(null));
-
-        client.get()
-              .uri("/api/accounts/" + serializedId)
-              .exchange()
-              .expectStatus().isEqualTo(NOT_FOUND);
+                .thenReturn(CompletableFuture.completedFuture(null));
+        client.get().uri("/api/accounts/" + id)
+                .exchange().expectStatus().isEqualTo(HttpStatus.NOT_FOUND);
     }
 
     @Test
     void getAccount_found_returns200() {
-        Account thriftAcct = new Account()
-            .setName("Bob")
-            .setEmail("bob@x.com")
-            .setPwdHash("dummyHash")
-            .setLocale("en_US")
-            .setUuid("uuid-9999")
-            .setPublicKey("pubKey")
-            .setTimestamp(0L)
-            .setAdmin(false);
-
-        // Stub manager.getAccountWithId(100) → AccountWithId(100, thriftAcct)
+        String id = CalypsoHelpers.serializeAccountId(100L);
+        Account a = new Account().setName("Bob").setEmail("b@x.com").setPwdHash("h")
+                .setLocale("en_US").setUuid("u").setPublicKey("p").setTimestamp(0L).setAdmin(false);
         when(mockManager.getAccountWithId(100L))
-            .thenReturn(CompletableFuture.completedFuture(new AccountWithId(100L, thriftAcct)));
+                .thenReturn(CompletableFuture.completedFuture(new AccountWithId(100L, a)));
+        client.get().uri("/api/accounts/" + id)
+                .exchange().expectStatus().isOk();
+    }
 
-        // Serialize 100L so parseAccountId(...) returns 100
-        String serializedId = CalypsoHelpers.serializeAccountId(100L);
+    // POST /api/accounts/{id}/filters
+    @Test
+    void postFilters_unauthenticated_returns403() {
+        client.post().uri("/api/accounts/" + serializedId + "/filters")
+                .bodyValue(new PostFilters())
+                .exchange().expectStatus().isEqualTo(HttpStatus.FORBIDDEN);
+    }
 
+    @Test
+    void postFilters_valid_returns200AndBody() {
+        when(mockManager.postFilters(any(PostFilters.class), eq(7L)))
+                .thenReturn(CompletableFuture.completedFuture(true));
+        client.post()
+                .uri("/api/accounts/" + serializedId + "/filters")
+                .header("Authorization", "Bearer " + sessionToken)
+                .bodyValue(new PostFilters())
+                .exchange().expectStatus().isOk()
+                .expectBody(GetFilters.class)
+                .value(gf -> assertEquals("7", gf.filters.getAccountId()));
+    }
+
+    @Test
+    void postFilters_managerFails_returns500() {
+        when(mockManager.postFilters(any(PostFilters.class), eq(7L)))
+                .thenReturn(CompletableFuture.completedFuture(false));
+        client.post()
+                .uri("/api/accounts/" + serializedId + "/filters")
+                .header("Authorization", "Bearer " + sessionToken)
+                .bodyValue(new PostFilters())
+                .exchange().expectStatus().isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    // GET /api/accounts/{id}/filters
+    @Test
+    void getFilters_unauthenticated_returns403() {
+        client.get().uri("/api/accounts/" + serializedId + "/filters")
+                .exchange().expectStatus().isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void getFilters_notFound_returns404() {
+        when(mockManager.getFilters(eq(7L), eq(7L)))
+                .thenReturn(CompletableFuture.completedFuture(null));
         client.get()
-              .uri("/api/accounts/" + serializedId)
-              .exchange()
-              .expectStatus().isEqualTo(OK);
+                .uri("/api/accounts/" + serializedId + "/filters")
+                .header("Authorization", "Bearer " + sessionToken)
+                .exchange().expectStatus().isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void getFilters_found_returns200AndBody() {
+        Filters f = new Filters().setAccountId("7");
+        when(mockManager.getFilters(eq(7L), eq(7L)))
+                .thenReturn(CompletableFuture.completedFuture(f));
+        client.get()
+                .uri("/api/accounts/" + serializedId + "/filters")
+                .header("Authorization", "Bearer " + sessionToken)
+                .exchange().expectStatus().isOk()
+                .expectBody(GetFilters.class)
+                .value(gf -> assertEquals("7", gf.filters.getAccountId()));
     }
 }

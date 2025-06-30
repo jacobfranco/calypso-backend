@@ -4,13 +4,22 @@ import java.util.HashMap;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.ServerHttpResponse;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.WebSession;
 
 import now.calypso.backend.CalypsoHelpers;
 import now.calypso.backend.data.AccountWithId;
-import now.calypso.backendapi.pojos.*;
+import now.calypso.backendapi.pojos.GetAccount;
+import now.calypso.backendapi.pojos.GetErrorDetails;
+import now.calypso.backendapi.pojos.GetFilters;
+import now.calypso.backendapi.pojos.GetToken;
+import now.calypso.backendapi.pojos.PostAccount;
+import now.calypso.backendapi.pojos.PostFilters;
 import reactor.core.publisher.Mono;
 
 @RestController
@@ -115,25 +124,55 @@ public class CalypsoApiController {
                 });
     }
 
-     @GetMapping("/api/accounts/{id}")
+    @GetMapping("/api/accounts/{id}")
     public Mono<GetAccount> getAccount(@PathVariable("id") String accountId) {
         return Mono.fromFuture(manager.getAccountWithId(CalypsoHelpers.parseAccountId(accountId)))
-                   .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND)))
-                   .map(GetAccount::new);
+                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND)))
+                .map(GetAccount::new);
+    }
+
+    @PostMapping("/api/accounts/{id}/filters")
+    public Mono<GetFilters> postFilters(@PathVariable("id") String idStr,
+            @RequestBody PostFilters params,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = (Long) session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.postFilters(params, accountId))
+                .flatMap(ok -> ok
+                        ? Mono.just(new GetFilters(params.toThrift(accountId)))
+                        : Mono.error(new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR)));
+    }
+
+    @GetMapping("/api/accounts/{id}/filters")
+    public Mono<GetFilters> getFilters(@PathVariable("id") String idStr,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+
+        return Mono.fromFuture(manager.getFilters(me, accountId))
+                // if the future completes with a Filters → wrap it
+                .map(filters -> new GetFilters(filters))
+                // but if it completed to null, Mono is empty → turn into 404
+                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND)));
     }
 
     // For testing
 
     @GetMapping("/api/accounts/me")
-public Mono<GetAccount> whoami(WebSession session) {
-  Long id = (Long) session.getAttribute("accountId");
-  if (id == null) {
-    return Mono.error(new ResponseStatusException(HttpStatus.UNAUTHORIZED));
-  }
-  return Mono.fromFuture(manager.getAccountWithId(id))
-             .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND)))
-             .map(GetAccount::new);
-}
-
+    public Mono<GetAccount> whoami(WebSession session) {
+        Long id = (Long) session.getAttribute("accountId");
+        if (id == null) {
+            return Mono.error(new ResponseStatusException(HttpStatus.UNAUTHORIZED));
+        }
+        return Mono.fromFuture(manager.getAccountWithId(id))
+                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND)))
+                .map(GetAccount::new);
+    }
 
 }
