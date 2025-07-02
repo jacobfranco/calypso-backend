@@ -18,28 +18,32 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class CalypsoApiApplication {
 
     public static void main(String[] args) {
-        if(args.length > 1) {
+        if (args.length > 1) {
             CalypsoConfig.API_URL = args[1];
             CalypsoConfig.API_WEB_SOCKET_URL = args[2];
             CalypsoConfig.API_DOMAIN = args[3];
             CalypsoConfig.FRONTEND_URL = args[4];
-          }
-  
-          // init s3
-          try {
-              CalypsoApiHelpers.initS3Client();
-          } catch (SdkClientException e) {
-              e.printStackTrace();
-              CalypsoApiConfig.S3_OPTIONS = null;
-          }
+        }
 
-           // init cluster manager
-        if(args.length > 0) {
-          CalypsoApiController.manager = new CalypsoApiManager(RamaClusterManager.openInternal(new HashMap() {{
-            put("conductor.host", args[0]);
-            put("custom.serializations", Arrays.asList("now.calypso.backend.serialization.CalypsoSerialization"));
-          }}));
-        } else initIPC();
+        // init s3
+        try {
+            CalypsoApiHelpers.initS3Client();
+        } catch (SdkClientException e) {
+            e.printStackTrace();
+            CalypsoApiConfig.S3_OPTIONS = null;
+        }
+
+        // init cluster manager
+        if (args.length > 0) {
+            CalypsoApiController.manager = new CalypsoApiManager(RamaClusterManager.openInternal(new HashMap() {
+                {
+                    put("conductor.host", args[0]);
+                    put("custom.serializations",
+                            Arrays.asList("now.calypso.backend.serialization.CalypsoSerialization"));
+                }
+            }));
+        } else
+            initIPC();
 
         // init spring
         SpringApplication.run(CalypsoApiApplication.class, args);

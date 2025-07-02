@@ -10,7 +10,7 @@ package now.calypso.backend.data;
 public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields>, java.io.Serializable, Cloneable, Comparable<Filters> {
   private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("Filters");
 
-  private static final org.apache.thrift.protocol.TField ACCOUNT_ID_FIELD_DESC = new org.apache.thrift.protocol.TField("accountId", org.apache.thrift.protocol.TType.STRING, (short)1);
+  private static final org.apache.thrift.protocol.TField ACCOUNT_ID_FIELD_DESC = new org.apache.thrift.protocol.TField("accountId", org.apache.thrift.protocol.TType.I64, (short)1);
   private static final org.apache.thrift.protocol.TField RELATIONSHIP_MODE_FIELD_DESC = new org.apache.thrift.protocol.TField("relationshipMode", org.apache.thrift.protocol.TType.STRUCT, (short)2);
   private static final org.apache.thrift.protocol.TField GENDER_FIELD_DESC = new org.apache.thrift.protocol.TField("gender", org.apache.thrift.protocol.TType.STRUCT, (short)3);
   private static final org.apache.thrift.protocol.TField AGE_FIELD_DESC = new org.apache.thrift.protocol.TField("age", org.apache.thrift.protocol.TType.STRUCT, (short)4);
@@ -23,7 +23,7 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new FiltersStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new FiltersTupleSchemeFactory();
 
-  public @org.apache.thrift.annotation.Nullable java.lang.String accountId; // required
+  public long accountId; // required
   public @org.apache.thrift.annotation.Nullable ModeFilter relationshipMode; // optional
   public @org.apache.thrift.annotation.Nullable OneToManyFilter gender; // optional
   public @org.apache.thrift.annotation.Nullable RangeFilter age; // optional
@@ -120,12 +120,14 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
   }
 
   // isset id assignments
+  private static final int __ACCOUNTID_ISSET_ID = 0;
+  private byte __isset_bitfield = 0;
   private static final _Fields optionals[] = {_Fields.RELATIONSHIP_MODE,_Fields.GENDER,_Fields.AGE,_Fields.LOCATION,_Fields.RELIGION,_Fields.POLITICS,_Fields.LIFESTYLE,_Fields.INTERESTS};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
     tmpMap.put(_Fields.ACCOUNT_ID, new org.apache.thrift.meta_data.FieldMetaData("accountId", org.apache.thrift.TFieldRequirementType.REQUIRED, 
-        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
+        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I64        , "AccountId")));
     tmpMap.put(_Fields.RELATIONSHIP_MODE, new org.apache.thrift.meta_data.FieldMetaData("relationshipMode", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, ModeFilter.class)));
     tmpMap.put(_Fields.GENDER, new org.apache.thrift.meta_data.FieldMetaData("gender", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
@@ -150,19 +152,19 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
   }
 
   public Filters(
-    java.lang.String accountId)
+    long accountId)
   {
     this();
     this.accountId = accountId;
+    setAccountIdIsSet(true);
   }
 
   /**
    * Performs a deep copy on <i>other</i>.
    */
   public Filters(Filters other) {
-    if (other.isSetAccountId()) {
-      this.accountId = other.accountId;
-    }
+    __isset_bitfield = other.__isset_bitfield;
+    this.accountId = other.accountId;
     if (other.isSetRelationshipMode()) {
       this.relationshipMode = new ModeFilter(other.relationshipMode);
     }
@@ -196,7 +198,8 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
 
   @Override
   public void clear() {
-    this.accountId = null;
+    setAccountIdIsSet(false);
+    this.accountId = 0;
     this.relationshipMode = null;
     this.gender = null;
     this.age = null;
@@ -207,29 +210,27 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     this.interests = null;
   }
 
-  @org.apache.thrift.annotation.Nullable
-  public java.lang.String getAccountId() {
+  public long getAccountId() {
     return this.accountId;
   }
 
-  public Filters setAccountId(@org.apache.thrift.annotation.Nullable java.lang.String accountId) {
+  public Filters setAccountId(long accountId) {
     this.accountId = accountId;
+    setAccountIdIsSet(true);
     return this;
   }
 
   public void unsetAccountId() {
-    this.accountId = null;
+    __isset_bitfield = org.apache.thrift.EncodingUtils.clearBit(__isset_bitfield, __ACCOUNTID_ISSET_ID);
   }
 
   /** Returns true if field accountId is set (has been assigned a value) and false otherwise */
   public boolean isSetAccountId() {
-    return this.accountId != null;
+    return org.apache.thrift.EncodingUtils.testBit(__isset_bitfield, __ACCOUNTID_ISSET_ID);
   }
 
   public void setAccountIdIsSet(boolean value) {
-    if (!value) {
-      this.accountId = null;
-    }
+    __isset_bitfield = org.apache.thrift.EncodingUtils.setBit(__isset_bitfield, __ACCOUNTID_ISSET_ID, value);
   }
 
   @org.apache.thrift.annotation.Nullable
@@ -439,7 +440,7 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       if (value == null) {
         unsetAccountId();
       } else {
-        setAccountId((java.lang.String)value);
+        setAccountId((java.lang.Long)value);
       }
       break;
 
@@ -588,12 +589,12 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     if (this == that)
       return true;
 
-    boolean this_present_accountId = true && this.isSetAccountId();
-    boolean that_present_accountId = true && that.isSetAccountId();
+    boolean this_present_accountId = true;
+    boolean that_present_accountId = true;
     if (this_present_accountId || that_present_accountId) {
       if (!(this_present_accountId && that_present_accountId))
         return false;
-      if (!this.accountId.equals(that.accountId))
+      if (this.accountId != that.accountId)
         return false;
     }
 
@@ -676,9 +677,7 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
   public int hashCode() {
     int hashCode = 1;
 
-    hashCode = hashCode * 8191 + ((isSetAccountId()) ? 131071 : 524287);
-    if (isSetAccountId())
-      hashCode = hashCode * 8191 + accountId.hashCode();
+    hashCode = hashCode * 8191 + org.apache.thrift.TBaseHelper.hashCode(accountId);
 
     hashCode = hashCode * 8191 + ((isSetRelationshipMode()) ? 131071 : 524287);
     if (isSetRelationshipMode())
@@ -838,11 +837,7 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     boolean first = true;
 
     sb.append("accountId:");
-    if (this.accountId == null) {
-      sb.append("null");
-    } else {
-      sb.append(this.accountId);
-    }
+    sb.append(this.accountId);
     first = false;
     if (isSetRelationshipMode()) {
       if (!first) sb.append(", ");
@@ -930,9 +925,7 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
 
   public void validate() throws org.apache.thrift.TException {
     // check for required fields
-    if (accountId == null) {
-      throw new org.apache.thrift.protocol.TProtocolException("Required field 'accountId' was not present! Struct: " + toString());
-    }
+    // alas, we cannot check 'accountId' because it's a primitive and you chose the non-beans generator.
     // check for sub-struct validity
     if (relationshipMode != null) {
       relationshipMode.validate();
@@ -970,6 +963,8 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
 
   private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, java.lang.ClassNotFoundException {
     try {
+      // it doesn't seem like you should have to do this, but java serialization is wacky, and doesn't call the default constructor.
+      __isset_bitfield = 0;
       read(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(in)));
     } catch (org.apache.thrift.TException te) {
       throw new java.io.IOException(te);
@@ -997,8 +992,8 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
         }
         switch (schemeField.id) {
           case 1: // ACCOUNT_ID
-            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
-              struct.accountId = iprot.readString();
+            if (schemeField.type == org.apache.thrift.protocol.TType.I64) {
+              struct.accountId = iprot.readI64();
               struct.setAccountIdIsSet(true);
             } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
@@ -1084,6 +1079,9 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       iprot.readStructEnd();
 
       // check for required fields of primitive type, which can't be checked in the validate method
+      if (!struct.isSetAccountId()) {
+        throw new org.apache.thrift.protocol.TProtocolException("Required field 'accountId' was not found in serialized data! Struct: " + toString());
+      }
       struct.validate();
     }
 
@@ -1092,11 +1090,9 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       struct.validate();
 
       oprot.writeStructBegin(STRUCT_DESC);
-      if (struct.accountId != null) {
-        oprot.writeFieldBegin(ACCOUNT_ID_FIELD_DESC);
-        oprot.writeString(struct.accountId);
-        oprot.writeFieldEnd();
-      }
+      oprot.writeFieldBegin(ACCOUNT_ID_FIELD_DESC);
+      oprot.writeI64(struct.accountId);
+      oprot.writeFieldEnd();
       if (struct.relationshipMode != null) {
         if (struct.isSetRelationshipMode()) {
           oprot.writeFieldBegin(RELATIONSHIP_MODE_FIELD_DESC);
@@ -1171,7 +1167,7 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     @Override
     public void write(org.apache.thrift.protocol.TProtocol prot, Filters struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol oprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
-      oprot.writeString(struct.accountId);
+      oprot.writeI64(struct.accountId);
       java.util.BitSet optionals = new java.util.BitSet();
       if (struct.isSetRelationshipMode()) {
         optionals.set(0);
@@ -1227,7 +1223,7 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     @Override
     public void read(org.apache.thrift.protocol.TProtocol prot, Filters struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
-      struct.accountId = iprot.readString();
+      struct.accountId = iprot.readI64();
       struct.setAccountIdIsSet(true);
       java.util.BitSet incoming = iprot.readBitSet(8);
       if (incoming.get(0)) {

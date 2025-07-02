@@ -52,7 +52,7 @@ struct AttachmentWithId {
 }
 
 struct Filters {
-  1: required string accountId;
+  1: required AccountId accountId;
   2: optional ModeFilter relationshipMode;         // casual, serious, open to both
   3: optional OneToManyFilter gender;              // self + seeking genders
   4: optional RangeFilter age;                     // self + desired age range

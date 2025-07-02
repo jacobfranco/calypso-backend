@@ -9,16 +9,24 @@ public class CalypsoSerialization extends ThriftSerialization {
     protected Map<Integer, Class> typeIds() {
         Map<Integer, Class> ret = new HashMap<>();
         Class[] classes = {
-            Account.class,
-            AccountWithId.class,
-            AddAuthCode.class,
-            Attachment.class,
-            AttachmentWithId.class,
-            IndexedAccountWithId.class,
-            RemoveAuthCode.class,
+                Account.class,
+                AccountWithId.class,
+                AddAuthCode.class,
+                Attachment.class,
+                AttachmentWithId.class,
+                Filters.class,
+                IndexedAccountWithId.class,
+                LocationFilter.class,
+                ManyToManyFilter.class,
+                ModeFilter.class,
+                OneToManyFilter.class,
+                RangeFilter.class,
+                RemoveAuthCode.class,
+                TagPreference.class
         };
-        for (int i = 0; i < classes.length; i++) ret.put(i, classes[i]);
+        for (int i = 0; i < classes.length; i++)
+            ret.put(i, classes[i]);
         return ret;
     }
-    
+
 }

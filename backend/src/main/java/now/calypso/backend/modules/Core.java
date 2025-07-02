@@ -62,7 +62,6 @@ public class Core implements RamaModule {
             stream.source("*filtersDepot")
                         .out("*data")
                         .macro(extractFields("*data", "*accountId"))
-                        .hashPartition(Path.key("*accountId"))
                         .localTransform("$$accountIdToFilters",
                                     Path.key("*accountId")
                                                 .termVal("*data"));
@@ -90,11 +89,10 @@ public class Core implements RamaModule {
                                           .collect(Collectors.toList());
                         }, "*unsortedResults").out("*results");
 
-            topologies
-                        .query("getFiltersFromAccountId", "*requestAccountId", "*accountId")
-                        .out("*filters")
-                        .localSelect("$$accountIdToFilters", Path.key("*accountId"))
-                        .out("*filters");
+            topologies.query("getFiltersFromAccountId", "*requestAccountId", "*accountId").out("*filters")
+                        .hashPartition("*accountId")
+                        .localSelect("$$accountIdToFilters", Path.key("*accountId")).out("*filters")
+                        .originPartition();
 
       }
 

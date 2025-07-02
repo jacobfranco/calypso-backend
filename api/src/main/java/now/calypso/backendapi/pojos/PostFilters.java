@@ -26,7 +26,7 @@ public class PostFilters {
     public Filters toThrift(long accountId) {
         Filters f = new Filters();
         // Thrift struct defines accountId as a string
-        f.setAccountId(Long.toString(accountId));
+        f.setAccountId(accountId);
         f.setRelationshipMode(relationshipMode);
         f.setGender(gender);
         f.setAge(age);
