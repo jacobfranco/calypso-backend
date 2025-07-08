@@ -1,24 +1,15 @@
 package now.calypso.backend;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
-
-import java.util.Collections;
-import java.util.List;
-import java.util.Objects;
-
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestInfo;
-
-import com.rpl.rama.Depot;
-import com.rpl.rama.PState;
-import com.rpl.rama.Path;
-import com.rpl.rama.test.InProcessCluster;
-
-import now.calypso.backend.data.AddAuthCode;
-import now.calypso.backend.data.RemoveAuthCode;
-import now.calypso.backend.modules.Relationships;
+import now.calypso.backend.data.*;
+import now.calypso.backend.modules.*;
 import now.calypso.backend.serialization.CalypsoSerialization;
+import com.rpl.rama.*;
+import com.rpl.rama.test.*;
+import org.junit.jupiter.api.*;
+
+import java.util.*;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 public class RelationshipsTest {
 

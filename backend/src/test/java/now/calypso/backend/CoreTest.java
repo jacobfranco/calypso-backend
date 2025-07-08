@@ -2,15 +2,10 @@ package now.calypso.backend;
 
 import now.calypso.backend.data.*;
 import now.calypso.backend.modules.*;
-import now.calypso.backend.modules.Relationships;
 import now.calypso.backend.serialization.CalypsoSerialization;
 import com.rpl.rama.*;
-import com.rpl.rama.PState;
-import com.rpl.rama.Path;
-import com.rpl.rama.QueryTopologyClient;
 import com.rpl.rama.test.*;
 import org.junit.jupiter.api.*;
-import org.junit.jupiter.api.TestInfo;
 
 import java.util.*;
 
