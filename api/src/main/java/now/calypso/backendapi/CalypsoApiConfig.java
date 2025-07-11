@@ -14,6 +14,10 @@ import org.springframework.web.reactive.config.*;
 import org.springframework.web.reactive.function.server.*;
 import org.springframework.web.server.*;
 import org.springframework.web.server.session.*;
+
+import com.openai.client.OpenAIClient;
+import com.openai.client.okhttp.OpenAIOkHttpClient;
+
 import reactor.core.publisher.Mono;
 
 import java.util.*;
@@ -29,10 +33,12 @@ public class CalypsoApiConfig implements WebFluxConfigurer {
     public static final HashSet<String> IMAGE_EXTS = new HashSet<>(Arrays.asList("jpg", "jpeg", "png", "gif", "webp"));
     public static final HashSet<String> VIDEO_EXTS = new HashSet<>(Arrays.asList("webm", "mp4", "m4v", "mov"));
     public static final String OAUTH_CLIENT_ID = "cef6f1929499f942a173abd002a69a3a";
+
     public static class S3Options {
         public String bucketName;
         public String url;
     }
+
     public static S3Options S3_OPTIONS = null;
     static {
         S3_OPTIONS = new S3Options();
@@ -49,7 +55,8 @@ public class CalypsoApiConfig implements WebFluxConfigurer {
             @Override
             public Mono<Void> save(MapSession session) {
                 return Mono.fromRunnable(() -> {
-                    if (!session.getId().equals(session.getOriginalId())) this.sessions.remove(session.getOriginalId());
+                    if (!session.getId().equals(session.getOriginalId()))
+                        this.sessions.remove(session.getOriginalId());
                     this.sessions.put(session.getId(), new MapSession(session));
                 });
             }
@@ -57,29 +64,29 @@ public class CalypsoApiConfig implements WebFluxConfigurer {
             @Override
             public Mono<MapSession> findById(String id) {
                 return Mono.defer(() ->
-                        // find the session id in the backend
-                        // we always query it first in case it has been revoked
-                        Mono.fromFuture(CalypsoApiController.manager.getAccountIdFromAuthCode(id))
-                            // if we can't find it, make sure it's removed from memory
-                            .switchIfEmpty(Mono.defer(() -> this.deleteById(id).then(Mono.empty())))
-                            .flatMap(accountId ->
-                                // try to get the session from the in-memory map
-                                Mono.justOrEmpty(this.sessions.get(id))
-                                    .map(MapSession::new)
-                                    // if we can't find the session, query the backend for the account info
-                                    // and create the session. this could happen if the user logged in via
-                                    // a different API server.
-                                    .switchIfEmpty(
-                                        Mono.defer(() ->
-                                            Mono.fromFuture(CalypsoApiController.manager.getAccountWithId(accountId))
-                                                .flatMap(accountWithId ->
-                                                        this.createSession()
-                                                            .flatMap(session -> {
-                                                                session.setId(id);
-                                                                session.setAttribute("accountId", accountWithId.accountId);
-                                                                session.setAttribute("accountName", accountWithId.account.name);
-                                                                return this.save(session).then(Mono.just(session));
-                                                            }))))));
+                // find the session id in the backend
+                // we always query it first in case it has been revoked
+                Mono.fromFuture(CalypsoApiController.manager.getAccountIdFromAuthCode(id))
+                        // if we can't find it, make sure it's removed from memory
+                        .switchIfEmpty(Mono.defer(() -> this.deleteById(id).then(Mono.empty())))
+                        .flatMap(accountId ->
+                // try to get the session from the in-memory map
+                Mono.justOrEmpty(this.sessions.get(id))
+                        .map(MapSession::new)
+                        // if we can't find the session, query the backend for the account info
+                        // and create the session. this could happen if the user logged in via
+                        // a different API server.
+                        .switchIfEmpty(
+                                Mono.defer(
+                                        () -> Mono.fromFuture(CalypsoApiController.manager.getAccountWithId(accountId))
+                                                .flatMap(accountWithId -> this.createSession()
+                                                        .flatMap(session -> {
+                                                            session.setId(id);
+                                                            session.setAttribute("accountId", accountWithId.accountId);
+                                                            session.setAttribute("accountName",
+                                                                    accountWithId.account.name);
+                                                            return this.save(session).then(Mono.just(session));
+                                                        }))))));
             }
 
             @Override
@@ -110,8 +117,10 @@ public class CalypsoApiConfig implements WebFluxConfigurer {
                 // authentication header
                 for (String header : headers.getOrDefault(AUTH_HEADER, Collections.emptyList())) {
                     String[] parts = header.split("\\s+");
-                    if (parts.length == 2 && AUTH_HEADER_PREFIX.equals(parts[0])) return Arrays.asList(parts[1]);
-                    else throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid Authorization header");
+                    if (parts.length == 2 && AUTH_HEADER_PREFIX.equals(parts[0]))
+                        return Arrays.asList(parts[1]);
+                    else
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid Authorization header");
                 }
                 // web socket connections send the session id via a different header
                 for (String header : headers.getOrDefault(SEC_WEBSOCKET_PROTOCOL_HEADER, Collections.emptyList())) {
@@ -135,13 +144,13 @@ public class CalypsoApiConfig implements WebFluxConfigurer {
     @Bean
     public SecurityWebFilterChain springWebFilterChain(ServerHttpSecurity http) {
         return http.httpBasic().disable()
-                   .formLogin().disable()
-                   .csrf().disable()
-                   .authorizeExchange()
-                   .pathMatchers("/**")
-                   .permitAll()
-                   .and()
-                   .build();
+                .formLogin().disable()
+                .csrf().disable()
+                .authorizeExchange()
+                .pathMatchers("/**")
+                .permitAll()
+                .and()
+                .build();
     }
 
     @Override
@@ -159,7 +168,7 @@ public class CalypsoApiConfig implements WebFluxConfigurer {
     @Bean
     public RouterFunction staticResourceLocator() {
         return RouterFunctions.resources(String.format("/%s/**", STATIC_FILE_URL_PATH_NAME),
-                                         new FileSystemResource(STATIC_FILE_DIR + "/"));
+                new FileSystemResource(STATIC_FILE_DIR + "/"));
     }
 
     @Override
@@ -168,4 +177,12 @@ public class CalypsoApiConfig implements WebFluxConfigurer {
                 .addResourceLocations("classpath:/public/")
                 .setCacheControl(CacheControl.maxAge(365, TimeUnit.DAYS));
     }
+
+    @Bean
+    public OpenAIClient openAIClient() {
+        return OpenAIOkHttpClient.builder()
+                .apiKey(System.getenv("OPENAI_API_KEY"))
+                .build();
+    }
+
 }
