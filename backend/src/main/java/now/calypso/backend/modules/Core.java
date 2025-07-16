@@ -67,6 +67,18 @@ public class Core implements RamaModule {
                                                 .termVal("*data"));
       }
 
+      private static void declareSignalsTopology(Topologies topologies) {
+            StreamTopology stream = topologies.stream("signals");
+
+            stream.pstate("$$accountIdToSignals", PState.mapSchema(Long.class, Signals.class));
+
+            stream.source("*signalsDepot")
+                        .out("*data")
+                        .macro(extractFields("*data", "*accountId"))
+                        .localTransform("$$accountIdToSignals",
+                                    Path.key("*accountId").termVal("*data"));
+      }
+
       private void declareQueries(Topologies topologies) {
             topologies
                         .query("getAccountsFromAccountIds", "*requestAccountId", "*accountIds")
@@ -94,6 +106,11 @@ public class Core implements RamaModule {
                         .localSelect("$$accountIdToFilters", Path.key("*accountId")).out("*filters")
                         .originPartition();
 
+            topologies.query("getSignalsFromAccountId", "*requestAccountId", "*accountId").out("*signals")
+                        .hashPartition("*accountId")
+                        .localSelect("$$accountIdToSignals", Path.key("*accountId")).out("*signals")
+                        .originPartition();
+
       }
 
       @Override
@@ -102,9 +119,11 @@ public class Core implements RamaModule {
             setup.declareDepot("*accountWithIdDepot", Depot.disallow());
             setup.declareDepot("*filtersDepot",
                         Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
+            setup.declareDepot("*signalsDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
 
             declareAccountsTopology(topologies);
             declareFiltersTopology(topologies);
+            declareSignalsTopology(topologies);
 
             declareQueries(topologies);
       }

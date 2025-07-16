@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
+import com.openai.client.OpenAIClient;
 import com.rpl.rama.*;
 import com.rpl.rama.cluster.ClusterManagerBase;
 
@@ -17,6 +18,8 @@ import now.calypso.backend.data.*;
 import now.calypso.backend.modules.*;
 
 public class CalypsoApiManager {
+
+    private final OpenAIClient openAI;
 
     // Modules
     public static final String CORE_MODULE_NAME = Core.class.getName();
@@ -39,7 +42,9 @@ public class CalypsoApiManager {
     // Relationships PStates
     private final PState authCodeToAccountId;
 
-    public CalypsoApiManager(ClusterManagerBase cluster) {
+    public CalypsoApiManager(ClusterManagerBase cluster, OpenAIClient openAI) {
+
+        this.openAI = openAI;
 
         // Core Depots
         accountDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*accountDepot");

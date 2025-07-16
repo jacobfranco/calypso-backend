@@ -178,11 +178,4 @@ public class CalypsoApiConfig implements WebFluxConfigurer {
                 .setCacheControl(CacheControl.maxAge(365, TimeUnit.DAYS));
     }
 
-    @Bean
-    public OpenAIClient openAIClient() {
-        return OpenAIOkHttpClient.builder()
-                .apiKey(System.getenv("OPENAI_API_KEY"))
-                .build();
-    }
-
 }

@@ -4,6 +4,8 @@ import now.calypso.backend.*;
 import now.calypso.backend.modules.*;
 import now.calypso.backend.serialization.CalypsoSerialization;
 
+import com.openai.client.OpenAIClient;
+import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.rpl.rama.*;
 import com.rpl.rama.test.*;
 
@@ -33,6 +35,12 @@ public class CalypsoApiApplication {
             CalypsoApiConfig.S3_OPTIONS = null;
         }
 
+        // Build openAI client
+
+        OpenAIClient openAI = OpenAIOkHttpClient.builder()
+                .apiKey(System.getenv("OPENAI_API_KEY"))
+                .build();
+
         // init cluster manager
         if (args.length > 0) {
             CalypsoApiController.manager = new CalypsoApiManager(RamaClusterManager.openInternal(new HashMap() {
@@ -41,7 +49,7 @@ public class CalypsoApiApplication {
                     put("custom.serializations",
                             Arrays.asList("now.calypso.backend.serialization.CalypsoSerialization"));
                 }
-            }));
+            }), openAI);
         } else
             initIPC();
 
@@ -61,7 +69,12 @@ public class CalypsoApiApplication {
         Core coreModule = new Core();
         ipc.launchModule(coreModule, new LaunchConfig(2, 1));
 
-        CalypsoApiController.manager = new CalypsoApiManager(ipc);
+        // Build openAI Client
+        OpenAIClient openAI = OpenAIOkHttpClient.builder()
+                .apiKey(System.getenv("OPENAI_API_KEY"))
+                .build();
+
+        CalypsoApiController.manager = new CalypsoApiManager(ipc, openAI);
         return ipc;
     }
 

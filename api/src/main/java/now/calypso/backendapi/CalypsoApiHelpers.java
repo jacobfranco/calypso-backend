@@ -23,8 +23,10 @@ public class CalypsoApiHelpers {
     }
 
     private static S3AsyncClient S3_CLIENT = null;
+
     public static void initS3Client() {
-        S3_CLIENT = S3AsyncClient.builder().credentialsProvider(EnvironmentVariableCredentialsProvider.create()).build();
+        S3_CLIENT = S3AsyncClient.builder().credentialsProvider(EnvironmentVariableCredentialsProvider.create())
+                .build();
     }
-    
+
 }

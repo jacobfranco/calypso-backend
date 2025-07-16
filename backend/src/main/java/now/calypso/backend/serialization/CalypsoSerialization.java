@@ -22,6 +22,7 @@ public class CalypsoSerialization extends ThriftSerialization {
                 OneToManyFilter.class,
                 RangeFilter.class,
                 RemoveAuthCode.class,
+                Signals.class,
                 TagPreference.class
         };
         for (int i = 0; i < classes.length; i++)

@@ -99,3 +99,7 @@ struct ModeFilter {
   1: required string self;              // "casual", "serious"
 }
 
+struct Signals {
+  1: required AccountId accountId;    // owner
+  2: optional list<string> signals;   // e.g. ["blade_superfan", "likes_firefighters"]
+}
