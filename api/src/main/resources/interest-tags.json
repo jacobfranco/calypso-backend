@@ -1,0 +1,5 @@
+{
+  "sports": ["soccer", "basketball", "climbing"],
+  "creative": ["photography", "writing", "painting"],
+  "geeky": ["video_games", "board_games", "anime"]
+}

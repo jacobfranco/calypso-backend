@@ -11,20 +11,16 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import now.calypso.backendapi.pojos.GetFilters;
-import now.calypso.backendapi.pojos.GetToken;
-import now.calypso.backendapi.pojos.PostAccount;
-import now.calypso.backendapi.pojos.PostFilters;
+import now.calypso.backendapi.pojos.*;
 import now.calypso.backend.CalypsoHelpers;
-import now.calypso.backend.data.Account;
-import now.calypso.backend.data.AccountWithId;
-import now.calypso.backend.data.Filters;
+import now.calypso.backend.data.*;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient
@@ -129,9 +125,10 @@ class CalypsoApiControllerTest {
 
         // GET /api/accounts/{id}
         @Test
-        void getAccount_invalidIdFormat_returns500() {
-                client.get().uri("/api/accounts/100").exchange()
-                                .expectStatus().isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+        void getAccount_invalidIdFormat_returns400() {
+                client.get().uri("/api/accounts/100")
+                                .exchange()
+                                .expectStatus().isBadRequest();
         }
 
         @Test
@@ -215,4 +212,84 @@ class CalypsoApiControllerTest {
                                 .expectBody(GetFilters.class)
                                 .value(gf -> assertEquals(7, gf.filters.getAccountId()));
         }
+
+        // ---------------------------------------------------------------------------
+        // builds a valid PostFilters object we can tweak per test
+        // ---------------------------------------------------------------------------
+        private PostFilters baseFilters() {
+                PostFilters pf = new PostFilters();
+
+                RangeFilter age = new RangeFilter()
+                                .setSelf(25)
+                                .setMin(22)
+                                .setMax(30);
+                pf.age = age;
+
+                TagPreference wlPref = new TagPreference()
+                                .setTag("weightlifting")
+                                .setImportance(Importance.PREFERENCE);
+
+                ManyToManyFilter life = new ManyToManyFilter()
+                                .setSelf(new ArrayList<>(List.of("weightlifting"))) // ← modifiable
+                                .setPreferences(List.of(wlPref));
+                pf.lifestyle = life;
+
+                return pf;
+        }
+
+        // ---------------------------------------------------------------------------
+        // VALID payload → 200
+        // ---------------------------------------------------------------------------
+        @Test
+        void postFilters_validComplex_returns200() {
+                when(mockManager.postFilters(any(PostFilters.class), eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post().uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(baseFilters())
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody(GetFilters.class)
+                                .value(gf -> assertEquals(7, gf.filters.getAccountId()));
+        }
+
+        // ---------------------------------------------------------------------------
+        // unknown tag → 400 BAD_REQUEST (validator fires before manager call)
+        // ---------------------------------------------------------------------------
+        @Test
+        void postFilters_unknownTag_returns400() {
+                PostFilters bad = baseFilters();
+                bad.lifestyle.getSelf().add("made_up_tag");
+
+                client.post().uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(bad)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+
+                // manager should NOT have been invoked
+                verify(mockManager, times(0)).postFilters(any(), anyLong());
+        }
+
+        // ---------------------------------------------------------------------------
+        // min > max age → 400 BAD_REQUEST
+        // ---------------------------------------------------------------------------
+        @Test
+        void postFilters_invalidAgeRange_returns400() {
+                PostFilters bad = baseFilters();
+                bad.age.setMin(35).setMax(30); // inverted
+
+                client.post().uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(bad)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+
+                verify(mockManager, times(0)).postFilters(any(), anyLong());
+        }
+
 }

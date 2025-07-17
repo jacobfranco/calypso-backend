@@ -12,19 +12,27 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
 
   private static final org.apache.thrift.protocol.TField CITY_FIELD_DESC = new org.apache.thrift.protocol.TField("city", org.apache.thrift.protocol.TType.STRING, (short)1);
   private static final org.apache.thrift.protocol.TField RADIUS_FIELD_DESC = new org.apache.thrift.protocol.TField("radius", org.apache.thrift.protocol.TType.STRING, (short)2);
-  private static final org.apache.thrift.protocol.TField IMPORTANCE_FIELD_DESC = new org.apache.thrift.protocol.TField("importance", org.apache.thrift.protocol.TType.STRING, (short)3);
+  private static final org.apache.thrift.protocol.TField IMPORTANCE_FIELD_DESC = new org.apache.thrift.protocol.TField("importance", org.apache.thrift.protocol.TType.I32, (short)3);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new LocationFilterStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new LocationFilterTupleSchemeFactory();
 
   public @org.apache.thrift.annotation.Nullable java.lang.String city; // optional
   public @org.apache.thrift.annotation.Nullable java.lang.String radius; // optional
-  public @org.apache.thrift.annotation.Nullable java.lang.String importance; // optional
+  /**
+   * 
+   * @see Importance
+   */
+  public @org.apache.thrift.annotation.Nullable Importance importance; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
     CITY((short)1, "city"),
     RADIUS((short)2, "radius"),
+    /**
+     * 
+     * @see Importance
+     */
     IMPORTANCE((short)3, "importance");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
@@ -99,7 +107,7 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
     tmpMap.put(_Fields.RADIUS, new org.apache.thrift.meta_data.FieldMetaData("radius", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
     tmpMap.put(_Fields.IMPORTANCE, new org.apache.thrift.meta_data.FieldMetaData("importance", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
-        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
+        new org.apache.thrift.meta_data.EnumMetaData(org.apache.thrift.protocol.TType.ENUM, Importance.class)));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(LocationFilter.class, metaDataMap);
   }
@@ -184,12 +192,20 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
     }
   }
 
+  /**
+   * 
+   * @see Importance
+   */
   @org.apache.thrift.annotation.Nullable
-  public java.lang.String getImportance() {
+  public Importance getImportance() {
     return this.importance;
   }
 
-  public LocationFilter setImportance(@org.apache.thrift.annotation.Nullable java.lang.String importance) {
+  /**
+   * 
+   * @see Importance
+   */
+  public LocationFilter setImportance(@org.apache.thrift.annotation.Nullable Importance importance) {
     this.importance = importance;
     return this;
   }
@@ -232,7 +248,7 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
       if (value == null) {
         unsetImportance();
       } else {
-        setImportance((java.lang.String)value);
+        setImportance((Importance)value);
       }
       break;
 
@@ -331,7 +347,7 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
 
     hashCode = hashCode * 8191 + ((isSetImportance()) ? 131071 : 524287);
     if (isSetImportance())
-      hashCode = hashCode * 8191 + importance.hashCode();
+      hashCode = hashCode * 8191 + importance.getValue();
 
     return hashCode;
   }
@@ -489,8 +505,8 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
             }
             break;
           case 3: // IMPORTANCE
-            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
-              struct.importance = iprot.readString();
+            if (schemeField.type == org.apache.thrift.protocol.TType.I32) {
+              struct.importance = now.calypso.backend.data.Importance.findByValue(iprot.readI32());
               struct.setImportanceIsSet(true);
             } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
@@ -529,7 +545,7 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
       if (struct.importance != null) {
         if (struct.isSetImportance()) {
           oprot.writeFieldBegin(IMPORTANCE_FIELD_DESC);
-          oprot.writeString(struct.importance);
+          oprot.writeI32(struct.importance.getValue());
           oprot.writeFieldEnd();
         }
       }
@@ -569,7 +585,7 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
         oprot.writeString(struct.radius);
       }
       if (struct.isSetImportance()) {
-        oprot.writeString(struct.importance);
+        oprot.writeI32(struct.importance.getValue());
       }
     }
 
@@ -586,7 +602,7 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
         struct.setRadiusIsSet(true);
       }
       if (incoming.get(2)) {
-        struct.importance = iprot.readString();
+        struct.importance = now.calypso.backend.data.Importance.findByValue(iprot.readI32());
         struct.setImportanceIsSet(true);
       }
     }

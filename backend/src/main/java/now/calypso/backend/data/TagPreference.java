@@ -11,17 +11,25 @@ public class TagPreference implements org.apache.thrift.TBase<TagPreference, Tag
   private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("TagPreference");
 
   private static final org.apache.thrift.protocol.TField TAG_FIELD_DESC = new org.apache.thrift.protocol.TField("tag", org.apache.thrift.protocol.TType.STRING, (short)1);
-  private static final org.apache.thrift.protocol.TField IMPORTANCE_FIELD_DESC = new org.apache.thrift.protocol.TField("importance", org.apache.thrift.protocol.TType.STRING, (short)2);
+  private static final org.apache.thrift.protocol.TField IMPORTANCE_FIELD_DESC = new org.apache.thrift.protocol.TField("importance", org.apache.thrift.protocol.TType.I32, (short)2);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new TagPreferenceStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new TagPreferenceTupleSchemeFactory();
 
   public @org.apache.thrift.annotation.Nullable java.lang.String tag; // required
-  public @org.apache.thrift.annotation.Nullable java.lang.String importance; // required
+  /**
+   * 
+   * @see Importance
+   */
+  public @org.apache.thrift.annotation.Nullable Importance importance; // required
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
     TAG((short)1, "tag"),
+    /**
+     * 
+     * @see Importance
+     */
     IMPORTANCE((short)2, "importance");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
@@ -91,7 +99,7 @@ public class TagPreference implements org.apache.thrift.TBase<TagPreference, Tag
     tmpMap.put(_Fields.TAG, new org.apache.thrift.meta_data.FieldMetaData("tag", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
     tmpMap.put(_Fields.IMPORTANCE, new org.apache.thrift.meta_data.FieldMetaData("importance", org.apache.thrift.TFieldRequirementType.REQUIRED, 
-        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
+        new org.apache.thrift.meta_data.EnumMetaData(org.apache.thrift.protocol.TType.ENUM, Importance.class)));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(TagPreference.class, metaDataMap);
   }
@@ -101,7 +109,7 @@ public class TagPreference implements org.apache.thrift.TBase<TagPreference, Tag
 
   public TagPreference(
     java.lang.String tag,
-    java.lang.String importance)
+    Importance importance)
   {
     this();
     this.tag = tag;
@@ -156,12 +164,20 @@ public class TagPreference implements org.apache.thrift.TBase<TagPreference, Tag
     }
   }
 
+  /**
+   * 
+   * @see Importance
+   */
   @org.apache.thrift.annotation.Nullable
-  public java.lang.String getImportance() {
+  public Importance getImportance() {
     return this.importance;
   }
 
-  public TagPreference setImportance(@org.apache.thrift.annotation.Nullable java.lang.String importance) {
+  /**
+   * 
+   * @see Importance
+   */
+  public TagPreference setImportance(@org.apache.thrift.annotation.Nullable Importance importance) {
     this.importance = importance;
     return this;
   }
@@ -196,7 +212,7 @@ public class TagPreference implements org.apache.thrift.TBase<TagPreference, Tag
       if (value == null) {
         unsetImportance();
       } else {
-        setImportance((java.lang.String)value);
+        setImportance((Importance)value);
       }
       break;
 
@@ -277,7 +293,7 @@ public class TagPreference implements org.apache.thrift.TBase<TagPreference, Tag
 
     hashCode = hashCode * 8191 + ((isSetImportance()) ? 131071 : 524287);
     if (isSetImportance())
-      hashCode = hashCode * 8191 + importance.hashCode();
+      hashCode = hashCode * 8191 + importance.getValue();
 
     return hashCode;
   }
@@ -409,8 +425,8 @@ public class TagPreference implements org.apache.thrift.TBase<TagPreference, Tag
             }
             break;
           case 2: // IMPORTANCE
-            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
-              struct.importance = iprot.readString();
+            if (schemeField.type == org.apache.thrift.protocol.TType.I32) {
+              struct.importance = now.calypso.backend.data.Importance.findByValue(iprot.readI32());
               struct.setImportanceIsSet(true);
             } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
@@ -439,7 +455,7 @@ public class TagPreference implements org.apache.thrift.TBase<TagPreference, Tag
       }
       if (struct.importance != null) {
         oprot.writeFieldBegin(IMPORTANCE_FIELD_DESC);
-        oprot.writeString(struct.importance);
+        oprot.writeI32(struct.importance.getValue());
         oprot.writeFieldEnd();
       }
       oprot.writeFieldStop();
@@ -461,7 +477,7 @@ public class TagPreference implements org.apache.thrift.TBase<TagPreference, Tag
     public void write(org.apache.thrift.protocol.TProtocol prot, TagPreference struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol oprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       oprot.writeString(struct.tag);
-      oprot.writeString(struct.importance);
+      oprot.writeI32(struct.importance.getValue());
     }
 
     @Override
@@ -469,7 +485,7 @@ public class TagPreference implements org.apache.thrift.TBase<TagPreference, Tag
       org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       struct.tag = iprot.readString();
       struct.setTagIsSet(true);
-      struct.importance = iprot.readString();
+      struct.importance = now.calypso.backend.data.Importance.findByValue(iprot.readI32());
       struct.setImportanceIsSet(true);
     }
   }

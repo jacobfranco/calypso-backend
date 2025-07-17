@@ -1,0 +1,5 @@
+{
+  "fitness": ["weightlifting", "running", "yoga"],
+  "dietary": ["vegan", "vegetarian", "keto"],
+  "sleep_habits": ["early_bird", "night_owl"]
+}

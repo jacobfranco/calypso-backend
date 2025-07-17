@@ -1,31 +1,30 @@
 package now.calypso.backendapi;
 
-import java.util.HashMap;
+import java.util.*;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.ServerHttpResponse;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.WebSession;
 
 import now.calypso.backend.CalypsoHelpers;
-import now.calypso.backend.data.AccountWithId;
-import now.calypso.backendapi.pojos.GetAccount;
-import now.calypso.backendapi.pojos.GetErrorDetails;
-import now.calypso.backendapi.pojos.GetFilters;
-import now.calypso.backendapi.pojos.GetToken;
-import now.calypso.backendapi.pojos.PostAccount;
-import now.calypso.backendapi.pojos.PostFilters;
+import now.calypso.backend.data.*;
+import now.calypso.backendapi.filters.*;
+import now.calypso.backendapi.pojos.*;
 import reactor.core.publisher.Mono;
 
 @RestController
 public class CalypsoApiController {
 
     public static CalypsoApiManager manager;
+
+    @Autowired
+    private FiltersValidator validator;
+
+    @Autowired
+    private TagDictionaryService tagService;
 
     private Mono<GetToken> loginWithAccount(WebSession session, String scope, AccountWithId accountWithId) {
         // Update Session
@@ -135,11 +134,14 @@ public class CalypsoApiController {
     public Mono<GetFilters> postFilters(@PathVariable("id") String idStr,
             @RequestBody PostFilters params,
             WebSession session) {
+
         long accountId = CalypsoHelpers.parseAccountId(idStr);
         Long me = (Long) session.getAttribute("accountId");
-        if (me == null || !me.equals(accountId)) {
+        if (me == null || !me.equals(accountId))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
-        }
+
+        validator.validate(params);
+
         return Mono.fromFuture(manager.postFilters(params, accountId))
                 .flatMap(ok -> ok
                         ? Mono.just(new GetFilters(params.toThrift(accountId)))
@@ -160,6 +162,16 @@ public class CalypsoApiController {
                 .map(filters -> new GetFilters(filters))
                 // but if it completed to null, Mono is empty → turn into 404
                 .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND)));
+    }
+
+    @GetMapping("/api/meta/tags/lifestyle")
+    public Map<String, List<String>> lifestyleTags() {
+        return tagService.lifestyle();
+    }
+
+    @GetMapping("/api/meta/tags/interests")
+    public Map<String, List<String>> interestTags() {
+        return tagService.interests();
     }
 
     // For testing

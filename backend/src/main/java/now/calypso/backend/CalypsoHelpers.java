@@ -83,10 +83,9 @@ public class CalypsoHelpers {
         if (id == null)
             return null;
         String[] parts = id.split("-");
-        if ("a".equals(parts[parts.length - 1]) && parts.length == 2)
+        if (parts.length == 2 && "a".equals(parts[1]))
             return Long.parseLong(parts[0]);
-        else
-            throw new RuntimeException("Not an account id: " + id);
+        throw new IllegalArgumentException("Not an account id: " + id);
     }
 
     public static String serializeAccountId(long accountId) {

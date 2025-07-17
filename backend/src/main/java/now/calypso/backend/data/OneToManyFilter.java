@@ -12,19 +12,27 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
 
   private static final org.apache.thrift.protocol.TField SELF_FIELD_DESC = new org.apache.thrift.protocol.TField("self", org.apache.thrift.protocol.TType.STRING, (short)1);
   private static final org.apache.thrift.protocol.TField SEEKING_FIELD_DESC = new org.apache.thrift.protocol.TField("seeking", org.apache.thrift.protocol.TType.LIST, (short)2);
-  private static final org.apache.thrift.protocol.TField IMPORTANCE_FIELD_DESC = new org.apache.thrift.protocol.TField("importance", org.apache.thrift.protocol.TType.STRING, (short)3);
+  private static final org.apache.thrift.protocol.TField IMPORTANCE_FIELD_DESC = new org.apache.thrift.protocol.TField("importance", org.apache.thrift.protocol.TType.I32, (short)3);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new OneToManyFilterStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new OneToManyFilterTupleSchemeFactory();
 
   public @org.apache.thrift.annotation.Nullable java.lang.String self; // optional
   public @org.apache.thrift.annotation.Nullable java.util.List<java.lang.String> seeking; // optional
-  public @org.apache.thrift.annotation.Nullable java.lang.String importance; // optional
+  /**
+   * 
+   * @see Importance
+   */
+  public @org.apache.thrift.annotation.Nullable Importance importance; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
     SELF((short)1, "self"),
     SEEKING((short)2, "seeking"),
+    /**
+     * 
+     * @see Importance
+     */
     IMPORTANCE((short)3, "importance");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
@@ -100,7 +108,7 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
         new org.apache.thrift.meta_data.ListMetaData(org.apache.thrift.protocol.TType.LIST, 
             new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING))));
     tmpMap.put(_Fields.IMPORTANCE, new org.apache.thrift.meta_data.FieldMetaData("importance", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
-        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
+        new org.apache.thrift.meta_data.EnumMetaData(org.apache.thrift.protocol.TType.ENUM, Importance.class)));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(OneToManyFilter.class, metaDataMap);
   }
@@ -202,12 +210,20 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
     }
   }
 
+  /**
+   * 
+   * @see Importance
+   */
   @org.apache.thrift.annotation.Nullable
-  public java.lang.String getImportance() {
+  public Importance getImportance() {
     return this.importance;
   }
 
-  public OneToManyFilter setImportance(@org.apache.thrift.annotation.Nullable java.lang.String importance) {
+  /**
+   * 
+   * @see Importance
+   */
+  public OneToManyFilter setImportance(@org.apache.thrift.annotation.Nullable Importance importance) {
     this.importance = importance;
     return this;
   }
@@ -250,7 +266,7 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
       if (value == null) {
         unsetImportance();
       } else {
-        setImportance((java.lang.String)value);
+        setImportance((Importance)value);
       }
       break;
 
@@ -349,7 +365,7 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
 
     hashCode = hashCode * 8191 + ((isSetImportance()) ? 131071 : 524287);
     if (isSetImportance())
-      hashCode = hashCode * 8191 + importance.hashCode();
+      hashCode = hashCode * 8191 + importance.getValue();
 
     return hashCode;
   }
@@ -517,8 +533,8 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
             }
             break;
           case 3: // IMPORTANCE
-            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
-              struct.importance = iprot.readString();
+            if (schemeField.type == org.apache.thrift.protocol.TType.I32) {
+              struct.importance = now.calypso.backend.data.Importance.findByValue(iprot.readI32());
               struct.setImportanceIsSet(true);
             } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
@@ -564,7 +580,7 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
       if (struct.importance != null) {
         if (struct.isSetImportance()) {
           oprot.writeFieldBegin(IMPORTANCE_FIELD_DESC);
-          oprot.writeString(struct.importance);
+          oprot.writeI32(struct.importance.getValue());
           oprot.writeFieldEnd();
         }
       }
@@ -610,7 +626,7 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
         }
       }
       if (struct.isSetImportance()) {
-        oprot.writeString(struct.importance);
+        oprot.writeI32(struct.importance.getValue());
       }
     }
 
@@ -636,7 +652,7 @@ public class OneToManyFilter implements org.apache.thrift.TBase<OneToManyFilter,
         struct.setSeekingIsSet(true);
       }
       if (incoming.get(2)) {
-        struct.importance = iprot.readString();
+        struct.importance = now.calypso.backend.data.Importance.findByValue(iprot.readI32());
         struct.setImportanceIsSet(true);
       }
     }
