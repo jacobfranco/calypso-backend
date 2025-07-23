@@ -15,6 +15,9 @@ public final class TagDictionaryLoader {
 
     public static final Map<String, List<String>> LIFESTYLE = load("/lifestyle-tags.json");
     public static final Map<String, List<String>> INTEREST = load("/interest-tags.json");
+    public static final Map<String, List<String>> GENDER = load("/gender-tags.json");
+    public static final Map<String, List<String>> RELIGION = load("/religion-tags.json");
+    public static final Map<String, List<String>> POLITICS = load("/politics-tags.json");
 
     private TagDictionaryLoader() {
         /* utility */ }

@@ -1,0 +1,4 @@
+{
+  "binary": ["male", "female"],
+  "nonbinary": ["nonbinary", "transgender", "genderfluid"]
+}

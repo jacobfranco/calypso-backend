@@ -174,6 +174,21 @@ public class CalypsoApiController {
         return tagService.interests();
     }
 
+    @GetMapping("/api/meta/tags/gender")
+    public Map<String, List<String>> genderTags() {
+        return tagService.genders();
+    }
+
+    @GetMapping("/api/meta/tags/religion")
+    public Map<String, List<String>> religionTags() {
+        return tagService.religions();
+    }
+
+    @GetMapping("/api/meta/tags/politics")
+    public Map<String, List<String>> politicalTags() {
+        return tagService.politics();
+    }
+
     // For testing
 
     @GetMapping("/api/accounts/me")

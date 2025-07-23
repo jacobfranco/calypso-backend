@@ -17,8 +17,8 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new LocationFilterStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new LocationFilterTupleSchemeFactory();
 
-  public @org.apache.thrift.annotation.Nullable java.lang.String city; // optional
-  public @org.apache.thrift.annotation.Nullable java.lang.String radius; // optional
+  public @org.apache.thrift.annotation.Nullable java.lang.String city; // required
+  public @org.apache.thrift.annotation.Nullable java.lang.String radius; // required
   /**
    * 
    * @see Importance
@@ -98,13 +98,13 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
   }
 
   // isset id assignments
-  private static final _Fields optionals[] = {_Fields.CITY,_Fields.RADIUS,_Fields.IMPORTANCE};
+  private static final _Fields optionals[] = {_Fields.IMPORTANCE};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
-    tmpMap.put(_Fields.CITY, new org.apache.thrift.meta_data.FieldMetaData("city", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+    tmpMap.put(_Fields.CITY, new org.apache.thrift.meta_data.FieldMetaData("city", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
-    tmpMap.put(_Fields.RADIUS, new org.apache.thrift.meta_data.FieldMetaData("radius", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+    tmpMap.put(_Fields.RADIUS, new org.apache.thrift.meta_data.FieldMetaData("radius", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
     tmpMap.put(_Fields.IMPORTANCE, new org.apache.thrift.meta_data.FieldMetaData("importance", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.EnumMetaData(org.apache.thrift.protocol.TType.ENUM, Importance.class)));
@@ -113,6 +113,15 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
   }
 
   public LocationFilter() {
+  }
+
+  public LocationFilter(
+    java.lang.String city,
+    java.lang.String radius)
+  {
+    this();
+    this.city = city;
+    this.radius = radius;
   }
 
   /**
@@ -414,25 +423,21 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
     java.lang.StringBuilder sb = new java.lang.StringBuilder("LocationFilter(");
     boolean first = true;
 
-    if (isSetCity()) {
-      sb.append("city:");
-      if (this.city == null) {
-        sb.append("null");
-      } else {
-        sb.append(this.city);
-      }
-      first = false;
+    sb.append("city:");
+    if (this.city == null) {
+      sb.append("null");
+    } else {
+      sb.append(this.city);
     }
-    if (isSetRadius()) {
-      if (!first) sb.append(", ");
-      sb.append("radius:");
-      if (this.radius == null) {
-        sb.append("null");
-      } else {
-        sb.append(this.radius);
-      }
-      first = false;
+    first = false;
+    if (!first) sb.append(", ");
+    sb.append("radius:");
+    if (this.radius == null) {
+      sb.append("null");
+    } else {
+      sb.append(this.radius);
     }
+    first = false;
     if (isSetImportance()) {
       if (!first) sb.append(", ");
       sb.append("importance:");
@@ -449,6 +454,12 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
 
   public void validate() throws org.apache.thrift.TException {
     // check for required fields
+    if (city == null) {
+      throw new org.apache.thrift.protocol.TProtocolException("Required field 'city' was not present! Struct: " + toString());
+    }
+    if (radius == null) {
+      throw new org.apache.thrift.protocol.TProtocolException("Required field 'radius' was not present! Struct: " + toString());
+    }
     // check for sub-struct validity
   }
 
@@ -529,18 +540,14 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
 
       oprot.writeStructBegin(STRUCT_DESC);
       if (struct.city != null) {
-        if (struct.isSetCity()) {
-          oprot.writeFieldBegin(CITY_FIELD_DESC);
-          oprot.writeString(struct.city);
-          oprot.writeFieldEnd();
-        }
+        oprot.writeFieldBegin(CITY_FIELD_DESC);
+        oprot.writeString(struct.city);
+        oprot.writeFieldEnd();
       }
       if (struct.radius != null) {
-        if (struct.isSetRadius()) {
-          oprot.writeFieldBegin(RADIUS_FIELD_DESC);
-          oprot.writeString(struct.radius);
-          oprot.writeFieldEnd();
-        }
+        oprot.writeFieldBegin(RADIUS_FIELD_DESC);
+        oprot.writeString(struct.radius);
+        oprot.writeFieldEnd();
       }
       if (struct.importance != null) {
         if (struct.isSetImportance()) {
@@ -567,23 +574,13 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
     @Override
     public void write(org.apache.thrift.protocol.TProtocol prot, LocationFilter struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol oprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
+      oprot.writeString(struct.city);
+      oprot.writeString(struct.radius);
       java.util.BitSet optionals = new java.util.BitSet();
-      if (struct.isSetCity()) {
+      if (struct.isSetImportance()) {
         optionals.set(0);
       }
-      if (struct.isSetRadius()) {
-        optionals.set(1);
-      }
-      if (struct.isSetImportance()) {
-        optionals.set(2);
-      }
-      oprot.writeBitSet(optionals, 3);
-      if (struct.isSetCity()) {
-        oprot.writeString(struct.city);
-      }
-      if (struct.isSetRadius()) {
-        oprot.writeString(struct.radius);
-      }
+      oprot.writeBitSet(optionals, 1);
       if (struct.isSetImportance()) {
         oprot.writeI32(struct.importance.getValue());
       }
@@ -592,16 +589,12 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
     @Override
     public void read(org.apache.thrift.protocol.TProtocol prot, LocationFilter struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
-      java.util.BitSet incoming = iprot.readBitSet(3);
+      struct.city = iprot.readString();
+      struct.setCityIsSet(true);
+      struct.radius = iprot.readString();
+      struct.setRadiusIsSet(true);
+      java.util.BitSet incoming = iprot.readBitSet(1);
       if (incoming.get(0)) {
-        struct.city = iprot.readString();
-        struct.setCityIsSet(true);
-      }
-      if (incoming.get(1)) {
-        struct.radius = iprot.readString();
-        struct.setRadiusIsSet(true);
-      }
-      if (incoming.get(2)) {
         struct.importance = now.calypso.backend.data.Importance.findByValue(iprot.readI32());
         struct.setImportanceIsSet(true);
       }

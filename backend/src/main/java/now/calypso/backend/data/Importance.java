@@ -6,6 +6,7 @@
  */
 package now.calypso.backend.data;
 
+
 public enum Importance implements org.apache.thrift.TEnum {
   NOT_IMPORTANT(1),
   PREFERENCE(2),
@@ -27,11 +28,10 @@ public enum Importance implements org.apache.thrift.TEnum {
 
   /**
    * Find a the enum type by its integer value, as defined in the Thrift IDL.
-   * 
    * @return null if the value is not found.
    */
   @org.apache.thrift.annotation.Nullable
-  public static Importance findByValue(int value) {
+  public static Importance findByValue(int value) { 
     switch (value) {
       case 1:
         return NOT_IMPORTANT;

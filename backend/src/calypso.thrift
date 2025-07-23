@@ -59,7 +59,7 @@ struct AttachmentWithId {
 
 struct Filters {
   1: required AccountId accountId;
-  2: optional ModeFilter relationshipMode;         // casual, serious, open to both
+  2: optional ModeFilter relationshipMode;         // casual, serious
   3: optional OneToManyFilter gender;              // self + seeking genders
   4: optional RangeFilter age;                     // self + desired age range
   5: optional LocationFilter location;             // self location + scope (e.g. city, state)
@@ -96,8 +96,8 @@ struct TagPreference {
 }
 
 struct LocationFilter {
-  1: optional string city;              // e.g. "Charlotte, NC"
-  2: optional string radius;            // e.g. "my_city", "my_state", "worldwide"
+  1: required string city;              // e.g. "Charlotte, NC"
+  2: required string radius;            // e.g. "my_city", "my_state", "worldwide"
   3: optional Importance importance;        // optional: for scoring
 }
 

@@ -22,6 +22,18 @@ public class TagDictionaryService {
         return TagDictionaryLoader.INTEREST;
     }
 
+    public Map<String, List<String>> genders() {
+        return TagDictionaryLoader.GENDER;
+    }
+
+    public Map<String, List<String>> religions() {
+        return TagDictionaryLoader.RELIGION;
+    }
+
+    public Map<String, List<String>> politics() {
+        return TagDictionaryLoader.POLITICS;
+    }
+
     // flattened versions for fast membership checks
     public Set<String> lifestyleFlat() {
         return TagDictionaryLoader.flat(lifestyle());
@@ -29,5 +41,17 @@ public class TagDictionaryService {
 
     public Set<String> interestsFlat() {
         return TagDictionaryLoader.flat(interests());
+    }
+
+    public Set<String> gendersFlat() {
+        return TagDictionaryLoader.flat(genders());
+    }
+
+    public Set<String> religionsFlat() {
+        return TagDictionaryLoader.flat(religions());
+    }
+
+    public Set<String> politicsFlat() {
+        return TagDictionaryLoader.flat(politics());
     }
 }

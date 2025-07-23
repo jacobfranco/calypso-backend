@@ -10,6 +10,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import org.springframework.web.reactive.function.BodyInserters;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -290,6 +291,567 @@ class CalypsoApiControllerTest {
                                 .expectStatus().isBadRequest();
 
                 verify(mockManager, times(0)).postFilters(any(), anyLong());
+        }
+
+        // missing relationshipMode.self
+        @Test
+        void postFilters_missingRelationshipModeSelf_returns400() {
+                PostFilters bad = baseFilters();
+                bad.relationshipMode = new ModeFilter(); // self == null
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(bad)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        // invalid relationshipMode value
+        @Test
+        void postFilters_invalidRelationshipModeOpen_returns400() {
+                PostFilters pf = baseFilters();
+                pf.relationshipMode = new ModeFilter().setSelf("open");
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        // invalid location.radius
+        @Test
+        void postFilters_invalidLocationRadius_returns400() {
+                PostFilters bad = baseFilters();
+                LocationFilter loc = new LocationFilter().setRadius("universe");
+                bad.location = loc;
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(bad)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        // duplicate tags in lifestyle.self
+        @Test
+        void postFilters_duplicateLifestyleSelf_returns400() {
+                PostFilters bad = baseFilters();
+                bad.lifestyle.setSelf(List.of("running", "running"));
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(bad)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        // duplicate tags in lifestyle.preferences
+        @Test
+        void postFilters_duplicateLifestylePreferences_returns400() {
+                PostFilters bad = baseFilters();
+                TagPreference tp1 = new TagPreference().setTag("running").setImportance(Importance.PREFERENCE);
+                TagPreference tp2 = new TagPreference().setTag("running").setImportance(Importance.DEALBREAKER);
+                bad.lifestyle.setPreferences(List.of(tp1, tp2));
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(bad)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        @Test
+        void postFilters_invalidIdFormat_returns400() {
+                client.post()
+                                .uri("/api/accounts/NOT_AN_ID/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(baseFilters())
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        @Test
+        void getFilters_invalidIdFormat_returns400() {
+                client.get()
+                                .uri("/api/accounts/HELLO/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).getFilters(anyLong(), anyLong());
+        }
+
+        @Test
+        void postFilters_malformedJson_returns400() {
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .body(BodyInserters.fromValue("this is not json"))
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        @Test
+        void postFilters_emptyBody_returns400() {
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .body(BodyInserters.fromValue(""))
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        @Test
+        void postFilters_emptyObject_returns200() {
+                when(mockManager.postFilters(any(PostFilters.class), eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(new PostFilters())
+                                .exchange()
+                                .expectStatus().isOk();
+
+                verify(mockManager, times(1)).postFilters(any(), eq(7L));
+        }
+
+        @Test
+        void postFilters_ageOnlyMin_returns200() {
+                PostFilters pf = new PostFilters();
+                pf.age = new RangeFilter().setMin(20);
+                when(mockManager.postFilters(any(), eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isOk();
+
+                verify(mockManager).postFilters(any(), eq(7L));
+        }
+
+        @Test
+        void postFilters_ageOnlyMax_returns200() {
+                PostFilters pf = new PostFilters();
+                pf.age = new RangeFilter().setMax(50);
+                when(mockManager.postFilters(any(), eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isOk();
+
+                verify(mockManager).postFilters(any(), eq(7L));
+        }
+
+        @Test
+        void postFilters_ageOnlySelf_returns200() {
+                PostFilters pf = new PostFilters();
+                pf.age = new RangeFilter().setSelf(30);
+                when(mockManager.postFilters(any(), eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isOk();
+
+                verify(mockManager).postFilters(any(), eq(7L));
+        }
+
+        @Test
+        void postFilters_genderOnlySelf_returns200() {
+                PostFilters pf = baseFilters();
+                pf.gender = new OneToManyFilter().setSelf("female");
+                when(mockManager.postFilters(any(), eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isOk();
+
+                verify(mockManager).postFilters(any(), eq(7L));
+        }
+
+        @Test
+        void postFilters_genderOnlySeeking_returns200() {
+                PostFilters pf = baseFilters();
+                pf.gender = new OneToManyFilter().setSeeking(List.of("male"));
+                when(mockManager.postFilters(any(), eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isOk();
+
+                verify(mockManager).postFilters(any(), eq(7L));
+        }
+
+        @Test
+        void postFilters_genderOnlyImportance_returns200() {
+                PostFilters pf = baseFilters();
+                pf.gender = new OneToManyFilter().setImportance(Importance.DEALBREAKER);
+                when(mockManager.postFilters(any(), eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isOk();
+
+                verify(mockManager).postFilters(any(), eq(7L));
+        }
+
+        @Test
+        void postFilters_genderValid_returns200() {
+                PostFilters pf = baseFilters();
+                pf.gender = new OneToManyFilter().setSelf("male");
+                when(mockManager.postFilters(any(), eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isOk();
+                verify(mockManager).postFilters(any(), eq(7L));
+        }
+
+        @Test
+        void postFilters_genderUnknown_returns400() {
+                PostFilters pf = baseFilters();
+                pf.gender = new OneToManyFilter().setSelf("alien");
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        @Test
+        void postFilters_religionValidSeeking_returns200() {
+                PostFilters pf = baseFilters();
+                pf.religion = new OneToManyFilter().setSeeking(List.of("buddhist"));
+                when(mockManager.postFilters(any(), eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isOk();
+                verify(mockManager).postFilters(any(), eq(7L));
+        }
+
+        @Test
+        void postFilters_religionUnknownSeeking_returns400() {
+                PostFilters pf = baseFilters();
+                pf.religion = new OneToManyFilter().setSeeking(List.of("pastafarian"));
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        @Test
+        void postFilters_politicsValid_returns200() {
+                PostFilters pf = baseFilters();
+                pf.politics = new OneToManyFilter().setSelf("libertarian");
+                when(mockManager.postFilters(any(), eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isOk();
+                verify(mockManager).postFilters(any(), eq(7L));
+        }
+
+        @Test
+        void postFilters_politicsUnknown_returns400() {
+                PostFilters pf = baseFilters();
+                pf.politics = new OneToManyFilter().setSelf("anarcho-capitalist");
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        @Test
+        void postFilters_validRelationshipMode_returns200() {
+                PostFilters pf = baseFilters();
+                pf.relationshipMode = new ModeFilter().setSelf("serious");
+                when(mockManager.postFilters(any(), eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isOk();
+
+                verify(mockManager).postFilters(any(), eq(7L));
+        }
+
+        @Test
+        void postFilters_locationOnlyCity_returns400() {
+                PostFilters pf = baseFilters();
+                pf.location = new LocationFilter().setCity("Chicago, IL"); // missing radius
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        @Test
+        void postFilters_locationOnlyValidRadius_returns400() {
+                PostFilters pf = baseFilters();
+                pf.location = new LocationFilter().setRadius("my_city"); // missing city
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        @Test
+        void postFilters_locationCityAndRadius_returns200() {
+                PostFilters pf = baseFilters();
+                pf.location = new LocationFilter()
+                                .setCity("Boston, MA")
+                                .setRadius("my_state");
+                when(mockManager.postFilters(any(), eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isOk();
+                verify(mockManager).postFilters(any(), eq(7L));
+        }
+
+        // ---------------------------------------------------------------------------
+        // H) ManyToManyFilter (interests) duplicates & unknown‐tag
+        // ---------------------------------------------------------------------------
+        @Test
+        void postFilters_interestsUnknownTag_returns400() {
+                PostFilters pf = baseFilters();
+                pf.interests = new ManyToManyFilter()
+                                .setSelf(List.of("surfing")) // not in your JSON
+                                .setPreferences(List.of());
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        @Test
+        void postFilters_duplicateInterestsSelf_returns400() {
+                PostFilters pf = baseFilters();
+                pf.interests = new ManyToManyFilter().setSelf(List.of("anime", "anime"));
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        @Test
+        void postFilters_duplicateInterestsPreferences_returns400() {
+                TagPreference t1 = new TagPreference().setTag("board_games").setImportance(Importance.PREFERENCE);
+                TagPreference t2 = new TagPreference().setTag("board_games").setImportance(Importance.DEALBREAKER);
+
+                PostFilters pf = baseFilters();
+                // initialize the interests filter before mutating it:
+                pf.interests = new ManyToManyFilter()
+                                .setPreferences(List.of(t1, t2));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+
+                verify(mockManager, never()).postFilters(any(), anyLong());
+        }
+
+        // ---------------------------------------------------------------------------
+        // I) Full‐payload happy‐path
+        // ---------------------------------------------------------------------------
+        @Test
+        void postFilters_fullPayload_returns200() {
+                PostFilters pf = new PostFilters();
+                pf.relationshipMode = new ModeFilter().setSelf("casual");
+                pf.gender = new OneToManyFilter().setSelf("nonbinary").setImportance(Importance.PREFERENCE);
+                pf.age = new RangeFilter().setSelf(27).setMin(23).setMax(32).setImportance(Importance.NOT_IMPORTANT);
+                pf.location = new LocationFilter().setCity("Miami, FL").setRadius("my_state");
+                pf.religion = new OneToManyFilter().setSeeking(List.of("agnostic"));
+                pf.politics = new OneToManyFilter().setSelf("liberal");
+                pf.lifestyle = new ManyToManyFilter().setSelf(List.of("yoga")).setPreferences(
+                                List.of(new TagPreference().setTag("yoga").setImportance(Importance.PREFERENCE)));
+                pf.interests = new ManyToManyFilter().setSelf(List.of("climbing")).setPreferences(
+                                List.of(new TagPreference().setTag("climbing").setImportance(Importance.DEALBREAKER)));
+
+                when(mockManager.postFilters(any(), eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(pf)
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.filters.accountId").isEqualTo(7);
+
+                verify(mockManager).postFilters(any(), eq(7L));
+        }
+
+        // ---------------------------------------------------------------------------
+        // J) GET‐specific
+        // ---------------------------------------------------------------------------
+        @Test
+        void getFilters_validButWrongUser_returns403() {
+                String otherId = CalypsoHelpers.serializeAccountId(8L);
+                client.get()
+                                .uri("/api/accounts/" + otherId + "/filters")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .exchange()
+                                .expectStatus().isEqualTo(HttpStatus.FORBIDDEN);
+                verify(mockManager, never()).getFilters(anyLong(), anyLong());
+        }
+
+        @Test
+        void getMetaTags_lifestyle_returns200() {
+                client.get()
+                                .uri("/api/meta/tags/lifestyle")
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.fitness").isArray()
+                                .jsonPath("$.dietary").isArray();
+        }
+
+        @Test
+        void getMetaTags_interests_returns200() {
+                client.get()
+                                .uri("/api/meta/tags/interests")
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.sports").isArray()
+                                .jsonPath("$.creative").isArray();
+        }
+
+        @Test
+        void getMetaTags_gender_returns200() {
+                client.get()
+                                .uri("/api/meta/tags/gender")
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.binary").isArray()
+                                .jsonPath("$.nonbinary").isArray();
+        }
+
+        @Test
+        void getMetaTags_religion_returns200() {
+                client.get()
+                                .uri("/api/meta/tags/religion")
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.major").isArray()
+                                .jsonPath("$.minor").isArray();
+        }
+
+        @Test
+        void getMetaTags_politics_returns200() {
+                client.get()
+                                .uri("/api/meta/tags/politics")
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.spectrum").isArray();
         }
 
 }
