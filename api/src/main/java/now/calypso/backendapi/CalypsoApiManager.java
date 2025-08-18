@@ -3,16 +3,15 @@ package now.calypso.backendapi;
 import java.io.IOException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
-import java.util.Arrays;
-import java.util.List;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
+import java.util.*;
+import java.util.concurrent.*;
 
 import com.openai.client.OpenAIClient;
 import com.rpl.rama.*;
 import com.rpl.rama.cluster.ClusterManagerBase;
 
 import now.calypso.backendapi.pojos.*;
+import now.calypso.backendapi.signals.*;
 import now.calypso.backend.*;
 import now.calypso.backend.data.*;
 import now.calypso.backend.modules.*;
@@ -21,6 +20,8 @@ public class CalypsoApiManager {
 
     private final OpenAIClient openAI;
 
+    private final ConcurrentHashMap<Long, CompletableFuture<Void>> serialByAccount = new ConcurrentHashMap<>();
+
     // Modules
     public static final String CORE_MODULE_NAME = Core.class.getName();
     public static final String RELATIONSHIPS_MODULE_NAME = Relationships.class.getName();
@@ -28,6 +29,7 @@ public class CalypsoApiManager {
     // Core Depots
     private final Depot accountDepot;
     private final Depot filtersDepot;
+    private final Depot signalsDepot;
 
     // Core PStates
     private final PState emailToUser;
@@ -35,6 +37,7 @@ public class CalypsoApiManager {
     // Core Queries
     private final QueryTopologyClient<List<AccountWithId>> getAccountsFromAccountIds;
     private final QueryTopologyClient<Filters> getFiltersFromAccountId;
+    private final QueryTopologyClient<Signals> getSignalsFromAccountId;
 
     // Relationships Depots
     private final Depot authCodeDepot;
@@ -49,6 +52,7 @@ public class CalypsoApiManager {
         // Core Depots
         accountDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*accountDepot");
         filtersDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*filtersDepot");
+        signalsDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*signalsDepot");
 
         // Core PStates
         emailToUser = cluster.clusterPState(CORE_MODULE_NAME, "$$emailToUser");
@@ -56,6 +60,7 @@ public class CalypsoApiManager {
         // Core Queries
         getAccountsFromAccountIds = cluster.clusterQuery(CORE_MODULE_NAME, "getAccountsFromAccountIds");
         getFiltersFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getFiltersFromAccountId");
+        getSignalsFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getSignalsFromAccountId");
 
         // Relationships Depots
         authCodeDepot = cluster.clusterDepot(RELATIONSHIPS_MODULE_NAME, "*authCodeDepot");
@@ -115,9 +120,76 @@ public class CalypsoApiManager {
                 .thenApply(res -> true);
     }
 
-    /** Fetch the latest Filters for accountId */
     public CompletableFuture<Filters> getFilters(long requesterId, long accountId) {
         return getFiltersFromAccountId.invokeAsync(requesterId, accountId);
+    }
+
+    public CompletableFuture<Signals> getSignals(long requesterId, long accountId) {
+        return getSignalsFromAccountId.invokeAsync(requesterId, accountId);
+    }
+
+    /** Read current signals for the owner (treat null as empty list). */
+    private CompletableFuture<List<String>> readCurrentSignals(long accountId) {
+        return getSignals(accountId, accountId).thenApply(s -> {
+            if (s == null || s.signals == null)
+                return new ArrayList<>();
+            return new ArrayList<>(s.signals);
+        });
+    }
+
+    /** Set-semantics union preserving insertion order. */
+    private static List<String> union(List<String> current, List<String> delta) {
+        LinkedHashSet<String> set = new LinkedHashSet<>();
+        if (current != null)
+            set.addAll(current);
+        if (delta != null)
+            set.addAll(delta);
+        return new ArrayList<>(set);
+    }
+
+    /**
+     * Normalize + append (union) tokens, writing a full Signals object. Serialized
+     * per account.
+     */
+    public CompletableFuture<Boolean> postSignals(long accountId, List<String> rawTokens) {
+        List<String> tokens = SignalNormalizer.normalizeTokens(rawTokens);
+        if (tokens.isEmpty())
+            return CompletableFuture.completedFuture(false);
+
+        CompletableFuture<Void> chained = serialByAccount.compute(accountId, (k, prev) -> {
+            CompletableFuture<Void> start = (prev == null) ? CompletableFuture.completedFuture(null) : prev;
+            CompletableFuture<Void> next = start.thenCompose(v -> readCurrentSignals(accountId).thenCompose(current -> {
+                List<String> merged = union(current, tokens);
+                if (merged.equals(current))
+                    return CompletableFuture.completedFuture(null); // no-op
+                Signals updated = new Signals();
+                updated.setAccountId(accountId);
+                updated.setSignals(merged);
+
+                return signalsDepot.appendAsync(updated).thenApply(res -> null);
+            }));
+            next.whenComplete((r, e) -> serialByAccount.remove(k, next));
+            return next;
+        });
+
+        return chained.thenApply(v -> true);
+    }
+
+    /** Robust extraction (LLM + normalization). Returns tokens only; no write. */
+    public CompletableFuture<List<String>> extractSignalsFromText(String text) {
+        return CompletableFuture.supplyAsync(() -> SignalExtractor.extract(openAI, text));
+    }
+
+    /**
+     * Convenience: extract from text, append, and return the tokens that were
+     * attempted.
+     */
+    public CompletableFuture<List<String>> extractAndAppendSignals(long accountId, String text, String source) {
+        return extractSignalsFromText(text).thenCompose(tokens -> {
+            if (tokens.isEmpty())
+                return CompletableFuture.completedFuture(List.of());
+            return postSignals(accountId, tokens).thenApply(ok -> tokens);
+        });
     }
 
 }

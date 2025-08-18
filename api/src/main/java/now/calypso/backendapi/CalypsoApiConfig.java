@@ -15,9 +15,6 @@ import org.springframework.web.reactive.function.server.*;
 import org.springframework.web.server.*;
 import org.springframework.web.server.session.*;
 
-import com.openai.client.OpenAIClient;
-import com.openai.client.okhttp.OpenAIOkHttpClient;
-
 import reactor.core.publisher.Mono;
 
 import java.util.*;
