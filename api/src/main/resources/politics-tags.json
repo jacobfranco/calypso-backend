@@ -1,9 +1,30 @@
 {
   "spectrum": [
+    "left",
     "liberal",
+    "center",
     "conservative",
-    "moderate",
+    "right",
     "libertarian",
-    "socialist"
+    "apolitical",
+    "prefer_not_to_say"
+  ],
+
+  "specific": [
+    "center_left",
+    "center_right",
+    "progressive",
+    "social_democrat",
+    "green",
+    "socialist",
+    "communist",
+    "anarchist",
+    "populist",
+    "nationalist",
+    "authoritarian_left",
+    "authoritarian_right",
+    "monarchist",
+    "far_left",
+    "far_right"
   ]
 }

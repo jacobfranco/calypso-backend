@@ -1,4 +1,26 @@
 {
-  "major": ["christian", "muslim", "hindu", "buddhist", "jewish"],
-  "minor": ["sikh", "jain", "atheist", "agnostic"]
+  "major": [
+    "christian",
+    "muslim",
+    "hindu",
+    "buddhist",
+    "jewish",
+    "spiritual",
+    "atheist",
+    "agnostic",
+    "prefer_not_to_say"
+  ],
+
+  "other": [
+    "sikh",
+    "taoist",
+    "shinto",
+    "bahai",
+    "jain",
+    "indigenous",
+    "pagan",
+    "zoroastrian",
+    "rastafarian",
+    "other_custom"
+  ]
 }

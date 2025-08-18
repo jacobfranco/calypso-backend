@@ -1,4 +1,11 @@
 {
-  "binary": ["male", "female"],
-  "nonbinary": ["nonbinary", "transgender", "genderfluid"]
+  "binary": ["man", "woman"],
+
+  "other": [
+    "trans_man",
+    "trans_woman",
+    "nonbinary",
+    "prefer_not_to_say",
+    "custom"
+  ]
 }

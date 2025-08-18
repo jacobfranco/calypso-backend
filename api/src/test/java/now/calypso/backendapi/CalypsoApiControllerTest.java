@@ -490,8 +490,8 @@ class CalypsoApiControllerTest {
         @Test
         void postFilters_genderOnlySelf_returns200() {
                 PostFilters pf = baseFilters();
-                pf.gender = new OneToManyFilter().setSelf("female");
-                when(mockManager.postFilters(any(), eq(7L)))
+                pf.gender = new OneToManyFilter().setSelf("woman");
+                when(mockManager.postFilters(any(PostFilters.class), eq(7L)))
                                 .thenReturn(CompletableFuture.completedFuture(true));
 
                 client.post()
@@ -508,8 +508,8 @@ class CalypsoApiControllerTest {
         @Test
         void postFilters_genderOnlySeeking_returns200() {
                 PostFilters pf = baseFilters();
-                pf.gender = new OneToManyFilter().setSeeking(List.of("male"));
-                when(mockManager.postFilters(any(), eq(7L)))
+                pf.gender = new OneToManyFilter().setSeeking(List.of("man"));
+                when(mockManager.postFilters(any(PostFilters.class), eq(7L)))
                                 .thenReturn(CompletableFuture.completedFuture(true));
 
                 client.post()
@@ -544,8 +544,8 @@ class CalypsoApiControllerTest {
         @Test
         void postFilters_genderValid_returns200() {
                 PostFilters pf = baseFilters();
-                pf.gender = new OneToManyFilter().setSelf("male");
-                when(mockManager.postFilters(any(), eq(7L)))
+                pf.gender = new OneToManyFilter().setSelf("man");
+                when(mockManager.postFilters(any(PostFilters.class), eq(7L)))
                                 .thenReturn(CompletableFuture.completedFuture(true));
 
                 client.post()
@@ -706,8 +706,9 @@ class CalypsoApiControllerTest {
         void postFilters_interestsUnknownTag_returns400() {
                 PostFilters pf = baseFilters();
                 pf.interests = new ManyToManyFilter()
-                                .setSelf(List.of("surfing")) // not in your JSON
+                                .setSelf(List.of("underwater_basket_weaving"))
                                 .setPreferences(List.of());
+
                 client.post()
                                 .uri("/api/accounts/" + serializedId + "/filters")
                                 .header("Authorization", "Bearer " + sessionToken)
@@ -715,6 +716,7 @@ class CalypsoApiControllerTest {
                                 .bodyValue(pf)
                                 .exchange()
                                 .expectStatus().isBadRequest();
+
                 verify(mockManager, never()).postFilters(any(), anyLong());
         }
 
@@ -765,10 +767,13 @@ class CalypsoApiControllerTest {
                 pf.location = new LocationFilter().setCity("Miami, FL").setRadius("my_state");
                 pf.religion = new OneToManyFilter().setSeeking(List.of("agnostic"));
                 pf.politics = new OneToManyFilter().setSelf("liberal");
-                pf.lifestyle = new ManyToManyFilter().setSelf(List.of("yoga")).setPreferences(
-                                List.of(new TagPreference().setTag("yoga").setImportance(Importance.PREFERENCE)));
-                pf.interests = new ManyToManyFilter().setSelf(List.of("climbing")).setPreferences(
-                                List.of(new TagPreference().setTag("climbing").setImportance(Importance.DEALBREAKER)));
+                pf.lifestyle = new ManyToManyFilter().setSelf(List.of("yoga"))
+                                .setPreferences(List.of(new TagPreference().setTag("yoga")
+                                                .setImportance(Importance.PREFERENCE)));
+
+                pf.interests = new ManyToManyFilter().setSelf(List.of("hiking"))
+                                .setPreferences(List.of(new TagPreference().setTag("hiking")
+                                                .setImportance(Importance.DEALBREAKER)));
 
                 when(mockManager.postFilters(any(), eq(7L)))
                                 .thenReturn(CompletableFuture.completedFuture(true));
@@ -818,8 +823,8 @@ class CalypsoApiControllerTest {
                                 .exchange()
                                 .expectStatus().isOk()
                                 .expectBody()
-                                .jsonPath("$.sports").isArray()
-                                .jsonPath("$.creative").isArray();
+                                .jsonPath("$.sports_fan").isArray()
+                                .jsonPath("$.arts_crafts").isArray();
         }
 
         @Test
@@ -830,7 +835,7 @@ class CalypsoApiControllerTest {
                                 .expectStatus().isOk()
                                 .expectBody()
                                 .jsonPath("$.binary").isArray()
-                                .jsonPath("$.nonbinary").isArray();
+                                .jsonPath("$.other").isArray();
         }
 
         @Test
@@ -841,7 +846,7 @@ class CalypsoApiControllerTest {
                                 .expectStatus().isOk()
                                 .expectBody()
                                 .jsonPath("$.major").isArray()
-                                .jsonPath("$.minor").isArray();
+                                .jsonPath("$.other").isArray();
         }
 
         @Test
