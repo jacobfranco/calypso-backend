@@ -63,9 +63,6 @@ public class CalypsoApiApplication {
         sers.add(CalypsoSerialization.class);
         InProcessCluster ipc = InProcessCluster.create(sers);
 
-        Relationships relationshipsModule = new Relationships();
-        ipc.launchModule(relationshipsModule, new LaunchConfig(2, 1));
-
         Core coreModule = new Core();
         ipc.launchModule(coreModule, new LaunchConfig(2, 1));
 

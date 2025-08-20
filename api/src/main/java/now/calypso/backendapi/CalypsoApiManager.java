@@ -24,26 +24,21 @@ public class CalypsoApiManager {
 
     // Modules
     public static final String CORE_MODULE_NAME = Core.class.getName();
-    public static final String RELATIONSHIPS_MODULE_NAME = Relationships.class.getName();
 
     // Core Depots
     private final Depot accountDepot;
+    private final Depot authCodeDepot;
     private final Depot filtersDepot;
     private final Depot signalsDepot;
 
     // Core PStates
     private final PState emailToUser;
+    private final PState authCodeToAccountId;
 
     // Core Queries
     private final QueryTopologyClient<List<AccountWithId>> getAccountsFromAccountIds;
     private final QueryTopologyClient<Filters> getFiltersFromAccountId;
     private final QueryTopologyClient<Signals> getSignalsFromAccountId;
-
-    // Relationships Depots
-    private final Depot authCodeDepot;
-
-    // Relationships PStates
-    private final PState authCodeToAccountId;
 
     public CalypsoApiManager(ClusterManagerBase cluster, OpenAIClient openAI) {
 
@@ -51,22 +46,19 @@ public class CalypsoApiManager {
 
         // Core Depots
         accountDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*accountDepot");
+        authCodeDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*authCodeDepot");
         filtersDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*filtersDepot");
         signalsDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*signalsDepot");
 
         // Core PStates
         emailToUser = cluster.clusterPState(CORE_MODULE_NAME, "$$emailToUser");
+        authCodeToAccountId = cluster.clusterPState(CORE_MODULE_NAME, "$$authCodeToAccountId");
 
         // Core Queries
         getAccountsFromAccountIds = cluster.clusterQuery(CORE_MODULE_NAME, "getAccountsFromAccountIds");
         getFiltersFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getFiltersFromAccountId");
         getSignalsFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getSignalsFromAccountId");
 
-        // Relationships Depots
-        authCodeDepot = cluster.clusterDepot(RELATIONSHIPS_MODULE_NAME, "*authCodeDepot");
-
-        // Relationships PStates
-        authCodeToAccountId = cluster.clusterPState(RELATIONSHIPS_MODULE_NAME, "$$authCodeToAccountId");
     }
 
     public CompletableFuture<Boolean> postAccount(PostAccount params) {

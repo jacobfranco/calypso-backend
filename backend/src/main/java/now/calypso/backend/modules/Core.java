@@ -8,6 +8,7 @@ import com.rpl.rama.ops.*;
 import com.rpl.rama.helpers.*;
 
 import now.calypso.backend.*;
+import now.calypso.backend.CalypsoHelpers.ExtractCode;
 import now.calypso.backend.data.*;
 
 import static now.calypso.backend.CalypsoHelpers.extractFields;
@@ -51,6 +52,27 @@ public class Core implements RamaModule {
                                                             "*accountId", "*data")
                                                 .out("*accountWithId")
                                                 .depotPartitionAppend("*accountWithIdDepot", "*accountWithId"));
+      }
+
+      private void declareAuthTopology(Topologies topologies) {
+            StreamTopology stream = topologies.stream("relationshipsStream");
+
+            stream.pstate(
+                        "$$authCodeToAccountId",
+                        PState.mapSchema(String.class, Long.class));
+
+            stream.source("*authCodeDepot").out("*data")
+                        .subSource("*data",
+                                    SubSource.create(AddAuthCode.class)
+                                                .macro(extractFields("*data", "*code", "*accountId"))
+                                                .localTransform(
+                                                            "$$authCodeToAccountId",
+                                                            Path.key("*code").termVal("*accountId")),
+                                    SubSource.create(RemoveAuthCode.class)
+                                                .macro(extractFields("*data", "*code"))
+                                                .localTransform(
+                                                            "$$authCodeToAccountId",
+                                                            Path.key("*code").termVoid()));
       }
 
       private static void declareFiltersTopology(Topologies topologies) {
@@ -117,11 +139,13 @@ public class Core implements RamaModule {
       public void define(Setup setup, Topologies topologies) {
             setup.declareDepot("*accountDepot", Depot.hashBy(CalypsoHelpers.ExtractEmail.class));
             setup.declareDepot("*accountWithIdDepot", Depot.disallow());
+            setup.declareDepot("*authCodeDepot", Depot.hashBy(ExtractCode.class));
             setup.declareDepot("*filtersDepot",
                         Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
             setup.declareDepot("*signalsDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
 
             declareAccountsTopology(topologies);
+            declareAuthTopology(topologies);
             declareFiltersTopology(topologies);
             declareSignalsTopology(topologies);
 
