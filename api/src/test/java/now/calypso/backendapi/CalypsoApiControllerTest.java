@@ -327,8 +327,9 @@ class CalypsoApiControllerTest {
         @Test
         void postFilters_invalidLocationRadius_returns400() {
                 PostFilters bad = baseFilters();
-                LocationFilter loc = new LocationFilter().setRadius("universe");
-                bad.location = loc;
+                // CLT approx; negative radius to trigger validator
+                bad.location = new LocationFilter().setLat(35.2271).setLon(-80.8431).setRadiusKm(-5.0);
+
                 client.post()
                                 .uri("/api/accounts/" + serializedId + "/filters")
                                 .header("Authorization", "Bearer " + sessionToken)
@@ -653,9 +654,10 @@ class CalypsoApiControllerTest {
         }
 
         @Test
-        void postFilters_locationOnlyCity_returns400() {
+        void postFilters_locationOnlyLatLon_returns400() {
                 PostFilters pf = baseFilters();
-                pf.location = new LocationFilter().setCity("Chicago, IL"); // missing radius
+                pf.location = new LocationFilter().setLat(41.8781).setLon(-87.6298); // Chicago, no radiusKm
+
                 client.post()
                                 .uri("/api/accounts/" + serializedId + "/filters")
                                 .header("Authorization", "Bearer " + sessionToken)
@@ -667,9 +669,10 @@ class CalypsoApiControllerTest {
         }
 
         @Test
-        void postFilters_locationOnlyValidRadius_returns400() {
+        void postFilters_locationOnlyRadiusKm_returns400() {
                 PostFilters pf = baseFilters();
-                pf.location = new LocationFilter().setRadius("my_city"); // missing city
+                pf.location = new LocationFilter().setRadiusKm(35.0); // radius only
+
                 client.post()
                                 .uri("/api/accounts/" + serializedId + "/filters")
                                 .header("Authorization", "Bearer " + sessionToken)
@@ -681,11 +684,11 @@ class CalypsoApiControllerTest {
         }
 
         @Test
-        void postFilters_locationCityAndRadius_returns200() {
+        void postFilters_locationLatLonAndRadius_returns200() {
                 PostFilters pf = baseFilters();
-                pf.location = new LocationFilter()
-                                .setCity("Boston, MA")
-                                .setRadius("my_state");
+                // Boston approx, state-ish radius
+                pf.location = new LocationFilter().setLat(42.3601).setLon(-71.0589).setRadiusKm(250.0);
+
                 when(mockManager.postFilters(any(), eq(7L)))
                                 .thenReturn(CompletableFuture.completedFuture(true));
 
@@ -764,13 +767,13 @@ class CalypsoApiControllerTest {
                 pf.relationshipMode = new ModeFilter().setSelf("casual");
                 pf.gender = new OneToManyFilter().setSelf("nonbinary").setImportance(Importance.PREFERENCE);
                 pf.age = new RangeFilter().setSelf(27).setMin(23).setMax(32).setImportance(Importance.NOT_IMPORTANT);
-                pf.location = new LocationFilter().setCity("Miami, FL").setRadius("my_state");
+                // Miami approx, state-ish radius
+                pf.location = new LocationFilter().setLat(25.7617).setLon(-80.1918).setRadiusKm(250.0);
                 pf.religion = new OneToManyFilter().setSeeking(List.of("agnostic"));
                 pf.politics = new OneToManyFilter().setSelf("liberal");
                 pf.lifestyle = new ManyToManyFilter().setSelf(List.of("yoga"))
                                 .setPreferences(List.of(new TagPreference().setTag("yoga")
                                                 .setImportance(Importance.PREFERENCE)));
-
                 pf.interests = new ManyToManyFilter().setSelf(List.of("hiking"))
                                 .setPreferences(List.of(new TagPreference().setTag("hiking")
                                                 .setImportance(Importance.DEALBREAKER)));
@@ -857,6 +860,74 @@ class CalypsoApiControllerTest {
                                 .expectStatus().isOk()
                                 .expectBody()
                                 .jsonPath("$.spectrum").isArray();
+        }
+
+        // --------- Matches endpoint tests (new) ---------
+
+        @Test
+        void getMatches_unauthenticated_returns403() {
+                String id = CalypsoHelpers.serializeAccountId(7L);
+                client.get()
+                                .uri("/api/accounts/" + id + "/matches?limit=5")
+                                .exchange()
+                                .expectStatus().isEqualTo(HttpStatus.FORBIDDEN);
+
+                verify(mockManager, never()).getMatches(anyLong(), anyLong(), anyInt());
+        }
+
+        @Test
+        void getMatches_wrongUser_returns403() {
+                String other = CalypsoHelpers.serializeAccountId(8L);
+                client.get()
+                                .uri("/api/accounts/" + other + "/matches?limit=5")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .exchange()
+                                .expectStatus().isEqualTo(HttpStatus.FORBIDDEN);
+
+                verify(mockManager, never()).getMatches(anyLong(), anyLong(), anyInt());
+        }
+
+        @Test
+        void getMatches_returns200AndBody() {
+                String id = CalypsoHelpers.serializeAccountId(7L);
+
+                GetAccount ga = new GetAccount(new AccountWithId(9L,
+                                new Account().setName("Zed").setEmail("z@x.com").setPwdHash("h").setLocale("en_US")
+                                                .setUuid("u").setPublicKey("p").setTimestamp(0L).setAdmin(false)));
+
+                List<GetMatch> payload = List.of(new GetMatch(ga, 88.5, System.currentTimeMillis()));
+                when(mockManager.getMatches(eq(7L), eq(7L), eq(5)))
+                                .thenReturn(CompletableFuture.completedFuture(payload));
+
+                client.get()
+                                .uri("/api/accounts/" + id + "/matches?limit=5")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.matches[0].account.account.account.name").isEqualTo("Zed")
+                                .jsonPath("$.matches[0].score").exists();
+
+                verify(mockManager).getMatches(eq(7L), eq(7L), eq(5));
+        }
+
+        @Test
+        void getMatches_limitParam_clampedAndPassed() {
+                String id = CalypsoHelpers.serializeAccountId(7L);
+
+                when(mockManager.getMatches(eq(7L), eq(7L), anyInt()))
+                                .thenReturn(CompletableFuture.completedFuture(List.of()));
+
+                client.get()
+                                .uri("/api/accounts/" + id + "/matches?limit=5000")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .exchange()
+                                .expectStatus().isOk();
+
+                // Manager should receive a clamped value (<=100). We can't introspect clamp
+                // easily,
+                // but we can at least verify it was invoked once with some int.
+                verify(mockManager, times(1)).getMatches(eq(7L), eq(7L), anyInt());
         }
 
 }

@@ -24,6 +24,7 @@ public class CalypsoApiManager {
 
     // Modules
     public static final String CORE_MODULE_NAME = Core.class.getName();
+    public static final String MATCHES_MODULE_NAME = Matches.class.getName();
 
     // Core Depots
     private final Depot accountDepot;
@@ -39,6 +40,13 @@ public class CalypsoApiManager {
     private final QueryTopologyClient<List<AccountWithId>> getAccountsFromAccountIds;
     private final QueryTopologyClient<Filters> getFiltersFromAccountId;
     private final QueryTopologyClient<Signals> getSignalsFromAccountId;
+
+    // Matches Depots
+    private final Depot matchRefillDepot;
+    private final Depot matchesServeDepot;
+
+    // Matches Queries
+    private final QueryTopologyClient<List<MatchCandidate>> getMatchesFromAccountId;
 
     public CalypsoApiManager(ClusterManagerBase cluster, OpenAIClient openAI) {
 
@@ -58,6 +66,13 @@ public class CalypsoApiManager {
         getAccountsFromAccountIds = cluster.clusterQuery(CORE_MODULE_NAME, "getAccountsFromAccountIds");
         getFiltersFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getFiltersFromAccountId");
         getSignalsFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getSignalsFromAccountId");
+
+        // Matches Depots
+        matchRefillDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*matchRefillDepot");
+        matchesServeDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*matchesServeDepot");
+
+        // Matches Queries
+        getMatchesFromAccountId = cluster.clusterQuery(MATCHES_MODULE_NAME, "getMatchesFromAccountId");
 
     }
 
@@ -182,6 +197,63 @@ public class CalypsoApiManager {
                 return CompletableFuture.completedFuture(List.of());
             return postSignals(accountId, tokens).thenApply(ok -> tokens);
         });
+    }
+
+    private CompletableFuture<Void> requestRefill(long viewerId, int targetSize) {
+        MatchRefillRequest req = new MatchRefillRequest();
+        req.setAccountId(viewerId);
+        req.setTargetSize(targetSize);
+        return matchRefillDepot.appendAsync(req).thenApply(x -> null);
+    }
+
+    public CompletableFuture<List<GetMatch>> getMatches(long requesterId, long viewerId, int limit) {
+        if (limit <= 0)
+            limit = 20;
+        if (limit > 100)
+            limit = 100;
+
+        // 1) opportunistic refill (non-blocking)
+        int refillTarget = Math.max(60, limit * 2);
+        requestRefill(viewerId, refillTarget); // fire-and-forget
+
+        // 2) read top candidates (query is read-only & already filters
+        // exposure/exclusions)
+        return getMatchesFromAccountId.invokeAsync(requesterId, viewerId, limit)
+                .thenCompose(cands -> {
+                    // Collect target ids in order
+                    List<Long> ids = new ArrayList<>();
+                    for (MatchCandidate c : cands)
+                        ids.add(c.getTargetAccountId());
+
+                    // 3) fetch account cards in the same order
+                    return getAccountsFromAccountIds.invokeAsync(viewerId, ids)
+                            .thenCompose(accounts -> {
+                                // Build DTOs aligned with cands
+                                List<GetMatch> out = new ArrayList<>(cands.size());
+                                Map<Long, MatchCandidate> byId = new HashMap<>();
+                                for (MatchCandidate c : cands)
+                                    byId.put(c.getTargetAccountId(), c);
+
+                                for (AccountWithId aw : accounts) {
+                                    MatchCandidate c = byId.get(aw.accountId);
+                                    if (c == null)
+                                        continue; // safety
+                                    GetAccount ga = new GetAccount(aw);
+                                    out.add(new GetMatch(ga, c.getStage0Score(), c.getComputedAt()));
+                                }
+
+                                // 4) log exposure (so refills/query skip these soon)
+                                if (!ids.isEmpty()) {
+                                    ServedPairs sp = new ServedPairs();
+                                    sp.setAccountId(viewerId);
+                                    sp.setTargetIds(ids);
+                                    sp.setServedAt(System.currentTimeMillis());
+                                    return matchesServeDepot.appendAsync(sp).thenApply(x -> out);
+                                } else {
+                                    return CompletableFuture.completedFuture(out);
+                                }
+                            });
+                });
     }
 
 }

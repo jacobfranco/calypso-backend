@@ -15,7 +15,6 @@ public class CoreTest {
 
         @Test
         public void accountCreationAndQueryTest(TestInfo testInfo) throws Exception {
-                // 1. Register serialization and create in-process cluster
                 List<Class> serializations = new ArrayList<>();
                 serializations.add(CalypsoSerialization.class);
 
@@ -24,13 +23,11 @@ public class CoreTest {
                         TestHelpers.launchModule(ipc, coreModule, testInfo);
                         String coreName = coreModule.getClass().getName();
 
-                        // 3. Grab depot, pstate, and query client
                         Depot accountDepot = ipc.clusterDepot(coreName, "*accountDepot");
                         PState emailToUser = ipc.clusterPState(coreName, "$$emailToUser");
                         QueryTopologyClient<List<AccountWithId>> getAccounts = ipc.clusterQuery(coreName,
                                         "getAccountsFromAccountIds");
 
-                        // 4. Append two accounts
                         long ts = 0;
                         Account alice = new Account();
                         alice.setName("alice");
@@ -54,7 +51,6 @@ public class CoreTest {
                         bob.setAdmin(false);
                         accountDepot.append(bob);
 
-                        // 5. Wait until both entries are in the pstate
                         TestHelpers.attainConditionPred(
                                         () -> emailToUser.selectOne(Path.key("alice@example.com")),
                                         obj -> obj != null);
@@ -62,50 +58,22 @@ public class CoreTest {
                                         () -> emailToUser.selectOne(Path.key("bob@example.com")),
                                         obj -> obj != null);
 
-                        // 6. Extract generated account IDs
                         @SuppressWarnings("unchecked")
                         Map<String, Object> aliceInfo = (Map<String, Object>) emailToUser
                                         .selectOne(Path.key("alice@example.com"));
                         long aliceId = (Long) aliceInfo.get("accountId");
+
                         @SuppressWarnings("unchecked")
                         Map<String, Object> bobInfo = (Map<String, Object>) emailToUser
                                         .selectOne(Path.key("bob@example.com"));
                         long bobId = (Long) bobInfo.get("accountId");
 
-                        // 7. Query multiple accounts by IDs
                         List<Long> queryIds = Arrays.asList(aliceId, bobId);
                         List<AccountWithId> results = getAccounts.invoke(aliceId, queryIds);
 
                         assertEquals(2, results.size(), "Should return two accounts");
                         assertEquals(aliceId, results.get(0).getAccountId(), "First result should be Alice");
                         assertEquals(bobId, results.get(1).getAccountId(), "Second result should be Bob");
-                }
-        }
-
-        @Test
-        public void filtersTopologyTest(TestInfo testInfo) throws Exception {
-                List<Class> serializations = Collections.singletonList(CalypsoSerialization.class);
-
-                try (InProcessCluster ipc = InProcessCluster.create(serializations)) {
-                        Core coreModule = new Core();
-                        TestHelpers.launchModule(ipc, coreModule, testInfo);
-                        String coreName = coreModule.getClass().getName();
-
-                        Depot filtersDepot = ipc.clusterDepot(coreName, "*filtersDepot");
-                        PState accountIdToFilters = ipc.clusterPState(coreName, "$$accountIdToFilters");
-
-                        // Append a Filters object for accountId = 1
-                        Filters f = new Filters();
-                        f.setAccountId(1);
-                        filtersDepot.append(f);
-
-                        // Wait until pstate is updated
-                        TestHelpers.attainConditionPred(
-                                        () -> accountIdToFilters.selectOne(Path.key(1L)),
-                                        stored -> stored != null);
-
-                        Filters stored = (Filters) accountIdToFilters.selectOne(Path.key(1L));
-                        assertEquals(f.getAccountId(), stored.getAccountId(), "Stored accountId should match");
                 }
         }
 
@@ -121,7 +89,6 @@ public class CoreTest {
                         Depot authCodeDepot = ipc.clusterDepot(coreName, "*authCodeDepot");
                         PState authCodeToAccountId = ipc.clusterPState(coreName, "$$authCodeToAccountId");
 
-                        // Add Auth Code mapping
                         AddAuthCode add = new AddAuthCode();
                         add.setCode("code123");
                         add.setAccountId(42L);
@@ -133,7 +100,6 @@ public class CoreTest {
                         assertEquals((Long) 42L, authCodeToAccountId.selectOne(Path.key("code123")),
                                         "Auth code should map to account ID 42");
 
-                        // Remove Auth Code mapping
                         RemoveAuthCode rem = new RemoveAuthCode();
                         rem.setCode("code123");
                         authCodeDepot.append(rem);

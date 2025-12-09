@@ -202,4 +202,18 @@ public class CalypsoApiController {
                 .map(GetAccount::new);
     }
 
+    @GetMapping("/api/accounts/{id}/matches")
+    public Mono<GetMatches> getMatches(
+            @PathVariable("id") String idStr,
+            @RequestParam(name = "limit", defaultValue = "20") int limit,
+            WebSession session) {
+        long accountId = now.calypso.backend.CalypsoHelpers.parseAccountId(idStr);
+        Long me = (Long) session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getMatches(me, accountId, limit))
+                .map(GetMatches::new);
+    }
+
 }

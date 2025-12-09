@@ -24,10 +24,10 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new FiltersTupleSchemeFactory();
 
   public long accountId; // required
-  public @org.apache.thrift.annotation.Nullable ModeFilter relationshipMode; // optional
-  public @org.apache.thrift.annotation.Nullable OneToManyFilter gender; // optional
-  public @org.apache.thrift.annotation.Nullable RangeFilter age; // optional
-  public @org.apache.thrift.annotation.Nullable LocationFilter location; // optional
+  public @org.apache.thrift.annotation.Nullable ModeFilter relationshipMode; // required
+  public @org.apache.thrift.annotation.Nullable OneToManyFilter gender; // required
+  public @org.apache.thrift.annotation.Nullable RangeFilter age; // required
+  public @org.apache.thrift.annotation.Nullable LocationFilter location; // required
   public @org.apache.thrift.annotation.Nullable OneToManyFilter religion; // optional
   public @org.apache.thrift.annotation.Nullable OneToManyFilter politics; // optional
   public @org.apache.thrift.annotation.Nullable ManyToManyFilter lifestyle; // optional
@@ -122,19 +122,19 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
   // isset id assignments
   private static final int __ACCOUNTID_ISSET_ID = 0;
   private byte __isset_bitfield = 0;
-  private static final _Fields optionals[] = {_Fields.RELATIONSHIP_MODE,_Fields.GENDER,_Fields.AGE,_Fields.LOCATION,_Fields.RELIGION,_Fields.POLITICS,_Fields.LIFESTYLE,_Fields.INTERESTS};
+  private static final _Fields optionals[] = {_Fields.RELIGION,_Fields.POLITICS,_Fields.LIFESTYLE,_Fields.INTERESTS};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
     tmpMap.put(_Fields.ACCOUNT_ID, new org.apache.thrift.meta_data.FieldMetaData("accountId", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I64        , "AccountId")));
-    tmpMap.put(_Fields.RELATIONSHIP_MODE, new org.apache.thrift.meta_data.FieldMetaData("relationshipMode", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+    tmpMap.put(_Fields.RELATIONSHIP_MODE, new org.apache.thrift.meta_data.FieldMetaData("relationshipMode", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, ModeFilter.class)));
-    tmpMap.put(_Fields.GENDER, new org.apache.thrift.meta_data.FieldMetaData("gender", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+    tmpMap.put(_Fields.GENDER, new org.apache.thrift.meta_data.FieldMetaData("gender", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, OneToManyFilter.class)));
-    tmpMap.put(_Fields.AGE, new org.apache.thrift.meta_data.FieldMetaData("age", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+    tmpMap.put(_Fields.AGE, new org.apache.thrift.meta_data.FieldMetaData("age", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, RangeFilter.class)));
-    tmpMap.put(_Fields.LOCATION, new org.apache.thrift.meta_data.FieldMetaData("location", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+    tmpMap.put(_Fields.LOCATION, new org.apache.thrift.meta_data.FieldMetaData("location", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, LocationFilter.class)));
     tmpMap.put(_Fields.RELIGION, new org.apache.thrift.meta_data.FieldMetaData("religion", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, OneToManyFilter.class)));
@@ -152,11 +152,19 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
   }
 
   public Filters(
-    long accountId)
+    long accountId,
+    ModeFilter relationshipMode,
+    OneToManyFilter gender,
+    RangeFilter age,
+    LocationFilter location)
   {
     this();
     this.accountId = accountId;
     setAccountIdIsSet(true);
+    this.relationshipMode = relationshipMode;
+    this.gender = gender;
+    this.age = age;
+    this.location = location;
   }
 
   /**
@@ -839,46 +847,38 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     sb.append("accountId:");
     sb.append(this.accountId);
     first = false;
-    if (isSetRelationshipMode()) {
-      if (!first) sb.append(", ");
-      sb.append("relationshipMode:");
-      if (this.relationshipMode == null) {
-        sb.append("null");
-      } else {
-        sb.append(this.relationshipMode);
-      }
-      first = false;
+    if (!first) sb.append(", ");
+    sb.append("relationshipMode:");
+    if (this.relationshipMode == null) {
+      sb.append("null");
+    } else {
+      sb.append(this.relationshipMode);
     }
-    if (isSetGender()) {
-      if (!first) sb.append(", ");
-      sb.append("gender:");
-      if (this.gender == null) {
-        sb.append("null");
-      } else {
-        sb.append(this.gender);
-      }
-      first = false;
+    first = false;
+    if (!first) sb.append(", ");
+    sb.append("gender:");
+    if (this.gender == null) {
+      sb.append("null");
+    } else {
+      sb.append(this.gender);
     }
-    if (isSetAge()) {
-      if (!first) sb.append(", ");
-      sb.append("age:");
-      if (this.age == null) {
-        sb.append("null");
-      } else {
-        sb.append(this.age);
-      }
-      first = false;
+    first = false;
+    if (!first) sb.append(", ");
+    sb.append("age:");
+    if (this.age == null) {
+      sb.append("null");
+    } else {
+      sb.append(this.age);
     }
-    if (isSetLocation()) {
-      if (!first) sb.append(", ");
-      sb.append("location:");
-      if (this.location == null) {
-        sb.append("null");
-      } else {
-        sb.append(this.location);
-      }
-      first = false;
+    first = false;
+    if (!first) sb.append(", ");
+    sb.append("location:");
+    if (this.location == null) {
+      sb.append("null");
+    } else {
+      sb.append(this.location);
     }
+    first = false;
     if (isSetReligion()) {
       if (!first) sb.append(", ");
       sb.append("religion:");
@@ -926,6 +926,18 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
   public void validate() throws org.apache.thrift.TException {
     // check for required fields
     // alas, we cannot check 'accountId' because it's a primitive and you chose the non-beans generator.
+    if (relationshipMode == null) {
+      throw new org.apache.thrift.protocol.TProtocolException("Required field 'relationshipMode' was not present! Struct: " + toString());
+    }
+    if (gender == null) {
+      throw new org.apache.thrift.protocol.TProtocolException("Required field 'gender' was not present! Struct: " + toString());
+    }
+    if (age == null) {
+      throw new org.apache.thrift.protocol.TProtocolException("Required field 'age' was not present! Struct: " + toString());
+    }
+    if (location == null) {
+      throw new org.apache.thrift.protocol.TProtocolException("Required field 'location' was not present! Struct: " + toString());
+    }
     // check for sub-struct validity
     if (relationshipMode != null) {
       relationshipMode.validate();
@@ -1094,32 +1106,24 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       oprot.writeI64(struct.accountId);
       oprot.writeFieldEnd();
       if (struct.relationshipMode != null) {
-        if (struct.isSetRelationshipMode()) {
-          oprot.writeFieldBegin(RELATIONSHIP_MODE_FIELD_DESC);
-          struct.relationshipMode.write(oprot);
-          oprot.writeFieldEnd();
-        }
+        oprot.writeFieldBegin(RELATIONSHIP_MODE_FIELD_DESC);
+        struct.relationshipMode.write(oprot);
+        oprot.writeFieldEnd();
       }
       if (struct.gender != null) {
-        if (struct.isSetGender()) {
-          oprot.writeFieldBegin(GENDER_FIELD_DESC);
-          struct.gender.write(oprot);
-          oprot.writeFieldEnd();
-        }
+        oprot.writeFieldBegin(GENDER_FIELD_DESC);
+        struct.gender.write(oprot);
+        oprot.writeFieldEnd();
       }
       if (struct.age != null) {
-        if (struct.isSetAge()) {
-          oprot.writeFieldBegin(AGE_FIELD_DESC);
-          struct.age.write(oprot);
-          oprot.writeFieldEnd();
-        }
+        oprot.writeFieldBegin(AGE_FIELD_DESC);
+        struct.age.write(oprot);
+        oprot.writeFieldEnd();
       }
       if (struct.location != null) {
-        if (struct.isSetLocation()) {
-          oprot.writeFieldBegin(LOCATION_FIELD_DESC);
-          struct.location.write(oprot);
-          oprot.writeFieldEnd();
-        }
+        oprot.writeFieldBegin(LOCATION_FIELD_DESC);
+        struct.location.write(oprot);
+        oprot.writeFieldEnd();
       }
       if (struct.religion != null) {
         if (struct.isSetReligion()) {
@@ -1168,44 +1172,24 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     public void write(org.apache.thrift.protocol.TProtocol prot, Filters struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol oprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       oprot.writeI64(struct.accountId);
+      struct.relationshipMode.write(oprot);
+      struct.gender.write(oprot);
+      struct.age.write(oprot);
+      struct.location.write(oprot);
       java.util.BitSet optionals = new java.util.BitSet();
-      if (struct.isSetRelationshipMode()) {
+      if (struct.isSetReligion()) {
         optionals.set(0);
       }
-      if (struct.isSetGender()) {
+      if (struct.isSetPolitics()) {
         optionals.set(1);
       }
-      if (struct.isSetAge()) {
+      if (struct.isSetLifestyle()) {
         optionals.set(2);
       }
-      if (struct.isSetLocation()) {
+      if (struct.isSetInterests()) {
         optionals.set(3);
       }
-      if (struct.isSetReligion()) {
-        optionals.set(4);
-      }
-      if (struct.isSetPolitics()) {
-        optionals.set(5);
-      }
-      if (struct.isSetLifestyle()) {
-        optionals.set(6);
-      }
-      if (struct.isSetInterests()) {
-        optionals.set(7);
-      }
-      oprot.writeBitSet(optionals, 8);
-      if (struct.isSetRelationshipMode()) {
-        struct.relationshipMode.write(oprot);
-      }
-      if (struct.isSetGender()) {
-        struct.gender.write(oprot);
-      }
-      if (struct.isSetAge()) {
-        struct.age.write(oprot);
-      }
-      if (struct.isSetLocation()) {
-        struct.location.write(oprot);
-      }
+      oprot.writeBitSet(optionals, 4);
       if (struct.isSetReligion()) {
         struct.religion.write(oprot);
       }
@@ -1225,43 +1209,35 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       struct.accountId = iprot.readI64();
       struct.setAccountIdIsSet(true);
-      java.util.BitSet incoming = iprot.readBitSet(8);
+      struct.relationshipMode = new ModeFilter();
+      struct.relationshipMode.read(iprot);
+      struct.setRelationshipModeIsSet(true);
+      struct.gender = new OneToManyFilter();
+      struct.gender.read(iprot);
+      struct.setGenderIsSet(true);
+      struct.age = new RangeFilter();
+      struct.age.read(iprot);
+      struct.setAgeIsSet(true);
+      struct.location = new LocationFilter();
+      struct.location.read(iprot);
+      struct.setLocationIsSet(true);
+      java.util.BitSet incoming = iprot.readBitSet(4);
       if (incoming.get(0)) {
-        struct.relationshipMode = new ModeFilter();
-        struct.relationshipMode.read(iprot);
-        struct.setRelationshipModeIsSet(true);
-      }
-      if (incoming.get(1)) {
-        struct.gender = new OneToManyFilter();
-        struct.gender.read(iprot);
-        struct.setGenderIsSet(true);
-      }
-      if (incoming.get(2)) {
-        struct.age = new RangeFilter();
-        struct.age.read(iprot);
-        struct.setAgeIsSet(true);
-      }
-      if (incoming.get(3)) {
-        struct.location = new LocationFilter();
-        struct.location.read(iprot);
-        struct.setLocationIsSet(true);
-      }
-      if (incoming.get(4)) {
         struct.religion = new OneToManyFilter();
         struct.religion.read(iprot);
         struct.setReligionIsSet(true);
       }
-      if (incoming.get(5)) {
+      if (incoming.get(1)) {
         struct.politics = new OneToManyFilter();
         struct.politics.read(iprot);
         struct.setPoliticsIsSet(true);
       }
-      if (incoming.get(6)) {
+      if (incoming.get(2)) {
         struct.lifestyle = new ManyToManyFilter();
         struct.lifestyle.read(iprot);
         struct.setLifestyleIsSet(true);
       }
-      if (incoming.get(7)) {
+      if (incoming.get(3)) {
         struct.interests = new ManyToManyFilter();
         struct.interests.read(iprot);
         struct.setInterestsIsSet(true);

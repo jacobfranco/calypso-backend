@@ -31,13 +31,7 @@ public class Core implements RamaModule {
                         .macro(extractFields("*data", "*email", "*uuid"))
                         .localSelect("$$emailToUser", Path.key("*email")).out("*currInfo")
                         .each(Ops.GET, "*currInfo", "uuid").out("*currUUID")
-                        // By including a UUID with each registration request, we can distinguish
-                        // between:
-                        // - this email is already registered by a different request so we shouldn't
-                        // override it
-                        // - this email was registered by the same request, so we should continue
-                        // finishing the
-                        // registration
+                        // Accept either first write or an idempotent retry from the same UUID
                         .ifTrue(new Expr(Ops.OR, new Expr(Ops.IS_NULL, "*currInfo"),
                                     new Expr(Ops.EQUAL, "*uuid", "*currUUID")),
                                     Block.macro(accountIdGen.genId("*accountId"))
@@ -75,20 +69,6 @@ public class Core implements RamaModule {
                                                             Path.key("*code").termVoid()));
       }
 
-      private static void declareFiltersTopology(Topologies topologies) {
-            StreamTopology stream = topologies.stream("filters");
-
-            stream.pstate("$$accountIdToFilters",
-                        PState.mapSchema(Long.class, Filters.class));
-
-            stream.source("*filtersDepot")
-                        .out("*data")
-                        .macro(extractFields("*data", "*accountId"))
-                        .localTransform("$$accountIdToFilters",
-                                    Path.key("*accountId")
-                                                .termVal("*data"));
-      }
-
       private static void declareSignalsTopology(Topologies topologies) {
             StreamTopology stream = topologies.stream("signals");
 
@@ -123,16 +103,10 @@ public class Core implements RamaModule {
                                           .collect(Collectors.toList());
                         }, "*unsortedResults").out("*results");
 
-            topologies.query("getFiltersFromAccountId", "*requestAccountId", "*accountId").out("*filters")
-                        .hashPartition("*accountId")
-                        .localSelect("$$accountIdToFilters", Path.key("*accountId")).out("*filters")
-                        .originPartition();
-
             topologies.query("getSignalsFromAccountId", "*requestAccountId", "*accountId").out("*signals")
                         .hashPartition("*accountId")
                         .localSelect("$$accountIdToSignals", Path.key("*accountId")).out("*signals")
                         .originPartition();
-
       }
 
       @Override
@@ -140,13 +114,10 @@ public class Core implements RamaModule {
             setup.declareDepot("*accountDepot", Depot.hashBy(CalypsoHelpers.ExtractEmail.class));
             setup.declareDepot("*accountWithIdDepot", Depot.disallow());
             setup.declareDepot("*authCodeDepot", Depot.hashBy(ExtractCode.class));
-            setup.declareDepot("*filtersDepot",
-                        Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
             setup.declareDepot("*signalsDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
 
             declareAccountsTopology(topologies);
             declareAuthTopology(topologies);
-            declareFiltersTopology(topologies);
             declareSignalsTopology(topologies);
 
             declareQueries(topologies);

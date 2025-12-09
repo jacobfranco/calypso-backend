@@ -59,10 +59,10 @@ struct AttachmentWithId {
 
 struct Filters {
   1: required AccountId accountId;
-  2: optional ModeFilter relationshipMode;         // casual, serious
-  3: optional OneToManyFilter gender;              // self + seeking genders
-  4: optional RangeFilter age;                     // self + desired age range
-  5: optional LocationFilter location;             // self location + scope (e.g. city, state)
+  2: required ModeFilter relationshipMode;         // casual, serious
+  3: required OneToManyFilter gender;              // self + seeking genders
+  4: required RangeFilter age;                     // self + desired age range
+  5: required LocationFilter location;             // self location + scope (e.g. city, state)
   6: optional OneToManyFilter religion;            // self label + importance level
   7: optional OneToManyFilter politics;            // same as above
   8: optional ManyToManyFilter lifestyle;          // tags like "vegan", "non-drinker"
@@ -96,9 +96,10 @@ struct TagPreference {
 }
 
 struct LocationFilter {
-  1: required string city;              // e.g. "Charlotte, NC"
-  2: required string radius;            // e.g. "my_city", "my_state", "worldwide"
-  3: optional Importance importance;        // optional: for scoring
+  1: required double lat;        // e.g. 35.2271
+  2: required double lon;        // e.g. -80.8431
+  3: required double radiusKm;   // numeric radius in kilometers
+  4: optional Importance importance; // (keep if you want for later)
 }
 
 struct ModeFilter {
@@ -108,4 +109,28 @@ struct ModeFilter {
 struct Signals {
   1: required AccountId accountId;    // owner
   2: optional list<string> signals;   // e.g. ["blade_superfan", "likes_firefighters"]
+}
+
+struct MatchCandidate {
+  1: required AccountId targetAccountId;
+  2: required double    stage0Score;
+  3: optional list<string> reasons;
+  4: required Timestamp computedAt;
+}
+
+struct MatchRefillRequest {
+  1: required AccountId accountId;  // viewer
+  2: required i32       targetSize; // how many to scan this refill
+}
+
+struct ServedPairs {
+  1: required AccountId        accountId;  // viewer
+  2: required list<AccountId>  targetIds;  // served targets (in order)
+  3: required Timestamp        servedAt;   // server time
+}
+
+struct CursorAck {
+  1: required AccountId accountId;
+  2: required i32       lastIndex;
+  3: required bool      wrappedOnce;
 }

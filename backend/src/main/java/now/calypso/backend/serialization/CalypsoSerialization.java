@@ -14,16 +14,21 @@ public class CalypsoSerialization extends ThriftSerialization {
                 AddAuthCode.class,
                 Attachment.class,
                 AttachmentWithId.class,
+                CursorAck.class,
                 Filters.class,
                 IndexedAccountWithId.class,
                 LocationFilter.class,
                 ManyToManyFilter.class,
+                MatchCandidate.class,
+                MatchRefillRequest.class,
                 ModeFilter.class,
                 OneToManyFilter.class,
                 RangeFilter.class,
                 RemoveAuthCode.class,
+                ServedPairs.class,
                 Signals.class,
-                TagPreference.class
+                TagPreference.class,
+
         };
         for (int i = 0; i < classes.length; i++)
             ret.put(i, classes[i]);
