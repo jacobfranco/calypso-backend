@@ -31,28 +31,44 @@ public class Matches implements RamaModule {
                 return c;
         }
 
-        // Insert candidate into a bounded, sorted heap (descending by score, then id)
         private static List<MatchCandidate> upsertIntoHeap(List<MatchCandidate> heap, MatchCandidate cand) {
                 if (cand == null) {
                         return (heap == null) ? new ArrayList<MatchCandidate>() : heap;
                 }
-                List<MatchCandidate> base = (heap == null) ? new ArrayList<MatchCandidate>() : heap;
-                ArrayList<MatchCandidate> list = new ArrayList<>(base);
 
-                // Remove any existing candidate for the same target to avoid dupes
-                list.removeIf(mc -> mc.getTargetAccountId() == cand.getTargetAccountId());
-                list.add(cand);
+                ArrayList<MatchCandidate> list = (heap == null) ? new ArrayList<>() : new ArrayList<>(heap);
 
-                list.sort((a, b) -> {
-                        int cmp = Double.compare(b.getStage0Score(), a.getStage0Score());
-                        if (cmp != 0)
-                                return cmp;
-                        return Long.compare(a.getTargetAccountId(), b.getTargetAccountId());
-                });
-
-                if (list.size() > HEAP_K) {
-                        return new ArrayList<>(list.subList(0, HEAP_K));
+                // Remove existing candidate with the same target id (at most one)
+                for (int i = 0; i < list.size(); i++) {
+                        if (list.get(i).getTargetAccountId() == cand.getTargetAccountId()) {
+                                list.remove(i);
+                                break;
+                        }
                 }
+
+                // Find insertion index to keep list sorted:
+                // - higher score first
+                // - for ties, smaller target id first
+                int idx = 0;
+                while (idx < list.size()) {
+                        MatchCandidate cur = list.get(idx);
+                        int cmp = Double.compare(cur.getStage0Score(), cand.getStage0Score());
+                        if (cmp < 0) {
+                                // current score < new score → insert before
+                                break;
+                        } else if (cmp == 0 && cur.getTargetAccountId() > cand.getTargetAccountId()) {
+                                // same score, keep smaller id first
+                                break;
+                        }
+                        idx++;
+                }
+                list.add(idx, cand);
+
+                // Enforce heap cap
+                if (list.size() > HEAP_K) {
+                        list.remove(list.size() - 1);
+                }
+
                 return list;
         }
 
@@ -197,34 +213,14 @@ public class Matches implements RamaModule {
                                                                                 : null,
                                                                                 "*targetFilters")
                                                                 .out("*targetFiltersC")
-                                                                .each((Object exObj) -> (Map<?, ?>) exObj, "*exposures")
-                                                                .out("*exposuresC")
-
-                                                                // Compute candidate-or-null for this (viewer, target)
-                                                                // pair
                                                                 .each((Filters viewer,
                                                                                 Long tid,
-                                                                                Filters target,
-                                                                                Map<?, ?> exposureMap) -> {
+                                                                                Filters target) -> {
                                                                         if (viewer == null || target == null) {
                                                                                 return null;
                                                                         }
 
                                                                         long now = System.currentTimeMillis();
-
-                                                                        // Exposure TTL: skip fresh exposures
-                                                                        Long servedAt = null;
-                                                                        if (exposureMap != null) {
-                                                                                Object tsObj = exposureMap.get(tid);
-                                                                                if (tsObj instanceof Number) {
-                                                                                        servedAt = ((Number) tsObj)
-                                                                                                        .longValue();
-                                                                                }
-                                                                        }
-                                                                        if (servedAt != null && (now
-                                                                                        - servedAt) < EXPOSURE_TTL_MS) {
-                                                                                return null;
-                                                                        }
 
                                                                         double baseScore = CalypsoHelpers
                                                                                         .computeMatchesBaseScore(viewer,
@@ -245,8 +241,7 @@ public class Matches implements RamaModule {
                                                                         }
 
                                                                         return mkCandidate(tid, baseScore, now);
-                                                                }, "*viewerFiltersC", "*tidL", "*targetFiltersC",
-                                                                                "*exposuresC")
+                                                                }, "*viewerFiltersC", "*tidL", "*targetFiltersC")
                                                                 .out("*candMaybe")
 
                                                                 // Read current heap, defaulting to empty list

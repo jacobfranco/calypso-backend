@@ -244,6 +244,9 @@ public class MatchesTest {
       Depot serveDepot = ipc.clusterDepot(matchesName, "*matchesServeDepot");
       PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
 
+      // query client
+      QueryTopologyClient<List<MatchCandidate>> getMatchesQ = ipc.clusterQuery(matchesName, "getMatchesFromAccountId");
+
       double[] SEA = CITY_LL.get("Seattle, WA, USA");
       // viewer + 2 compatible targets within radius
       append(ipc, filtersDepot, mkFilters(1L, SEA[0], SEA[1], radiusKmFromToken("my_city"),
@@ -253,25 +256,35 @@ public class MatchesTest {
       append(ipc, filtersDepot, mkFilters(3L, SEA[0], SEA[1], radiusKmFromToken("my_city"),
           "casual", "man", List.of("woman"), 29, 22, 34, null, null, null, null, null, null));
 
+      // initial refill
       requestRefill(refillDepot, 1L, 10);
       TestHelpers.attainConditionPred(
           () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
           heap -> heap != null && heap.size() >= 2);
 
-      // serve (expose) id 2, then refill; id 2 should be hidden for TTL
+      // Baseline: both 2 and 3 should be in the query results
+      List<MatchCandidate> before = getMatchesQ.invoke(1L, 1L, 10);
+      assertTrue(before.stream().anyMatch(c -> c.getTargetAccountId() == 2L));
+      assertTrue(before.stream().anyMatch(c -> c.getTargetAccountId() == 3L));
+
+      // serve (expose) id 2
       ServedPairs sp = new ServedPairs().setAccountId(1L)
           .setTargetIds(List.of(2L))
           .setServedAt(System.currentTimeMillis());
       append(ipc, serveDepot, sp);
 
+      // optionally, we can refill or not; TTL is enforced at query time now.
       requestRefill(refillDepot, 1L, 10);
       TestHelpers.attainConditionPred(
           () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
           heap -> heap != null && !heap.isEmpty());
 
-      List<MatchCandidate> heap = (List<MatchCandidate>) heapP.selectOne(Path.key(1L));
-      assertTrue(heap.stream().noneMatch(c -> c.getTargetAccountId() == 2L),
+      // Query again: id 2 should be hidden by exposure TTL
+      List<MatchCandidate> after = getMatchesQ.invoke(1L, 1L, 10);
+      assertFalse(after.stream().anyMatch(c -> c.getTargetAccountId() == 2L),
           "Recently served id=2 should be hidden by exposure TTL");
+      assertTrue(after.stream().anyMatch(c -> c.getTargetAccountId() == 3L),
+          "Unserved id=3 should still be visible");
     }
   }
 
