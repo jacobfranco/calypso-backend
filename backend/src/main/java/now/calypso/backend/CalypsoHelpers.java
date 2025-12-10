@@ -329,6 +329,10 @@ public class CalypsoHelpers {
         return (f != null && f.isSetPolitics()) ? f.getPolitics() : null;
     }
 
+    private static OneToManyFilter getReligion(Filters f) {
+        return (f != null && f.isSetReligion()) ? f.getReligion() : null;
+    }
+
     public static boolean politicsCompatible(Filters viewer, Filters target) {
         OneToManyFilter vp = getPolitics(viewer);
         OneToManyFilter tp = getPolitics(target);
@@ -356,6 +360,42 @@ public class CalypsoHelpers {
         if (tCares) {
             String vSelf = getOneToManySelf(vp);
             List<String> tSeek = getOneToManySeeking(tp);
+            if (vSelf == null || tSeek == null || tSeek.isEmpty() || !tSeek.contains(vSelf)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public static boolean religionCompatible(Filters viewer, Filters target) {
+        OneToManyFilter vr = getReligion(viewer);
+        OneToManyFilter tr = getReligion(target);
+
+        Importance vImp = getOneToManyImportance(vr);
+        Importance tImp = getOneToManyImportance(tr);
+
+        boolean vCares = (vr != null && vImp == Importance.DEALBREAKER);
+        boolean tCares = (tr != null && tImp == Importance.DEALBREAKER);
+
+        // Nobody marked religion as a dealbreaker → allow
+        if (!vCares && !tCares) {
+            return true;
+        }
+
+        // Viewer dealbreaker: target.self must be in viewer.seeking
+        if (vCares) {
+            String tSelf = getOneToManySelf(tr);
+            List<String> vSeek = getOneToManySeeking(vr);
+            if (tSelf == null || vSeek == null || vSeek.isEmpty() || !vSeek.contains(tSelf)) {
+                return false;
+            }
+        }
+
+        // Target dealbreaker: viewer.self must be in target.seeking
+        if (tCares) {
+            String vSelf = getOneToManySelf(vr);
+            List<String> tSeek = getOneToManySeeking(tr);
             if (vSelf == null || tSeek == null || tSeek.isEmpty() || !tSeek.contains(vSelf)) {
                 return false;
             }
@@ -395,6 +435,37 @@ public class CalypsoHelpers {
         return bonus;
     }
 
+    public static double computeReligionBonus(Filters viewer, Filters target) {
+        OneToManyFilter vr = getReligion(viewer);
+        OneToManyFilter tr = getReligion(target);
+
+        double bonus = 0.0;
+
+        if (vr != null) {
+            Importance vImp = getOneToManyImportance(vr);
+            if (vImp == Importance.PREFERENCE) {
+                String tSelf = getOneToManySelf(tr);
+                List<String> vSeek = getOneToManySeeking(vr);
+                if (tSelf != null && vSeek != null && vSeek.contains(tSelf)) {
+                    bonus += 10.0;
+                }
+            }
+        }
+
+        if (tr != null) {
+            Importance tImp = getOneToManyImportance(tr);
+            if (tImp == Importance.PREFERENCE) {
+                String vSelf = getOneToManySelf(vr);
+                List<String> tSeek = getOneToManySeeking(tr);
+                if (vSelf != null && tSeek != null && tSeek.contains(vSelf)) {
+                    bonus += 5.0;
+                }
+            }
+        }
+
+        return bonus;
+    }
+
     /**
      * Base compatibility for Matches:
      * - returns -1.0 if any hard constraint fails
@@ -412,6 +483,8 @@ public class CalypsoHelpers {
         if (!modesCompatible(viewer, target))
             return -1.0;
         if (!politicsCompatible(viewer, target))
+            return -1.0;
+        if (!religionCompatible(viewer, target))
             return -1.0;
         return 100.0;
     }

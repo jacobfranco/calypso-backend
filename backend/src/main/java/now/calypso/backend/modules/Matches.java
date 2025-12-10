@@ -230,11 +230,15 @@ public class Matches implements RamaModule {
                                                                                              // constraints
                                                                         }
 
-                                                                        // Add politics bonus (soft preference)
-                                                                        double bonus = CalypsoHelpers
+                                                                        // Soft bonuses: politics + religion
+                                                                        double politicsBonus = CalypsoHelpers
                                                                                         .computePoliticsBonus(viewer,
                                                                                                         target);
-                                                                        double finalScore = baseScore + bonus;
+                                                                        double religionBonus = CalypsoHelpers
+                                                                                        .computeReligionBonus(viewer,
+                                                                                                        target);
+                                                                        double finalScore = baseScore + politicsBonus
+                                                                                        + religionBonus;
 
                                                                         // Serious vs casual floor applies to final
                                                                         // score

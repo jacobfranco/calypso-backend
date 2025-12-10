@@ -1,18 +1,22 @@
 {
-  "major": [
+  "major_world_religions": [
     "christian",
     "muslim",
     "hindu",
     "buddhist",
     "jewish",
+    "sikh"
+  ],
+
+  "non_religious": [
     "spiritual",
     "atheist",
     "agnostic",
+    "secular_humanist",
     "prefer_not_to_say"
   ],
 
-  "other": [
-    "sikh",
+  "additional_traditions": [
     "taoist",
     "shinto",
     "bahai",
@@ -21,6 +25,6 @@
     "pagan",
     "zoroastrian",
     "rastafarian",
-    "other_custom"
+    "custom_belief"
   ]
 }

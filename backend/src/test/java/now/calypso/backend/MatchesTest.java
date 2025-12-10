@@ -595,4 +595,146 @@ public class MatchesTest {
     }
   }
 
+  @Test
+  public void religionDealbreaker_blocksIncompatibleCandidates(TestInfo ti) throws Exception {
+    List<Class> ser = List.of(CalypsoSerialization.class);
+    try (InProcessCluster ipc = InProcessCluster.create(ser)) {
+      Core core = new Core();
+      Matches matches = new Matches();
+      TestHelpers.launchModule(ipc, core, ti);
+      TestHelpers.launchModule(ipc, matches, ti);
+
+      String matchesName = matches.getClass().getName();
+
+      Depot filtersDepot = ipc.clusterDepot(matchesName, "*filtersDepot");
+      Depot refillDepot = ipc.clusterDepot(matchesName, "*matchRefillDepot");
+      PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
+
+      double[] DEN = CITY_LL.get("Denver, CO, USA");
+
+      // Viewer: christian, DEALBREAKER: only wants christian
+      Filters viewer = mkFilters(
+          1L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
+          "casual",
+          "woman", List.of("man"),
+          27, 22, 34,
+          null, null, null, null,
+          oneToMany("christian", List.of("christian"), Importance.DEALBREAKER),
+          null // politics
+      );
+
+      // Target 2: christian → should be allowed
+      Filters targetOk = mkFilters(
+          2L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          28, 22, 34,
+          null, null, null, null,
+          oneToMany("christian", null, Importance.NOT_IMPORTANT),
+          null);
+
+      // Target 3: muslim → should be blocked by religion dealbreaker
+      Filters targetBad = mkFilters(
+          3L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          29, 22, 34,
+          null, null, null, null,
+          oneToMany("muslim", null, Importance.NOT_IMPORTANT),
+          null);
+
+      append(ipc, filtersDepot, viewer);
+      append(ipc, filtersDepot, targetOk);
+      append(ipc, filtersDepot, targetBad);
+
+      requestRefill(refillDepot, 1L, 10);
+
+      TestHelpers.attainConditionPred(
+          () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
+          heap -> heap != null);
+
+      List<MatchCandidate> heap = (List<MatchCandidate>) heapP.selectOne(Path.key(1L));
+      Set<Long> ids = new HashSet<>();
+      for (MatchCandidate c : heap)
+        ids.add(c.getTargetAccountId());
+
+      assertTrue(ids.contains(2L), "Religiously compatible target should be included");
+      assertFalse(ids.contains(3L), "Religiously incompatible target should be excluded by dealbreaker");
+    }
+  }
+
+  @Test
+  public void religionPreference_boostsScoreForPreferredTags(TestInfo ti) throws Exception {
+    List<Class> ser = List.of(CalypsoSerialization.class);
+    try (InProcessCluster ipc = InProcessCluster.create(ser)) {
+      Core core = new Core();
+      Matches matches = new Matches();
+      TestHelpers.launchModule(ipc, core, ti);
+      TestHelpers.launchModule(ipc, matches, ti);
+
+      String matchesName = matches.getClass().getName();
+
+      Depot filtersDepot = ipc.clusterDepot(matchesName, "*filtersDepot");
+      Depot refillDepot = ipc.clusterDepot(matchesName, "*matchRefillDepot");
+      PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
+
+      double[] SEA = CITY_LL.get("Seattle, WA, USA");
+
+      // Viewer: agnostic, prefers "spiritual"
+      Filters viewer = mkFilters(
+          1L, SEA[0], SEA[1], radiusKmFromToken("my_city"),
+          "casual",
+          "woman", List.of("man"),
+          27, 22, 34,
+          null, null, null, null,
+          oneToMany("agnostic", List.of("spiritual"), Importance.PREFERENCE),
+          null);
+
+      // Target 2: spiritual → should get religion bonus
+      Filters targetPreferred = mkFilters(
+          2L, SEA[0], SEA[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          28, 22, 34,
+          null, null, null, null,
+          oneToMany("spiritual", null, Importance.NOT_IMPORTANT),
+          null);
+
+      // Target 3: atheist → no religion bonus
+      Filters targetNeutral = mkFilters(
+          3L, SEA[0], SEA[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          29, 22, 34,
+          null, null, null, null,
+          oneToMany("atheist", null, Importance.NOT_IMPORTANT),
+          null);
+
+      append(ipc, filtersDepot, viewer);
+      append(ipc, filtersDepot, targetPreferred);
+      append(ipc, filtersDepot, targetNeutral);
+
+      requestRefill(refillDepot, 1L, 10);
+
+      TestHelpers.attainConditionPred(
+          () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
+          heap -> heap != null && heap.size() >= 2);
+
+      List<MatchCandidate> heap = (List<MatchCandidate>) heapP.selectOne(Path.key(1L));
+
+      MatchCandidate preferred = heap.stream()
+          .filter(c -> c.getTargetAccountId() == 2L)
+          .findFirst()
+          .orElseThrow(() -> new AssertionError("Preferred religion candidate not found"));
+
+      MatchCandidate neutral = heap.stream()
+          .filter(c -> c.getTargetAccountId() == 3L)
+          .findFirst()
+          .orElseThrow(() -> new AssertionError("Neutral religion candidate not found"));
+
+      assertTrue(preferred.getStage0Score() > neutral.getStage0Score(),
+          "Candidate matching viewer's religion preference should have higher score");
+    }
+  }
+
 }
