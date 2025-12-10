@@ -325,6 +325,76 @@ public class CalypsoHelpers {
         return true;
     }
 
+    private static OneToManyFilter getPolitics(Filters f) {
+        return (f != null && f.isSetPolitics()) ? f.getPolitics() : null;
+    }
+
+    public static boolean politicsCompatible(Filters viewer, Filters target) {
+        OneToManyFilter vp = getPolitics(viewer);
+        OneToManyFilter tp = getPolitics(target);
+
+        Importance vImp = getOneToManyImportance(vp);
+        Importance tImp = getOneToManyImportance(tp);
+
+        // If nobody cares, allow
+        boolean vCares = (vp != null && vImp == Importance.DEALBREAKER);
+        boolean tCares = (tp != null && tImp == Importance.DEALBREAKER);
+        if (!vCares && !tCares) {
+            return true;
+        }
+
+        // Viewer dealbreaker: target.self must be in viewer.seeking
+        if (vCares) {
+            String tSelf = getOneToManySelf(tp);
+            List<String> vSeek = getOneToManySeeking(vp);
+            if (tSelf == null || vSeek == null || vSeek.isEmpty() || !vSeek.contains(tSelf)) {
+                return false;
+            }
+        }
+
+        // Target dealbreaker: viewer.self must be in target.seeking
+        if (tCares) {
+            String vSelf = getOneToManySelf(vp);
+            List<String> tSeek = getOneToManySeeking(tp);
+            if (vSelf == null || tSeek == null || tSeek.isEmpty() || !tSeek.contains(vSelf)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public static double computePoliticsBonus(Filters viewer, Filters target) {
+        OneToManyFilter vp = getPolitics(viewer);
+        OneToManyFilter tp = getPolitics(target);
+
+        double bonus = 0.0;
+
+        if (vp != null) {
+            Importance vImp = getOneToManyImportance(vp);
+            if (vImp == Importance.PREFERENCE) {
+                String tSelf = getOneToManySelf(tp);
+                List<String> vSeek = getOneToManySeeking(vp);
+                if (tSelf != null && vSeek != null && vSeek.contains(tSelf)) {
+                    bonus += 10.0;
+                }
+            }
+        }
+
+        if (tp != null) {
+            Importance tImp = getOneToManyImportance(tp);
+            if (tImp == Importance.PREFERENCE) {
+                String vSelf = getOneToManySelf(vp);
+                List<String> tSeek = getOneToManySeeking(tp);
+                if (vSelf != null && tSeek != null && tSeek.contains(vSelf)) {
+                    bonus += 5.0;
+                }
+            }
+        }
+
+        return bonus;
+    }
+
     /**
      * Base compatibility for Matches:
      * - returns -1.0 if any hard constraint fails
@@ -340,6 +410,8 @@ public class CalypsoHelpers {
         if (!withinRadius(viewer, target))
             return -1.0;
         if (!modesCompatible(viewer, target))
+            return -1.0;
+        if (!politicsCompatible(viewer, target))
             return -1.0;
         return 100.0;
     }

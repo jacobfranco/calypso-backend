@@ -115,6 +115,17 @@ public class MatchesTest {
     refillDepot.append(r);
   }
 
+  private static OneToManyFilter oneToMany(String self, List<String> seeking, Importance imp) {
+    OneToManyFilter f = new OneToManyFilter();
+    if (self != null)
+      f.setSelf(self);
+    if (seeking != null)
+      f.setSeeking(seeking);
+    if (imp != null)
+      f.setImportance(imp);
+    return f;
+  }
+
   // ---------- Tests ----------
 
   @Test
@@ -442,4 +453,146 @@ public class MatchesTest {
       assertTrue(page3.isEmpty(), "Cursor should wrap only after serving all and be empty on 3rd call");
     }
   }
+
+  @Test
+  public void politicsDealbreaker_blocksIncompatibleCandidates(TestInfo ti) throws Exception {
+    List<Class> ser = List.of(CalypsoSerialization.class);
+    try (InProcessCluster ipc = InProcessCluster.create(ser)) {
+      Core core = new Core();
+      Matches matches = new Matches();
+      TestHelpers.launchModule(ipc, core, ti);
+      TestHelpers.launchModule(ipc, matches, ti);
+
+      String matchesName = matches.getClass().getName();
+
+      Depot filtersDepot = ipc.clusterDepot(matchesName, "*filtersDepot");
+      Depot refillDepot = ipc.clusterDepot(matchesName, "*matchRefillDepot");
+      PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
+
+      double[] BOS = CITY_LL.get("Boston, MA, USA");
+
+      // Viewer: politics DEALBREAKER, only wants "left" or "center_left"
+      Filters viewer = mkFilters(
+          1L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
+          "casual",
+          "woman", List.of("man"),
+          27, 22, 34,
+          null, null, null, null,
+          null,
+          oneToMany("left", List.of("left", "center_left"), Importance.DEALBREAKER));
+
+      // Target 2: compatible politics ("left")
+      Filters targetOk = mkFilters(
+          2L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          28, 22, 34,
+          null, null, null, null,
+          null,
+          oneToMany("left", null, Importance.NOT_IMPORTANT));
+
+      // Target 3: incompatible politics ("right")
+      Filters targetBad = mkFilters(
+          3L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          29, 22, 34,
+          null, null, null, null,
+          null,
+          oneToMany("right", null, Importance.NOT_IMPORTANT));
+
+      append(ipc, filtersDepot, viewer);
+      append(ipc, filtersDepot, targetOk);
+      append(ipc, filtersDepot, targetBad);
+
+      requestRefill(refillDepot, 1L, 10);
+
+      TestHelpers.attainConditionPred(
+          () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
+          heap -> heap != null);
+
+      List<MatchCandidate> heap = (List<MatchCandidate>) heapP.selectOne(Path.key(1L));
+      Set<Long> ids = new HashSet<>();
+      for (MatchCandidate c : heap)
+        ids.add(c.getTargetAccountId());
+
+      assertTrue(ids.contains(2L), "Politically compatible target should be included");
+      assertFalse(ids.contains(3L), "Politically incompatible target should be excluded by dealbreaker");
+    }
+  }
+
+  @Test
+  public void politicsPreference_boostsScoreForPreferredTags(TestInfo ti) throws Exception {
+    List<Class> ser = List.of(CalypsoSerialization.class);
+    try (InProcessCluster ipc = InProcessCluster.create(ser)) {
+      Core core = new Core();
+      Matches matches = new Matches();
+      TestHelpers.launchModule(ipc, core, ti);
+      TestHelpers.launchModule(ipc, matches, ti);
+
+      String matchesName = matches.getClass().getName();
+
+      Depot filtersDepot = ipc.clusterDepot(matchesName, "*filtersDepot");
+      Depot refillDepot = ipc.clusterDepot(matchesName, "*matchRefillDepot");
+      PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
+
+      double[] DEN = CITY_LL.get("Denver, CO, USA");
+
+      // Viewer: politically "center", prefers "left"
+      Filters viewer = mkFilters(
+          1L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
+          "casual",
+          "woman", List.of("man"),
+          27, 22, 34,
+          null, null, null, null,
+          null,
+          oneToMany("center", List.of("left"), Importance.PREFERENCE));
+
+      // Target 2: "left" -> should get politics bonus
+      Filters targetPreferred = mkFilters(
+          2L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          28, 22, 34,
+          null, null, null, null,
+          null,
+          oneToMany("left", null, Importance.NOT_IMPORTANT));
+
+      // Target 3: "center" -> no politics bonus
+      Filters targetNeutral = mkFilters(
+          3L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          29, 22, 34,
+          null, null, null, null,
+          null,
+          oneToMany("center", null, Importance.NOT_IMPORTANT));
+
+      append(ipc, filtersDepot, viewer);
+      append(ipc, filtersDepot, targetPreferred);
+      append(ipc, filtersDepot, targetNeutral);
+
+      requestRefill(refillDepot, 1L, 10);
+
+      TestHelpers.attainConditionPred(
+          () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
+          heap -> heap != null && heap.size() >= 2);
+
+      List<MatchCandidate> heap = (List<MatchCandidate>) heapP.selectOne(Path.key(1L));
+
+      MatchCandidate preferred = heap.stream()
+          .filter(c -> c.getTargetAccountId() == 2L)
+          .findFirst()
+          .orElseThrow(() -> new AssertionError("Preferred politics candidate not found"));
+
+      MatchCandidate neutral = heap.stream()
+          .filter(c -> c.getTargetAccountId() == 3L)
+          .findFirst()
+          .orElseThrow(() -> new AssertionError("Neutral politics candidate not found"));
+
+      assertTrue(preferred.getStage0Score() > neutral.getStage0Score(),
+          "Candidate matching viewer's politics preference should have higher score");
+    }
+  }
+
 }

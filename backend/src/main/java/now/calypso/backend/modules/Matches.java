@@ -226,24 +226,31 @@ public class Matches implements RamaModule {
                                                                                         .computeMatchesBaseScore(viewer,
                                                                                                         target);
                                                                         if (baseScore < 0.0) {
-                                                                                return null; // incompatible
+                                                                                return null; // incompatible on hard
+                                                                                             // constraints
                                                                         }
 
-                                                                        // Serious vs casual floor
+                                                                        // Add politics bonus (soft preference)
+                                                                        double bonus = CalypsoHelpers
+                                                                                        .computePoliticsBonus(viewer,
+                                                                                                        target);
+                                                                        double finalScore = baseScore + bonus;
+
+                                                                        // Serious vs casual floor applies to final
+                                                                        // score
                                                                         String viewerMode = CalypsoHelpers
                                                                                         .getModeSelfOrNull(viewer);
                                                                         double floor = ("serious"
                                                                                         .equalsIgnoreCase(viewerMode))
                                                                                                         ? MIN_SCORE_SERIOUS
                                                                                                         : MIN_SCORE_CASUAL;
-                                                                        if (baseScore < floor) {
+                                                                        if (finalScore < floor) {
                                                                                 return null;
                                                                         }
 
-                                                                        return mkCandidate(tid, baseScore, now);
+                                                                        return mkCandidate(tid, finalScore, now);
                                                                 }, "*viewerFiltersC", "*tidL", "*targetFiltersC")
                                                                 .out("*candMaybe")
-
                                                                 // Read current heap, defaulting to empty list
                                                                 .localSelect("$$accountIdToCandidateHeap",
                                                                                 Path.key("*aidL"))
