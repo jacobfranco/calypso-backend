@@ -1,5 +1,5 @@
 {
-  "major_world_religions": [
+  "major": [
     "christian",
     "muslim",
     "hindu",
@@ -16,7 +16,7 @@
     "prefer_not_to_say"
   ],
 
-  "additional_traditions": [
+  "other": [
     "taoist",
     "shinto",
     "bahai",

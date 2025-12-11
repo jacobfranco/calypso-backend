@@ -145,7 +145,9 @@ public class CalypsoApiController {
         return Mono.fromFuture(manager.postFilters(params, accountId))
                 .flatMap(ok -> ok
                         ? Mono.just(new GetFilters(params.toThrift(accountId)))
-                        : Mono.error(new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR)));
+                        : Mono.error(
+                                new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                                        "Failed to persist filters")));
     }
 
     @GetMapping("/api/accounts/{id}/filters")

@@ -670,14 +670,24 @@ class CalypsoApiControllerTest {
 
         @Test
         void postFilters_locationOnlyRadiusKm_returns400() {
-                PostFilters pf = baseFilters();
-                pf.location = new LocationFilter().setRadiusKm(35.0); // radius only
+                String payload = """
+                                {
+                                  "age": { "self": 25, "min": 22, "max": 30 },
+                                  "lifestyle": {
+                                    "self": ["weightlifting"],
+                                    "preferences": [
+                                      { "tag": "weightlifting", "importance": "PREFERENCE" }
+                                    ]
+                                  },
+                                  "location": { "radiusKm": 35.0 }
+                                }
+                                """;
 
                 client.post()
                                 .uri("/api/accounts/" + serializedId + "/filters")
                                 .header("Authorization", "Bearer " + sessionToken)
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(pf)
+                                .bodyValue(payload)
                                 .exchange()
                                 .expectStatus().isBadRequest();
                 verify(mockManager, never()).postFilters(any(), anyLong());
@@ -905,7 +915,7 @@ class CalypsoApiControllerTest {
                                 .exchange()
                                 .expectStatus().isOk()
                                 .expectBody()
-                                .jsonPath("$.matches[0].account.account.account.name").isEqualTo("Zed")
+                                .jsonPath("$.matches[0].account.name").isEqualTo("Zed")
                                 .jsonPath("$.matches[0].score").exists();
 
                 verify(mockManager).getMatches(eq(7L), eq(7L), eq(5));
