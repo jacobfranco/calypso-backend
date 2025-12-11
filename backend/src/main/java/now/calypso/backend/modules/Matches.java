@@ -230,9 +230,12 @@ public class Matches implements RamaModule {
                                                                                              // constraints
                                                                         }
 
-                                                                        // Soft bonuses: lifestyle + politics + religion
+                                                                        // Soft bonuses: lifestyle + interests + politics + religion
                                                                         double lifestyleBonus = CalypsoHelpers
                                                                                         .computeLifestyleBonus(viewer,
+                                                                                                        target);
+                                                                        double interestsBonus = CalypsoHelpers
+                                                                                        .computeInterestsBonus(viewer,
                                                                                                         target);
                                                                         double politicsBonus = CalypsoHelpers
                                                                                         .computePoliticsBonus(viewer,
@@ -241,7 +244,8 @@ public class Matches implements RamaModule {
                                                                                         .computeReligionBonus(viewer,
                                                                                                         target);
                                                                         double finalScore = baseScore + lifestyleBonus
-                                                                                        + politicsBonus + religionBonus;
+                                                                                        + interestsBonus + politicsBonus
+                                                                                        + religionBonus;
 
                                                                         // Serious vs casual floor applies to final
                                                                         // score

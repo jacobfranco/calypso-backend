@@ -108,6 +108,20 @@ public class MatchesTest {
         (com.rpl.rama.ops.RamaFunction1<Object, Boolean>) (v -> v != null));
   }
 
+  private static void launchModuleDeterministic(InProcessCluster ipc, RamaModule module, TestInfo testInfo) {
+    int numTasks = 1;
+    int numThreads = 1;
+    System.out.printf(
+        "Launching %s module in %s.%s with %d tasks and %d threads%n",
+        module.getClass().getSimpleName(),
+        testInfo.getTestClass().map(Class::getSimpleName).orElse("ClassNotFound"),
+        testInfo.getTestMethod().map(java.lang.reflect.Method::getName).orElse("methodNotFound"),
+        numTasks,
+        numThreads);
+    LaunchConfig config = new LaunchConfig(numTasks, numThreads);
+    ipc.launchModule(module, config);
+  }
+
   private static void requestRefill(Depot refillDepot, long viewerId, int targetSize) {
     MatchRefillRequest r = new MatchRefillRequest()
         .setAccountId(viewerId)
@@ -134,8 +148,8 @@ public class MatchesTest {
     try (InProcessCluster ipc = InProcessCluster.create(ser)) {
       Core core = new Core();
       Matches matches = new Matches();
-      TestHelpers.launchModule(ipc, core, ti);
-      TestHelpers.launchModule(ipc, matches, ti);
+      launchModuleDeterministic(ipc, core, ti);
+      launchModuleDeterministic(ipc, matches, ti);
 
       String matchesName = matches.getClass().getName();
 
@@ -202,8 +216,8 @@ public class MatchesTest {
     try (InProcessCluster ipc = InProcessCluster.create(ser)) {
       Core core = new Core();
       Matches matches = new Matches();
-      TestHelpers.launchModule(ipc, core, ti);
-      TestHelpers.launchModule(ipc, matches, ti);
+      launchModuleDeterministic(ipc, core, ti);
+      launchModuleDeterministic(ipc, matches, ti);
 
       String matchesName = matches.getClass().getName();
 
@@ -245,8 +259,8 @@ public class MatchesTest {
     try (InProcessCluster ipc = InProcessCluster.create(ser)) {
       Core core = new Core();
       Matches matches = new Matches();
-      TestHelpers.launchModule(ipc, core, ti);
-      TestHelpers.launchModule(ipc, matches, ti);
+      launchModuleDeterministic(ipc, core, ti);
+      launchModuleDeterministic(ipc, matches, ti);
 
       String matchesName = matches.getClass().getName();
 
@@ -254,7 +268,6 @@ public class MatchesTest {
       Depot refillDepot = ipc.clusterDepot(matchesName, "*matchRefillDepot");
       PState proj = ipc.clusterPState(matchesName, "$$accountIdToFiltersProjection");
       PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
-
       double[] DEN = CITY_LL.get("Denver, CO, USA");
       Filters viewer = mkFilters(
           1L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
@@ -307,8 +320,8 @@ public class MatchesTest {
     try (InProcessCluster ipc = InProcessCluster.create(ser)) {
       Core core = new Core();
       Matches matches = new Matches();
-      TestHelpers.launchModule(ipc, core, ti);
-      TestHelpers.launchModule(ipc, matches, ti);
+      launchModuleDeterministic(ipc, core, ti);
+      launchModuleDeterministic(ipc, matches, ti);
 
       String matchesName = matches.getClass().getName();
 
@@ -384,13 +397,159 @@ public class MatchesTest {
   }
 
   @Test
+  public void interestsDealbreaker_filtersOutNonMatchingTargets(TestInfo ti) throws Exception {
+    List<Class> ser = List.of(CalypsoSerialization.class);
+    try (InProcessCluster ipc = InProcessCluster.create(ser)) {
+      Core core = new Core();
+      Matches matches = new Matches();
+      launchModuleDeterministic(ipc, core, ti);
+      launchModuleDeterministic(ipc, matches, ti);
+
+      String matchesName = matches.getClass().getName();
+
+      Depot filtersDepot = ipc.clusterDepot(matchesName, "*filtersDepot");
+      Depot refillDepot = ipc.clusterDepot(matchesName, "*matchRefillDepot");
+      PState proj = ipc.clusterPState(matchesName, "$$accountIdToFiltersProjection");
+      PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
+
+      double[] BOS = CITY_LL.get("Boston, MA, USA");
+      Filters viewer = mkFilters(
+          1L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
+          "casual",
+          "woman", List.of("man"),
+          28, 23, 35,
+          null, null,
+          List.of("board_games"), List.of(pref("rock_climbing", Importance.DEALBREAKER)),
+          null, null);
+      Filters blocked = mkFilters(
+          2L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          29, 24, 36,
+          null, null,
+          List.of("cooking"), null,
+          null, null);
+      Filters allowed = mkFilters(
+          3L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          29, 24, 36,
+          null, null,
+          List.of("rock_climbing", "cooking"), null,
+          null, null);
+
+      append(ipc, filtersDepot, viewer);
+      append(ipc, filtersDepot, blocked);
+      append(ipc, filtersDepot, allowed);
+
+      awaitPStateNonNull(proj, Path.key(1L));
+      awaitPStateNonNull(proj, Path.key(2L));
+      awaitPStateNonNull(proj, Path.key(3L));
+
+      requestRefill(refillDepot, 1L, 10);
+
+      TestHelpers.attainConditionPred(
+          () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
+          heap -> heap != null && !heap.isEmpty());
+
+      List<MatchCandidate> heap = (List<MatchCandidate>) heapP.selectOne(Path.key(1L));
+      assertEquals(1, heap.size(), "Only rock_climbing-compatible targets should remain");
+      assertEquals(3L, heap.get(0).getTargetAccountId());
+    }
+  }
+
+  @Test
+  public void interestsPreference_grantsScoreBonus(TestInfo ti) throws Exception {
+    List<Class> ser = List.of(CalypsoSerialization.class);
+    try (InProcessCluster ipc = InProcessCluster.create(ser)) {
+      Core core = new Core();
+      Matches matches = new Matches();
+      launchModuleDeterministic(ipc, core, ti);
+      launchModuleDeterministic(ipc, matches, ti);
+
+      String matchesName = matches.getClass().getName();
+
+      Depot filtersDepot = ipc.clusterDepot(matchesName, "*filtersDepot");
+      Depot refillDepot = ipc.clusterDepot(matchesName, "*matchRefillDepot");
+      PState proj = ipc.clusterPState(matchesName, "$$accountIdToFiltersProjection");
+      PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
+
+      double[] SFO = CITY_LL.get("San Francisco, CA, USA");
+      Filters viewer = mkFilters(
+          1L, SFO[0], SFO[1], radiusKmFromToken("my_city"),
+          "casual",
+          "woman", List.of("man"),
+          30, 25, 38,
+          null, null,
+          List.of("running"), List.of(pref("photography", Importance.PREFERENCE)),
+          null, null);
+      Filters preferred = mkFilters(
+          2L, SFO[0], SFO[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          31, 26, 39,
+          null, null,
+          List.of("photography", "running"), null,
+          null, null);
+      Filters neutral = mkFilters(
+          3L, SFO[0], SFO[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          31, 26, 39,
+          null, null,
+          List.of("cooking"), null,
+          null, null);
+
+      append(ipc, filtersDepot, viewer);
+      append(ipc, filtersDepot, preferred);
+      append(ipc, filtersDepot, neutral);
+
+      awaitPStateNonNull(proj, Path.key(1L));
+      awaitPStateNonNull(proj, Path.key(2L));
+      awaitPStateNonNull(proj, Path.key(3L));
+
+      requestRefill(refillDepot, 1L, 10);
+
+      TestHelpers.attainConditionPred(
+          () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
+          heap -> heap != null && heap.size() >= 2);
+
+      List<MatchCandidate> heap = (List<MatchCandidate>) heapP.selectOne(Path.key(1L));
+      MatchCandidate preferredCand = heap.stream()
+          .filter(c -> c.getTargetAccountId() == 2L)
+          .findFirst()
+          .orElseThrow();
+      MatchCandidate neutralCand = heap.stream()
+          .filter(c -> c.getTargetAccountId() == 3L)
+          .findFirst()
+          .orElseThrow();
+
+      double expectedPreferredScore = CalypsoHelpers.computeMatchesBaseScore(viewer, preferred)
+          + CalypsoHelpers.computeLifestyleBonus(viewer, preferred)
+          + CalypsoHelpers.computeInterestsBonus(viewer, preferred)
+          + CalypsoHelpers.computePoliticsBonus(viewer, preferred)
+          + CalypsoHelpers.computeReligionBonus(viewer, preferred);
+      double expectedNeutralScore = CalypsoHelpers.computeMatchesBaseScore(viewer, neutral)
+          + CalypsoHelpers.computeLifestyleBonus(viewer, neutral)
+          + CalypsoHelpers.computeInterestsBonus(viewer, neutral)
+          + CalypsoHelpers.computePoliticsBonus(viewer, neutral)
+          + CalypsoHelpers.computeReligionBonus(viewer, neutral);
+
+      assertEquals(expectedPreferredScore, preferredCand.getStage0Score(), 1e-6);
+      assertEquals(expectedNeutralScore, neutralCand.getStage0Score(), 1e-6);
+      assertTrue(preferredCand.getStage0Score() > neutralCand.getStage0Score(),
+          "Interest preference matches should outrank neutral ones");
+    }
+  }
+
+  @Test
   public void exposureTTL_hidesRecentlyServed(TestInfo ti) throws Exception {
     List<Class> ser = List.of(CalypsoSerialization.class);
     try (InProcessCluster ipc = InProcessCluster.create(ser)) {
       Core core = new Core();
       Matches matches = new Matches();
-      TestHelpers.launchModule(ipc, core, ti);
-      TestHelpers.launchModule(ipc, matches, ti);
+      launchModuleDeterministic(ipc, core, ti);
+      launchModuleDeterministic(ipc, matches, ti);
 
       String matchesName = matches.getClass().getName();
 
@@ -449,8 +608,8 @@ public class MatchesTest {
     try (InProcessCluster ipc = InProcessCluster.create(ser)) {
       Core core = new Core();
       Matches matches = new Matches();
-      TestHelpers.launchModule(ipc, core, ti);
-      TestHelpers.launchModule(ipc, matches, ti);
+      launchModuleDeterministic(ipc, core, ti);
+      launchModuleDeterministic(ipc, matches, ti);
 
       String matchesName = matches.getClass().getName();
 
@@ -486,8 +645,8 @@ public class MatchesTest {
     try (InProcessCluster ipc = InProcessCluster.create(ser)) {
       Core core = new Core();
       Matches matches = new Matches();
-      TestHelpers.launchModule(ipc, core, ti);
-      TestHelpers.launchModule(ipc, matches, ti);
+      launchModuleDeterministic(ipc, core, ti);
+      launchModuleDeterministic(ipc, matches, ti);
 
       String matchesName = matches.getClass().getName();
 
@@ -543,8 +702,8 @@ public class MatchesTest {
     try (InProcessCluster ipc = InProcessCluster.create(ser)) {
       Core core = new Core();
       Matches matches = new Matches();
-      TestHelpers.launchModule(ipc, core, ti);
-      TestHelpers.launchModule(ipc, matches, ti);
+      launchModuleDeterministic(ipc, core, ti);
+      launchModuleDeterministic(ipc, matches, ti);
 
       String matchesName = matches.getClass().getName();
 
@@ -604,8 +763,8 @@ public class MatchesTest {
     try (InProcessCluster ipc = InProcessCluster.create(ser)) {
       Core core = new Core();
       Matches matches = new Matches();
-      TestHelpers.launchModule(ipc, core, ti);
-      TestHelpers.launchModule(ipc, matches, ti);
+      launchModuleDeterministic(ipc, core, ti);
+      launchModuleDeterministic(ipc, matches, ti);
 
       String matchesName = matches.getClass().getName();
 
@@ -671,8 +830,8 @@ public class MatchesTest {
     try (InProcessCluster ipc = InProcessCluster.create(ser)) {
       Core core = new Core();
       Matches matches = new Matches();
-      TestHelpers.launchModule(ipc, core, ti);
-      TestHelpers.launchModule(ipc, matches, ti);
+      launchModuleDeterministic(ipc, core, ti);
+      launchModuleDeterministic(ipc, matches, ti);
 
       String matchesName = matches.getClass().getName();
 
@@ -745,8 +904,8 @@ public class MatchesTest {
     try (InProcessCluster ipc = InProcessCluster.create(ser)) {
       Core core = new Core();
       Matches matches = new Matches();
-      TestHelpers.launchModule(ipc, core, ti);
-      TestHelpers.launchModule(ipc, matches, ti);
+      launchModuleDeterministic(ipc, core, ti);
+      launchModuleDeterministic(ipc, matches, ti);
 
       String matchesName = matches.getClass().getName();
 
@@ -813,8 +972,8 @@ public class MatchesTest {
     try (InProcessCluster ipc = InProcessCluster.create(ser)) {
       Core core = new Core();
       Matches matches = new Matches();
-      TestHelpers.launchModule(ipc, core, ti);
-      TestHelpers.launchModule(ipc, matches, ti);
+      launchModuleDeterministic(ipc, core, ti);
+      launchModuleDeterministic(ipc, matches, ti);
 
       String matchesName = matches.getClass().getName();
 
