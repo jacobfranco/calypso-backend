@@ -240,6 +240,150 @@ public class MatchesTest {
   }
 
   @Test
+  public void lifestyleDealbreaker_filtersOutNonMatchingTargets(TestInfo ti) throws Exception {
+    List<Class> ser = List.of(CalypsoSerialization.class);
+    try (InProcessCluster ipc = InProcessCluster.create(ser)) {
+      Core core = new Core();
+      Matches matches = new Matches();
+      TestHelpers.launchModule(ipc, core, ti);
+      TestHelpers.launchModule(ipc, matches, ti);
+
+      String matchesName = matches.getClass().getName();
+
+      Depot filtersDepot = ipc.clusterDepot(matchesName, "*filtersDepot");
+      Depot refillDepot = ipc.clusterDepot(matchesName, "*matchRefillDepot");
+      PState proj = ipc.clusterPState(matchesName, "$$accountIdToFiltersProjection");
+      PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
+
+      double[] DEN = CITY_LL.get("Denver, CO, USA");
+      Filters viewer = mkFilters(
+          1L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
+          "casual",
+          "woman", List.of("man"),
+          27, 22, 35,
+          List.of("yoga"), List.of(pref("vegan", Importance.DEALBREAKER)),
+          null, null,
+          null, null);
+      Filters blocked = mkFilters(
+          2L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          29, 24, 36,
+          List.of("hiking"), null,
+          null, null,
+          null, null);
+      Filters allowed = mkFilters(
+          3L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          29, 24, 36,
+          List.of("vegan", "hiking"), null,
+          null, null,
+          null, null);
+
+      append(ipc, filtersDepot, viewer);
+      append(ipc, filtersDepot, blocked);
+      append(ipc, filtersDepot, allowed);
+
+      awaitPStateNonNull(proj, Path.key(1L));
+      awaitPStateNonNull(proj, Path.key(2L));
+      awaitPStateNonNull(proj, Path.key(3L));
+
+      requestRefill(refillDepot, 1L, 10);
+
+      TestHelpers.attainConditionPred(
+          () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
+          heap -> heap != null && !heap.isEmpty());
+
+      List<MatchCandidate> heap = (List<MatchCandidate>) heapP.selectOne(Path.key(1L));
+      assertEquals(1, heap.size(), "Only vegan-compatible targets should remain");
+      assertEquals(3L, heap.get(0).getTargetAccountId());
+    }
+  }
+
+  @Test
+  public void lifestylePreference_grantsScoreBonus(TestInfo ti) throws Exception {
+    List<Class> ser = List.of(CalypsoSerialization.class);
+    try (InProcessCluster ipc = InProcessCluster.create(ser)) {
+      Core core = new Core();
+      Matches matches = new Matches();
+      TestHelpers.launchModule(ipc, core, ti);
+      TestHelpers.launchModule(ipc, matches, ti);
+
+      String matchesName = matches.getClass().getName();
+
+      Depot filtersDepot = ipc.clusterDepot(matchesName, "*filtersDepot");
+      Depot refillDepot = ipc.clusterDepot(matchesName, "*matchRefillDepot");
+      PState proj = ipc.clusterPState(matchesName, "$$accountIdToFiltersProjection");
+      PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
+
+      double[] MIA = CITY_LL.get("Miami, FL, USA");
+      Filters viewer = mkFilters(
+          1L, MIA[0], MIA[1], radiusKmFromToken("my_city"),
+          "casual",
+          "woman", List.of("man"),
+          28, 23, 35,
+          List.of("reading"), List.of(pref("hiking", Importance.PREFERENCE)),
+          null, null,
+          null, null);
+      Filters hikingMatch = mkFilters(
+          2L, MIA[0], MIA[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          29, 24, 36,
+          List.of("hiking"), null,
+          null, null,
+          null, null);
+      Filters neutral = mkFilters(
+          3L, MIA[0], MIA[1], radiusKmFromToken("my_city"),
+          "casual",
+          "man", List.of("woman"),
+          29, 24, 36,
+          List.of("tennis"), null,
+          null, null,
+          null, null);
+
+      append(ipc, filtersDepot, viewer);
+      append(ipc, filtersDepot, hikingMatch);
+      append(ipc, filtersDepot, neutral);
+
+      awaitPStateNonNull(proj, Path.key(1L));
+      awaitPStateNonNull(proj, Path.key(2L));
+      awaitPStateNonNull(proj, Path.key(3L));
+
+      requestRefill(refillDepot, 1L, 10);
+
+      TestHelpers.attainConditionPred(
+          () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
+          heap -> heap != null && heap.size() >= 2);
+
+      List<MatchCandidate> heap = (List<MatchCandidate>) heapP.selectOne(Path.key(1L));
+      MatchCandidate hikingCand = heap.stream()
+          .filter(c -> c.getTargetAccountId() == 2L)
+          .findFirst()
+          .orElseThrow();
+      MatchCandidate neutralCand = heap.stream()
+          .filter(c -> c.getTargetAccountId() == 3L)
+          .findFirst()
+          .orElseThrow();
+
+      double expectedHikingScore = CalypsoHelpers.computeMatchesBaseScore(viewer, hikingMatch)
+          + CalypsoHelpers.computeLifestyleBonus(viewer, hikingMatch)
+          + CalypsoHelpers.computePoliticsBonus(viewer, hikingMatch)
+          + CalypsoHelpers.computeReligionBonus(viewer, hikingMatch);
+      double expectedNeutralScore = CalypsoHelpers.computeMatchesBaseScore(viewer, neutral)
+          + CalypsoHelpers.computeLifestyleBonus(viewer, neutral)
+          + CalypsoHelpers.computePoliticsBonus(viewer, neutral)
+          + CalypsoHelpers.computeReligionBonus(viewer, neutral);
+
+      assertEquals(expectedHikingScore, hikingCand.getStage0Score(), 1e-6);
+      assertEquals(expectedNeutralScore, neutralCand.getStage0Score(), 1e-6);
+      assertTrue(hikingCand.getStage0Score() > neutralCand.getStage0Score(),
+          "Preference-aligned targets should outrank neutral ones");
+    }
+  }
+
+  @Test
   public void exposureTTL_hidesRecentlyServed(TestInfo ti) throws Exception {
     List<Class> ser = List.of(CalypsoSerialization.class);
     try (InProcessCluster ipc = InProcessCluster.create(ser)) {

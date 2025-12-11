@@ -333,6 +333,53 @@ public class CalypsoHelpers {
         return (f != null && f.isSetReligion()) ? f.getReligion() : null;
     }
 
+    private static ManyToManyFilter getLifestyleFilter(Filters f) {
+        return (f != null && f.isSetLifestyle()) ? f.getLifestyle() : null;
+    }
+
+    private static Set<String> getManySelfTags(ManyToManyFilter filter) {
+        if (filter == null || !filter.isSetSelf())
+            return Collections.emptySet();
+        LinkedHashSet<String> tags = new LinkedHashSet<>();
+        for (String tag : filter.getSelf()) {
+            if (tag != null)
+                tags.add(tag);
+        }
+        return tags;
+    }
+
+    private static boolean manyDealbreakersSatisfied(ManyToManyFilter prefsHolder, Set<String> otherSelfTags) {
+        if (prefsHolder == null || !prefsHolder.isSetPreferences())
+            return true;
+        Set<String> tags = (otherSelfTags == null) ? Collections.emptySet() : otherSelfTags;
+        for (TagPreference pref : prefsHolder.getPreferences()) {
+            if (pref == null || !pref.isSetTag() || !pref.isSetImportance())
+                continue;
+            if (pref.getImportance() == Importance.DEALBREAKER) {
+                String tag = pref.getTag();
+                if (tag == null || !tags.contains(tag)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static double preferenceBonusFrom(ManyToManyFilter prefsHolder, Set<String> otherSelfTags, double weight) {
+        if (prefsHolder == null || !prefsHolder.isSetPreferences() || weight <= 0.0)
+            return 0.0;
+        Set<String> tags = (otherSelfTags == null) ? Collections.emptySet() : otherSelfTags;
+        double bonus = 0.0;
+        for (TagPreference pref : prefsHolder.getPreferences()) {
+            if (pref == null || !pref.isSetTag() || !pref.isSetImportance())
+                continue;
+            if (pref.getImportance() == Importance.PREFERENCE && tags.contains(pref.getTag())) {
+                bonus += weight;
+            }
+        }
+        return bonus;
+    }
+
     public static boolean politicsCompatible(Filters viewer, Filters target) {
         OneToManyFilter vp = getPolitics(viewer);
         OneToManyFilter tp = getPolitics(target);
@@ -402,6 +449,33 @@ public class CalypsoHelpers {
         }
 
         return true;
+    }
+
+    public static boolean lifestyleCompatible(Filters viewer, Filters target) {
+        ManyToManyFilter vl = getLifestyleFilter(viewer);
+        ManyToManyFilter tl = getLifestyleFilter(target);
+
+        Set<String> viewerTags = getManySelfTags(vl);
+        Set<String> targetTags = getManySelfTags(tl);
+
+        if (!manyDealbreakersSatisfied(vl, targetTags))
+            return false;
+        if (!manyDealbreakersSatisfied(tl, viewerTags))
+            return false;
+        return true;
+    }
+
+    public static double computeLifestyleBonus(Filters viewer, Filters target) {
+        ManyToManyFilter vl = getLifestyleFilter(viewer);
+        ManyToManyFilter tl = getLifestyleFilter(target);
+
+        Set<String> viewerTags = getManySelfTags(vl);
+        Set<String> targetTags = getManySelfTags(tl);
+
+        double bonus = 0.0;
+        bonus += preferenceBonusFrom(vl, targetTags, 6.0);
+        bonus += preferenceBonusFrom(tl, viewerTags, 3.0);
+        return bonus;
     }
 
     public static double computePoliticsBonus(Filters viewer, Filters target) {
@@ -485,6 +559,8 @@ public class CalypsoHelpers {
         if (!politicsCompatible(viewer, target))
             return -1.0;
         if (!religionCompatible(viewer, target))
+            return -1.0;
+        if (!lifestyleCompatible(viewer, target))
             return -1.0;
         return 100.0;
     }

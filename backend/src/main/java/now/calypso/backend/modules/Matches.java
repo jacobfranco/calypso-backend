@@ -230,15 +230,18 @@ public class Matches implements RamaModule {
                                                                                              // constraints
                                                                         }
 
-                                                                        // Soft bonuses: politics + religion
+                                                                        // Soft bonuses: lifestyle + politics + religion
+                                                                        double lifestyleBonus = CalypsoHelpers
+                                                                                        .computeLifestyleBonus(viewer,
+                                                                                                        target);
                                                                         double politicsBonus = CalypsoHelpers
                                                                                         .computePoliticsBonus(viewer,
                                                                                                         target);
                                                                         double religionBonus = CalypsoHelpers
                                                                                         .computeReligionBonus(viewer,
                                                                                                         target);
-                                                                        double finalScore = baseScore + politicsBonus
-                                                                                        + religionBonus;
+                                                                        double finalScore = baseScore + lifestyleBonus
+                                                                                        + politicsBonus + religionBonus;
 
                                                                         // Serious vs casual floor applies to final
                                                                         // score
