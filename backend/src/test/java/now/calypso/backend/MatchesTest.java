@@ -397,6 +397,47 @@ public class MatchesTest {
   }
 
   @Test
+  public void refillPreservesExistingHeapEntries(TestInfo ti) throws Exception {
+    List<Class> ser = List.of(CalypsoSerialization.class);
+    try (InProcessCluster ipc = InProcessCluster.create(ser)) {
+      Core core = new Core();
+      Matches matches = new Matches();
+      launchModuleDeterministic(ipc, core, ti);
+      launchModuleDeterministic(ipc, matches, ti);
+
+      String matchesName = matches.getClass().getName();
+      Depot filtersDepot = ipc.clusterDepot(matchesName, "*filtersDepot");
+      Depot refillDepot = ipc.clusterDepot(matchesName, "*matchRefillDepot");
+      PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
+
+      double[] CLT = CITY_LL.get("Charlotte, NC, USA");
+      Filters viewer = mkFilters(1L, CLT[0], CLT[1], radiusKmFromToken("my_city"), "casual",
+          "man", List.of("woman"), 26, 22, 35, null, null, null, null, null, null);
+      Filters targetA = mkFilters(2L, CLT[0], CLT[1], radiusKmFromToken("my_city"), "casual",
+          "woman", List.of("man"), 25, 23, 36, null, null, null, null, null, null);
+      Filters targetB = mkFilters(3L, CLT[0], CLT[1], radiusKmFromToken("my_city"), "casual",
+          "woman", List.of("man"), 24, 22, 34, null, null, null, null, null, null);
+
+      append(ipc, filtersDepot, viewer);
+      append(ipc, filtersDepot, targetA);
+      requestRefill(refillDepot, 1L, 50);
+
+      TestHelpers.attainConditionPred(
+          () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
+          heap -> heap != null && heap.stream().anyMatch(c -> c.getTargetAccountId() == 2L));
+
+      append(ipc, filtersDepot, targetB);
+      requestRefill(refillDepot, 1L, 50);
+
+      TestHelpers.attainConditionPred(
+          () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
+          heap -> heap != null
+              && heap.stream().anyMatch(c -> c.getTargetAccountId() == 2L)
+              && heap.stream().anyMatch(c -> c.getTargetAccountId() == 3L));
+    }
+  }
+
+  @Test
   public void interestsDealbreaker_filtersOutNonMatchingTargets(TestInfo ti) throws Exception {
     List<Class> ser = List.of(CalypsoSerialization.class);
     try (InProcessCluster ipc = InProcessCluster.create(ser)) {

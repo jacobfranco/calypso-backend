@@ -163,128 +163,195 @@ public class Matches implements RamaModule {
                 // viewer -> sorted heap (List<MatchCandidate>)
                 stream.pstate("$$accountIdToCandidateHeap",
                                 PState.mapSchema(Long.class, List.class));
+                stream.pstate("$$accountIdToRefillPending",
+                                PState.mapSchema(Long.class, Boolean.class));
+                stream.pstate("$$accountIdToLastRefillAt",
+                                PState.mapSchema(Long.class, Long.class));
 
                 stream.source("*matchRefillDepot").out("*data")
                                 .macro(extractFields("*data", "*accountId", "*targetSize"))
                                 .each((Number n) -> n == null ? 0L : n.longValue(), "*accountId").out("*aidL")
                                 .each((Long aid) -> 0L, "*aidL").out("*partKey")
                                 .hashPartition("*partKey")
-
-                                // Start with a fresh empty heap for this viewer on every refill
-                                .each(() -> new ArrayList<MatchCandidate>()).out("*emptyHeap")
-                                .localTransform("$$accountIdToCandidateHeap",
-                                                Path.key("*aidL").termVal("*emptyHeap"))
-
-                                // Load viewer filters and exposures once
-                                .localSelect("$$accountIdToFiltersProjection", Path.key("*aidL")).out("*viewerFilters")
-                                .localSelect("$$accountIdToExposure", Path.key("*aidL")).out("*exposures")
-
-                                // Iterate over all known accountIds on this shard: (targetId -> targetId)
-                                .localSelect("$$allAccountIdsVec", Path.all()).out("*entry")
-                                // entry is a MapEntry; we just want the key (accountId)
-                                .each((Object e) -> {
-                                        if (e instanceof java.util.Map.Entry) {
-                                                return ((java.util.Map.Entry<?, ?>) e).getKey();
-                                        }
-                                        return null;
-                                }, "*entry").out("*tidObj")
-                                .each((Object n) -> (n instanceof Number) ? ((Number) n).longValue() : 0L,
-                                                "*tidObj")
-                                .out("*tidL")
-
-                                // Skip self (viewer == target)
-                                .each((Long vid, Long tid) -> vid != null && tid != null && !Objects.equals(vid, tid),
-                                                "*aidL", "*tidL")
-                                .out("*isOther")
-
-                                .ifTrue("*isOther",
+                                .localSelect("$$accountIdToRefillPending", Path.key("*aidL").nullToVal(false))
+                                .out("*isPending")
+                                .each((Boolean pending) -> pending == null || !pending, "*isPending")
+                                .out("*shouldProcess")
+                                .ifTrue("*shouldProcess",
                                                 Block.create()
-                                                                // For each targetId, load its Filters
+                                                                .localTransform("$$accountIdToRefillPending",
+                                                                                Path.key("*aidL").termVal(true))
+                                                                // Load viewer filters and exposures once
                                                                 .localSelect("$$accountIdToFiltersProjection",
-                                                                                Path.key("*tidL"))
-                                                                .out("*targetFilters")
-
-                                                                // Cast viewer/target filters and exposures cleanly
-                                                                .each((Object vfObj) -> (Filters) vfObj,
-                                                                                "*viewerFilters")
-                                                                .out("*viewerFiltersC")
-                                                                .each((Object tfObj) -> (tfObj instanceof Filters)
-                                                                                ? (Filters) tfObj
-                                                                                : null,
-                                                                                "*targetFilters")
-                                                                .out("*targetFiltersC")
-                                                                .each((Filters viewer,
-                                                                                Long tid,
-                                                                                Filters target) -> {
-                                                                        if (viewer == null || target == null) {
-                                                                                return null;
-                                                                        }
-
-                                                                        long now = System.currentTimeMillis();
-
-                                                                        double baseScore = CalypsoHelpers
-                                                                                        .computeMatchesBaseScore(viewer,
-                                                                                                        target);
-                                                                        if (baseScore < 0.0) {
-                                                                                return null; // incompatible on hard
-                                                                                             // constraints
-                                                                        }
-
-                                                                        // Soft bonuses: lifestyle + interests + politics + religion
-                                                                        double lifestyleBonus = CalypsoHelpers
-                                                                                        .computeLifestyleBonus(viewer,
-                                                                                                        target);
-                                                                        double interestsBonus = CalypsoHelpers
-                                                                                        .computeInterestsBonus(viewer,
-                                                                                                        target);
-                                                                        double politicsBonus = CalypsoHelpers
-                                                                                        .computePoliticsBonus(viewer,
-                                                                                                        target);
-                                                                        double religionBonus = CalypsoHelpers
-                                                                                        .computeReligionBonus(viewer,
-                                                                                                        target);
-                                                                        double finalScore = baseScore + lifestyleBonus
-                                                                                        + interestsBonus + politicsBonus
-                                                                                        + religionBonus;
-
-                                                                        // Serious vs casual floor applies to final
-                                                                        // score
-                                                                        String viewerMode = CalypsoHelpers
-                                                                                        .getModeSelfOrNull(viewer);
-                                                                        double floor = ("serious"
-                                                                                        .equalsIgnoreCase(viewerMode))
-                                                                                                        ? MIN_SCORE_SERIOUS
-                                                                                                        : MIN_SCORE_CASUAL;
-                                                                        if (finalScore < floor) {
-                                                                                return null;
-                                                                        }
-
-                                                                        return mkCandidate(tid, finalScore, now);
-                                                                }, "*viewerFiltersC", "*tidL", "*targetFiltersC")
-                                                                .out("*candMaybe")
-                                                                // Read current heap, defaulting to empty list
-                                                                .localSelect("$$accountIdToCandidateHeap",
                                                                                 Path.key("*aidL"))
-                                                                .out("*heapRaw")
-                                                                .each((Object hObj) -> {
-                                                                        if (hObj == null)
-                                                                                return new ArrayList<MatchCandidate>();
-                                                                        return (List<MatchCandidate>) hObj;
-                                                                }, "*heapRaw").out("*currHeap")
+                                                                .out("*viewerFilters")
+                                                                .localSelect("$$accountIdToExposure", Path.key("*aidL"))
+                                                                .out("*exposures")
 
-                                                                // Upsert candidate if non-null; otherwise keep heap
-                                                                // as-is
-                                                                .each((List<MatchCandidate> heap,
-                                                                                MatchCandidate cand) -> {
-                                                                        if (cand == null)
-                                                                                return heap;
-                                                                        return upsertIntoHeap(heap, cand);
-                                                                },
-                                                                                "*currHeap", "*candMaybe")
-                                                                .out("*newHeap")
+                                                                // Iterate over all known accountIds on this shard:
+                                                                // (targetId -> targetId)
+                                                                .localSelect("$$allAccountIdsVec", Path.all())
+                                                                .out("*entry")
+                                                                // entry is a MapEntry; we just want the key
+                                                                // (accountId)
+                                                                .each((Object e) -> {
+                                                                        if (e instanceof java.util.Map.Entry) {
+                                                                                return ((java.util.Map.Entry<?, ?>) e)
+                                                                                                .getKey();
+                                                                        }
+                                                                        return null;
+                                                                }, "*entry").out("*tidObj")
+                                                                .each((Object n) -> (n instanceof Number)
+                                                                                ? ((Number) n).longValue()
+                                                                                : 0L,
+                                                                                "*tidObj")
+                                                                .out("*tidL")
 
-                                                                .localTransform("$$accountIdToCandidateHeap",
-                                                                                Path.key("*aidL").termVal("*newHeap")));
+                                                                // Skip self (viewer == target)
+                                                                .each((Long vid, Long tid) -> vid != null
+                                                                                && tid != null
+                                                                                && !Objects.equals(vid, tid),
+                                                                                "*aidL", "*tidL")
+                                                                .out("*isOther")
+
+                                                                .ifTrue("*isOther",
+                                                                                Block.create()
+                                                                                                // For each targetId,
+                                                                                                // load its Filters
+                                                                                                .localSelect(
+                                                                                                                "$$accountIdToFiltersProjection",
+                                                                                                                Path.key(
+                                                                                                                                "*tidL"))
+                                                                                                .out("*targetFilters")
+
+                                                                                                // Cast
+                                                                                                // viewer/target
+                                                                                                // filters and
+                                                                                                // exposures cleanly
+                                                                                                .each((Object vfObj) -> (Filters) vfObj,
+                                                                                                                "*viewerFilters")
+                                                                                                .out("*viewerFiltersC")
+                                                                                                .each((Object tfObj) -> (tfObj instanceof Filters)
+                                                                                                                ? (Filters) tfObj
+                                                                                                                : null,
+                                                                                                                "*targetFilters")
+                                                                                                .out("*targetFiltersC")
+                                                                                                .each((Filters viewer,
+                                                                                                                Long tid,
+                                                                                                                Filters target) -> {
+                                                                                                        if (viewer == null
+                                                                                                                        || target == null) {
+                                                                                                                return null;
+                                                                                                        }
+
+                                                                                                        long now = System
+                                                                                                                        .currentTimeMillis();
+
+                                                                                                        double baseScore = CalypsoHelpers
+                                                                                                                        .computeMatchesBaseScore(
+                                                                                                                                        viewer,
+                                                                                                                                        target);
+                                                                                                        if (baseScore < 0.0) {
+                                                                                                                return null; // incompatible
+                                                                                                                             // on
+                                                                                                                             // hard
+                                                                                                                             // constraints
+                                                                                                        }
+
+                                                                                                        // Soft bonuses:
+                                                                                                        // lifestyle +
+                                                                                                        // interests +
+                                                                                                        // politics +
+                                                                                                        // religion
+                                                                                                        double lifestyleBonus = CalypsoHelpers
+                                                                                                                        .computeLifestyleBonus(
+                                                                                                                                        viewer,
+                                                                                                                                        target);
+                                                                                                        double interestsBonus = CalypsoHelpers
+                                                                                                                        .computeInterestsBonus(
+                                                                                                                                        viewer,
+                                                                                                                                        target);
+                                                                                                        double politicsBonus = CalypsoHelpers
+                                                                                                                        .computePoliticsBonus(
+                                                                                                                                        viewer,
+                                                                                                                                        target);
+                                                                                                        double religionBonus = CalypsoHelpers
+                                                                                                                        .computeReligionBonus(
+                                                                                                                                        viewer,
+                                                                                                                                        target);
+                                                                                                        double finalScore = baseScore
+                                                                                                                        + lifestyleBonus
+                                                                                                                        + interestsBonus
+                                                                                                                        + politicsBonus
+                                                                                                                        + religionBonus;
+
+                                                                                                        // Serious vs
+                                                                                                        // casual floor
+                                                                                                        // applies to
+                                                                                                        // final score
+                                                                                                        String viewerMode = CalypsoHelpers
+                                                                                                                        .getModeSelfOrNull(
+                                                                                                                                        viewer);
+                                                                                                        double floor = ("serious"
+                                                                                                                        .equalsIgnoreCase(
+                                                                                                                                        viewerMode))
+                                                                                                                                                        ? MIN_SCORE_SERIOUS
+                                                                                                                                                        : MIN_SCORE_CASUAL;
+                                                                                                        if (finalScore < floor) {
+                                                                                                                return null;
+                                                                                                        }
+
+                                                                                                        return mkCandidate(
+                                                                                                                        tid,
+                                                                                                                        finalScore,
+                                                                                                                        now);
+                                                                                                }, "*viewerFiltersC",
+                                                                                                                "*tidL",
+                                                                                                                "*targetFiltersC")
+                                                                                                .out("*candMaybe")
+                                                                                                // Read current heap,
+                                                                                                // defaulting to empty
+                                                                                                // list
+                                                                                                .localSelect(
+                                                                                                                "$$accountIdToCandidateHeap",
+                                                                                                                Path.key(
+                                                                                                                                "*aidL"))
+                                                                                                .out("*heapRaw")
+                                                                                                .each((Object hObj) -> {
+                                                                                                        if (hObj == null)
+                                                                                                                return new ArrayList<MatchCandidate>();
+                                                                                                        return (List<MatchCandidate>) hObj;
+                                                                                                }, "*heapRaw")
+                                                                                                .out("*currHeap")
+
+                                                                                                // Upsert candidate if
+                                                                                                // non-null; otherwise
+                                                                                                // keep heap as-is
+                                                                                                .each((List<MatchCandidate> heap,
+                                                                                                                MatchCandidate cand) -> {
+                                                                                                        if (cand == null)
+                                                                                                                return heap;
+                                                                                                        return upsertIntoHeap(
+                                                                                                                        heap,
+                                                                                                                        cand);
+                                                                                                },
+                                                                                                                "*currHeap",
+                                                                                                                "*candMaybe")
+                                                                                                .out("*newHeap")
+
+                                                                                                .localTransform(
+                                                                                                                "$$accountIdToCandidateHeap",
+                                                                                                                Path.key(
+                                                                                                                                "*aidL")
+                                                                                                                                .termVal(
+                                                                                                                                                "*newHeap"))))
+                                .each(() -> System.currentTimeMillis())
+                                .out("*refillDoneTs")
+                                .localTransform("$$accountIdToLastRefillAt",
+                                                Path.key("*aidL").termVal(
+                                                                "*refillDoneTs"))
+                                .localTransform("$$accountIdToRefillPending",
+                                                Path.key("*aidL").termVal(false));
         }
 
         private void declareQueries(Topologies topologies) {
