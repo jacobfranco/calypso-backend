@@ -47,7 +47,7 @@ public class CalypsoApiConfig implements WebFluxConfigurer {
     @Bean
     public ReactiveSessionRepository reactiveSessionRepository() {
         return new ReactiveSessionRepository<MapSession>() {
-            private final Map<String, Session> sessions = new CalypsoApiConcurrentFixedMap<>(10000);
+            private final Map<String, Session> sessions = CalypsoApiConcurrentFixedMap.init(10000);
 
             @Override
             public Mono<Void> save(MapSession session) {

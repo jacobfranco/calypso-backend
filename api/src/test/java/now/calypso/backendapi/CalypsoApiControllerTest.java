@@ -65,7 +65,7 @@ class CalypsoApiControllerTest {
                                 .thenReturn(CompletableFuture.completedFuture(true));
 
                 // Perform real login and capture session token
-                PostAccount login = new PostAccount("Foo", "foo@bar.com", "pw", true, "en_US", "");
+                PostAccount login = new PostAccount("Foo", "foo@bar.com", "password1", true, "en_US");
                 GetToken tokenBody = client.post()
                                 .uri("/api/accounts")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -84,7 +84,7 @@ class CalypsoApiControllerTest {
         @Test
         void postAccount_emptyName_returns422() {
                 client.post().uri("/api/accounts")
-                                .bodyValue(new PostAccount("", "x@x.com", "pw", true, "en_US", ""))
+                                .bodyValue(new PostAccount("", "x@x.com", "password1", true, "en_US"))
                                 .exchange().expectStatus().isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
         }
 
@@ -92,21 +92,45 @@ class CalypsoApiControllerTest {
         void postAccount_nameTooLong_returns422() {
                 String longName = "X".repeat(CalypsoApiConfig.MAX_NAME_LENGTH + 1);
                 client.post().uri("/api/accounts")
-                                .bodyValue(new PostAccount(longName, "x@x.com", "pw", true, "en_US", ""))
+                                .bodyValue(new PostAccount(longName, "x@x.com", "password1", true, "en_US"))
                                 .exchange().expectStatus().isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
         }
 
         @Test
         void postAccount_invalidCharactersInName_returns422() {
                 client.post().uri("/api/accounts")
-                                .bodyValue(new PostAccount("Bad🌟Name", "x@x.com", "pw", true, "en_US", ""))
+                                .bodyValue(new PostAccount("Bad🌟Name", "x@x.com", "password1", true, "en_US"))
                                 .exchange().expectStatus().isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
         }
 
         @Test
         void postAccount_agreementFalse_returns422() {
                 client.post().uri("/api/accounts")
-                                .bodyValue(new PostAccount("Alice", "a@x.com", "pw", false, "en_US", ""))
+                                .bodyValue(new PostAccount("Alice", "a@x.com", "password1", false, "en_US"))
+                                .exchange().expectStatus().isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        }
+
+        @Test
+        void postAccount_agreementNull_returns422() {
+                PostAccount body = new PostAccount("Alice", "a@x.com", "password1", null, "en_US");
+                client.post().uri("/api/accounts")
+                                .bodyValue(body)
+                                .exchange().expectStatus().isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        }
+
+        @Test
+        void postAccount_invalidEmail_returns422() {
+                PostAccount body = new PostAccount("Alice", "not-an-email", "password1", true, "en_US");
+                client.post().uri("/api/accounts")
+                                .bodyValue(body)
+                                .exchange().expectStatus().isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        }
+
+        @Test
+        void postAccount_passwordTooShort_returns422() {
+                PostAccount body = new PostAccount("Alice", "alice@example.com", "short", true, "en_US");
+                client.post().uri("/api/accounts")
+                                .bodyValue(body)
                                 .exchange().expectStatus().isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
         }
 
@@ -120,7 +144,7 @@ class CalypsoApiControllerTest {
                 when(mockManager.getAccountWithId(42L))
                                 .thenReturn(CompletableFuture.completedFuture(new AccountWithId(42L, thriftAcct)));
                 client.post().uri("/api/accounts")
-                                .bodyValue(new PostAccount("Alice", "user@example.com", "pw", true, "en_US", ""))
+                                .bodyValue(new PostAccount("Alice", "user@example.com", "password1", true, "en_US"))
                                 .exchange().expectStatus().isOk();
         }
 

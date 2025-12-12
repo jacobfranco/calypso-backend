@@ -10,8 +10,7 @@ public class PostAccount {
     public PostAccount() {
     }
 
-    public PostAccount(String name, String email, String password, Boolean agreement, String locale,
-            String reason) {
+    public PostAccount(String name, String email, String password, Boolean agreement, String locale) {
         this.name = name;
         this.email = email;
         this.password = password;

@@ -15,8 +15,12 @@ import now.calypso.backendapi.signals.*;
 import now.calypso.backend.*;
 import now.calypso.backend.data.*;
 import now.calypso.backend.modules.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class CalypsoApiManager {
+
+    private static final Logger LOG = LoggerFactory.getLogger(CalypsoApiManager.class);
 
     private final OpenAIClient openAI;
 
@@ -214,7 +218,12 @@ public class CalypsoApiManager {
 
         // 1) opportunistic refill (non-blocking)
         int refillTarget = Math.max(60, limit * 2);
-        requestRefill(viewerId, refillTarget); // fire-and-forget
+        requestRefill(viewerId, refillTarget)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to enqueue match refill for account {} (target size {})", viewerId, refillTarget,
+                            ex);
+                    return null;
+                });
 
         // 2) read top candidates (query is read-only & already filters
         // exposure/exclusions)

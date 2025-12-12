@@ -18,6 +18,10 @@ import reactor.core.publisher.Mono;
 @RestController
 public class CalypsoApiController {
 
+    private static final java.util.regex.Pattern EMAIL_PATTERN = java.util.regex.Pattern
+            .compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
+    private static final int MIN_PASSWORD_LENGTH = 8;
+
     public static CalypsoApiManager manager;
 
     @Autowired
@@ -81,7 +85,7 @@ public class CalypsoApiController {
         }
 
         // 4) Validate agreement
-        else if (!params.agreement) {
+        else if (!Boolean.TRUE.equals(params.agreement)) {
             response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
             return Mono.just(new GetErrorDetails(
                     "The agreement has not been accepted",
@@ -93,8 +97,34 @@ public class CalypsoApiController {
                         }
                     }));
         }
+        // 5) Validate the email looks sane-ish
+        else if (params.email == null || !EMAIL_PATTERN.matcher(params.email).matches()) {
+            response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+            return Mono.just(new GetErrorDetails(
+                    "Email is invalid",
+                    new HashMap<String, GetErrorDetails.Error>() {
+                        {
+                            put("email", new GetErrorDetails.Error(
+                                    "ERR_INVALID",
+                                    "Email must be a valid address"));
+                        }
+                    }));
+        }
+        // 6) Password guardrail
+        else if (params.password == null || params.password.length() < MIN_PASSWORD_LENGTH) {
+            response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+            return Mono.just(new GetErrorDetails(
+                    "Password too short",
+                    new HashMap<String, GetErrorDetails.Error>() {
+                        {
+                            put("password", new GetErrorDetails.Error(
+                                    "ERR_INVALID",
+                                    "Password must be at least " + MIN_PASSWORD_LENGTH + " characters"));
+                        }
+                    }));
+        }
 
-        // 5) Create the account
+        // 7) Create the account
         return Mono.fromFuture(manager.postAccount(params))
                 .flatMap(success -> {
                     if (success) {

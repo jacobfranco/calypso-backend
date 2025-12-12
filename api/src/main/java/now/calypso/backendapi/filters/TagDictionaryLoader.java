@@ -19,6 +19,12 @@ public final class TagDictionaryLoader {
     public static final Map<String, List<String>> RELIGION = load("/religion-tags.json");
     public static final Map<String, List<String>> POLITICS = load("/politics-tags.json");
 
+    public static final Set<String> LIFESTYLE_FLAT = flat(LIFESTYLE);
+    public static final Set<String> INTEREST_FLAT = flat(INTEREST);
+    public static final Set<String> GENDER_FLAT = flat(GENDER);
+    public static final Set<String> RELIGION_FLAT = flat(RELIGION);
+    public static final Set<String> POLITICS_FLAT = flat(POLITICS);
+
     private TagDictionaryLoader() {
         /* utility */ }
 

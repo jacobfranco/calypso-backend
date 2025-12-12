@@ -36,22 +36,22 @@ public class TagDictionaryService {
 
     // flattened versions for fast membership checks
     public Set<String> lifestyleFlat() {
-        return TagDictionaryLoader.flat(lifestyle());
+        return TagDictionaryLoader.LIFESTYLE_FLAT;
     }
 
     public Set<String> interestsFlat() {
-        return TagDictionaryLoader.flat(interests());
+        return TagDictionaryLoader.INTEREST_FLAT;
     }
 
     public Set<String> gendersFlat() {
-        return TagDictionaryLoader.flat(genders());
+        return TagDictionaryLoader.GENDER_FLAT;
     }
 
     public Set<String> religionsFlat() {
-        return TagDictionaryLoader.flat(religions());
+        return TagDictionaryLoader.RELIGION_FLAT;
     }
 
     public Set<String> politicsFlat() {
-        return TagDictionaryLoader.flat(politics());
+        return TagDictionaryLoader.POLITICS_FLAT;
     }
 }
