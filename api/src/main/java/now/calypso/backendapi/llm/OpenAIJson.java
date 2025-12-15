@@ -10,6 +10,7 @@ import com.openai.models.chat.completions.StructuredChatCompletionCreateParams;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.BiFunction;
 
 /**
  * v3.0.3 helper: calls Chat Completions with Structured Outputs and returns
@@ -17,6 +18,7 @@ import java.util.Optional;
  */
 public final class OpenAIJson {
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static volatile BiFunction<String, String, String> TEST_OVERRIDE = null;
 
     /** Structured-output target (the model is constrained to this shape). */
     public static class SignalsOut {
@@ -24,6 +26,10 @@ public final class OpenAIJson {
     }
 
     public static String call(OpenAIClient client, String system, String user) {
+        BiFunction<String, String, String> override = TEST_OVERRIDE;
+        if (override != null) {
+            return override.apply(system, user);
+        }
         // Start with ChatCompletionCreateParams; calling responseFormat(...) switches
         // the builder type.
         StructuredChatCompletionCreateParams<SignalsOut> params = ChatCompletionCreateParams.builder()
@@ -53,6 +59,14 @@ public final class OpenAIJson {
         } catch (Exception e) {
             return "{\"signals\":[]}";
         }
+    }
+
+    public static void setTestOverride(BiFunction<String, String, String> override) {
+        TEST_OVERRIDE = override;
+    }
+
+    public static void clearTestOverride() {
+        TEST_OVERRIDE = null;
     }
 
     private OpenAIJson() {

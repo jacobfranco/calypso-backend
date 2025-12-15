@@ -1,6 +1,7 @@
 package now.calypso.backendapi;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -219,6 +220,58 @@ public class CalypsoApiController {
     @GetMapping("/api/meta/tags/politics")
     public Map<String, List<String>> politicalTags() {
         return tagService.politics();
+    }
+
+    @GetMapping("/api/accounts/{id}/signals")
+    public Mono<GetSignals> getSignals(@PathVariable("id") String idStr,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+
+        return Mono.fromFuture(manager.getSignals(accountId, accountId))
+                .map(thrift -> thrift == null
+                        ? new GetSignals(accountId, List.of())
+                        : new GetSignals(thrift))
+                .defaultIfEmpty(new GetSignals(accountId, List.of()));
+    }
+
+    @PostMapping("/api/accounts/{id}/signals")
+    public Mono<GetSignals> postSignals(@PathVariable("id") String idStr,
+            @RequestBody(required = false) PostSignalsRequest params,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        if (params == null || (!params.hasTokens() && !params.hasText())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Payload must include tokens or text.");
+        }
+        CompletableFuture<Void> writes = CompletableFuture.completedFuture(null);
+        String source = params.sourceOrDefault();
+        String context = params.contextOrNull();
+        if (params.hasTokens()) {
+            List<String> tokens = params.safeTokens();
+            writes = writes.thenCompose(v -> manager.postSignals(accountId, tokens, source, context)
+                    .thenApply(ok -> null));
+        }
+        if (params.hasText()) {
+            String text = params.text;
+            writes = writes.thenCompose(
+                    v -> manager.extractAndAppendSignals(accountId, text, source,
+                            context != null ? context : text)
+                            .thenApply(ignored -> null));
+        }
+
+        return Mono.fromFuture(writes.thenCompose(v -> manager.getSignals(accountId, accountId)))
+                .map(thrift -> thrift == null
+                        ? new GetSignals(accountId, List.of())
+                        : new GetSignals(thrift))
+                .defaultIfEmpty(new GetSignals(accountId, List.of()));
     }
 
     // For testing

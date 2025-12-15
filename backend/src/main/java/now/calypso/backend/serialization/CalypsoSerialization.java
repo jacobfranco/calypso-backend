@@ -27,6 +27,7 @@ public class CalypsoSerialization extends ThriftSerialization {
                 RemoveAuthCode.class,
                 ServedPairs.class,
                 Signals.class,
+                SignalRecord.class,
                 TagPreference.class,
 
         };

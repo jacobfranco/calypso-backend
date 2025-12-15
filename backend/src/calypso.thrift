@@ -106,9 +106,18 @@ struct ModeFilter {
   1: required string self;              // "casual", "serious"
 }
 
+struct SignalRecord {
+  1: required string token;
+  2: optional string source;
+  3: optional Timestamp firstSeen;
+  4: optional Timestamp lastSeen;
+  5: optional i32 count;
+  6: optional string lastContext;
+}
+
 struct Signals {
   1: required AccountId accountId;    // owner
-  2: optional list<string> signals;   // e.g. ["blade_superfan", "likes_firefighters"]
+  2: optional list<SignalRecord> records;
 }
 
 struct MatchCandidate {

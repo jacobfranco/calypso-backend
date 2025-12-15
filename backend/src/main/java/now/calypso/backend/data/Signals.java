@@ -11,18 +11,18 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
   private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("Signals");
 
   private static final org.apache.thrift.protocol.TField ACCOUNT_ID_FIELD_DESC = new org.apache.thrift.protocol.TField("accountId", org.apache.thrift.protocol.TType.I64, (short)1);
-  private static final org.apache.thrift.protocol.TField SIGNALS_FIELD_DESC = new org.apache.thrift.protocol.TField("signals", org.apache.thrift.protocol.TType.LIST, (short)2);
+  private static final org.apache.thrift.protocol.TField RECORDS_FIELD_DESC = new org.apache.thrift.protocol.TField("records", org.apache.thrift.protocol.TType.LIST, (short)2);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new SignalsStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new SignalsTupleSchemeFactory();
 
   public long accountId; // required
-  public @org.apache.thrift.annotation.Nullable java.util.List<java.lang.String> signals; // optional
+  public @org.apache.thrift.annotation.Nullable java.util.List<SignalRecord> records; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
     ACCOUNT_ID((short)1, "accountId"),
-    SIGNALS((short)2, "signals");
+    RECORDS((short)2, "records");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -40,8 +40,8 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
       switch(fieldId) {
         case 1: // ACCOUNT_ID
           return ACCOUNT_ID;
-        case 2: // SIGNALS
-          return SIGNALS;
+        case 2: // RECORDS
+          return RECORDS;
         default:
           return null;
       }
@@ -87,15 +87,15 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
   // isset id assignments
   private static final int __ACCOUNTID_ISSET_ID = 0;
   private byte __isset_bitfield = 0;
-  private static final _Fields[] optionals = {_Fields.SIGNALS};
+  private static final _Fields[] optionals = {_Fields.RECORDS};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
     tmpMap.put(_Fields.ACCOUNT_ID, new org.apache.thrift.meta_data.FieldMetaData("accountId", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I64        , "AccountId")));
-    tmpMap.put(_Fields.SIGNALS, new org.apache.thrift.meta_data.FieldMetaData("signals", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+    tmpMap.put(_Fields.RECORDS, new org.apache.thrift.meta_data.FieldMetaData("records", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.ListMetaData(org.apache.thrift.protocol.TType.LIST, 
-            new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING))));
+            new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, SignalRecord.class))));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(Signals.class, metaDataMap);
   }
@@ -117,9 +117,12 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
   public Signals(Signals other) {
     __isset_bitfield = other.__isset_bitfield;
     this.accountId = other.accountId;
-    if (other.isSetSignals()) {
-      java.util.List<java.lang.String> __this__signals = new java.util.ArrayList<java.lang.String>(other.signals);
-      this.signals = __this__signals;
+    if (other.isSetRecords()) {
+      java.util.List<SignalRecord> __this__records = new java.util.ArrayList<SignalRecord>(other.records.size());
+      for (SignalRecord other_element : other.records) {
+        __this__records.add(new SignalRecord(other_element));
+      }
+      this.records = __this__records;
     }
   }
 
@@ -132,7 +135,7 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
   public void clear() {
     setAccountIdIsSet(false);
     this.accountId = 0;
-    this.signals = null;
+    this.records = null;
   }
 
   public long getAccountId() {
@@ -158,44 +161,44 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
     __isset_bitfield = org.apache.thrift.EncodingUtils.setBit(__isset_bitfield, __ACCOUNTID_ISSET_ID, value);
   }
 
-  public int getSignalsSize() {
-    return (this.signals == null) ? 0 : this.signals.size();
+  public int getRecordsSize() {
+    return (this.records == null) ? 0 : this.records.size();
   }
 
   @org.apache.thrift.annotation.Nullable
-  public java.util.Iterator<java.lang.String> getSignalsIterator() {
-    return (this.signals == null) ? null : this.signals.iterator();
+  public java.util.Iterator<SignalRecord> getRecordsIterator() {
+    return (this.records == null) ? null : this.records.iterator();
   }
 
-  public void addToSignals(java.lang.String elem) {
-    if (this.signals == null) {
-      this.signals = new java.util.ArrayList<java.lang.String>();
+  public void addToRecords(SignalRecord elem) {
+    if (this.records == null) {
+      this.records = new java.util.ArrayList<SignalRecord>();
     }
-    this.signals.add(elem);
+    this.records.add(elem);
   }
 
   @org.apache.thrift.annotation.Nullable
-  public java.util.List<java.lang.String> getSignals() {
-    return this.signals;
+  public java.util.List<SignalRecord> getRecords() {
+    return this.records;
   }
 
-  public Signals setSignals(@org.apache.thrift.annotation.Nullable java.util.List<java.lang.String> signals) {
-    this.signals = signals;
+  public Signals setRecords(@org.apache.thrift.annotation.Nullable java.util.List<SignalRecord> records) {
+    this.records = records;
     return this;
   }
 
-  public void unsetSignals() {
-    this.signals = null;
+  public void unsetRecords() {
+    this.records = null;
   }
 
-  /** Returns true if field signals is set (has been assigned a value) and false otherwise */
-  public boolean isSetSignals() {
-    return this.signals != null;
+  /** Returns true if field records is set (has been assigned a value) and false otherwise */
+  public boolean isSetRecords() {
+    return this.records != null;
   }
 
-  public void setSignalsIsSet(boolean value) {
+  public void setRecordsIsSet(boolean value) {
     if (!value) {
-      this.signals = null;
+      this.records = null;
     }
   }
 
@@ -210,11 +213,11 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
       }
       break;
 
-    case SIGNALS:
+    case RECORDS:
       if (value == null) {
-        unsetSignals();
+        unsetRecords();
       } else {
-        setSignals((java.util.List<java.lang.String>)value);
+        setRecords((java.util.List<SignalRecord>)value);
       }
       break;
 
@@ -228,8 +231,8 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
     case ACCOUNT_ID:
       return getAccountId();
 
-    case SIGNALS:
-      return getSignals();
+    case RECORDS:
+      return getRecords();
 
     }
     throw new java.lang.IllegalStateException();
@@ -245,8 +248,8 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
     switch (field) {
     case ACCOUNT_ID:
       return isSetAccountId();
-    case SIGNALS:
-      return isSetSignals();
+    case RECORDS:
+      return isSetRecords();
     }
     throw new java.lang.IllegalStateException();
   }
@@ -273,12 +276,12 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
         return false;
     }
 
-    boolean this_present_signals = true && this.isSetSignals();
-    boolean that_present_signals = true && that.isSetSignals();
-    if (this_present_signals || that_present_signals) {
-      if (!(this_present_signals && that_present_signals))
+    boolean this_present_records = true && this.isSetRecords();
+    boolean that_present_records = true && that.isSetRecords();
+    if (this_present_records || that_present_records) {
+      if (!(this_present_records && that_present_records))
         return false;
-      if (!this.signals.equals(that.signals))
+      if (!this.records.equals(that.records))
         return false;
     }
 
@@ -291,9 +294,9 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
 
     hashCode = hashCode * 8191 + org.apache.thrift.TBaseHelper.hashCode(accountId);
 
-    hashCode = hashCode * 8191 + ((isSetSignals()) ? 131071 : 524287);
-    if (isSetSignals())
-      hashCode = hashCode * 8191 + signals.hashCode();
+    hashCode = hashCode * 8191 + ((isSetRecords()) ? 131071 : 524287);
+    if (isSetRecords())
+      hashCode = hashCode * 8191 + records.hashCode();
 
     return hashCode;
   }
@@ -316,12 +319,12 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
         return lastComparison;
       }
     }
-    lastComparison = java.lang.Boolean.compare(isSetSignals(), other.isSetSignals());
+    lastComparison = java.lang.Boolean.compare(isSetRecords(), other.isSetRecords());
     if (lastComparison != 0) {
       return lastComparison;
     }
-    if (isSetSignals()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.signals, other.signals);
+    if (isSetRecords()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.records, other.records);
       if (lastComparison != 0) {
         return lastComparison;
       }
@@ -353,13 +356,13 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
     sb.append("accountId:");
     sb.append(this.accountId);
     first = false;
-    if (isSetSignals()) {
+    if (isSetRecords()) {
       if (!first) sb.append(", ");
-      sb.append("signals:");
-      if (this.signals == null) {
+      sb.append("records:");
+      if (this.records == null) {
         sb.append("null");
       } else {
-        sb.append(this.signals);
+        sb.append(this.records);
       }
       first = false;
     }
@@ -419,20 +422,21 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 2: // SIGNALS
+          case 2: // RECORDS
             if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
               {
                 org.apache.thrift.protocol.TList _list24 = iprot.readListBegin();
-                struct.signals = new java.util.ArrayList<java.lang.String>(_list24.size);
-                @org.apache.thrift.annotation.Nullable java.lang.String _elem25;
+                struct.records = new java.util.ArrayList<SignalRecord>(_list24.size);
+                @org.apache.thrift.annotation.Nullable SignalRecord _elem25;
                 for (int _i26 = 0; _i26 < _list24.size; ++_i26)
                 {
-                  _elem25 = iprot.readString();
-                  struct.signals.add(_elem25);
+                  _elem25 = new SignalRecord();
+                  _elem25.read(iprot);
+                  struct.records.add(_elem25);
                 }
                 iprot.readListEnd();
               }
-              struct.setSignalsIsSet(true);
+              struct.setRecordsIsSet(true);
             } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
@@ -459,14 +463,14 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
       oprot.writeFieldBegin(ACCOUNT_ID_FIELD_DESC);
       oprot.writeI64(struct.accountId);
       oprot.writeFieldEnd();
-      if (struct.signals != null) {
-        if (struct.isSetSignals()) {
-          oprot.writeFieldBegin(SIGNALS_FIELD_DESC);
+      if (struct.records != null) {
+        if (struct.isSetRecords()) {
+          oprot.writeFieldBegin(RECORDS_FIELD_DESC);
           {
-            oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRING, struct.signals.size()));
-            for (java.lang.String _iter27 : struct.signals)
+            oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRUCT, struct.records.size()));
+            for (SignalRecord _iter27 : struct.records)
             {
-              oprot.writeString(_iter27);
+              _iter27.write(oprot);
             }
             oprot.writeListEnd();
           }
@@ -493,16 +497,16 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
       org.apache.thrift.protocol.TTupleProtocol oprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       oprot.writeI64(struct.accountId);
       java.util.BitSet optionals = new java.util.BitSet();
-      if (struct.isSetSignals()) {
+      if (struct.isSetRecords()) {
         optionals.set(0);
       }
       oprot.writeBitSet(optionals, 1);
-      if (struct.isSetSignals()) {
+      if (struct.isSetRecords()) {
         {
-          oprot.writeI32(struct.signals.size());
-          for (java.lang.String _iter28 : struct.signals)
+          oprot.writeI32(struct.records.size());
+          for (SignalRecord _iter28 : struct.records)
           {
-            oprot.writeString(_iter28);
+            _iter28.write(oprot);
           }
         }
       }
@@ -516,16 +520,17 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
       java.util.BitSet incoming = iprot.readBitSet(1);
       if (incoming.get(0)) {
         {
-          org.apache.thrift.protocol.TList _list29 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
-          struct.signals = new java.util.ArrayList<java.lang.String>(_list29.size);
-          @org.apache.thrift.annotation.Nullable java.lang.String _elem30;
+          org.apache.thrift.protocol.TList _list29 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRUCT);
+          struct.records = new java.util.ArrayList<SignalRecord>(_list29.size);
+          @org.apache.thrift.annotation.Nullable SignalRecord _elem30;
           for (int _i31 = 0; _i31 < _list29.size; ++_i31)
           {
-            _elem30 = iprot.readString();
-            struct.signals.add(_elem30);
+            _elem30 = new SignalRecord();
+            _elem30.read(iprot);
+            struct.records.add(_elem30);
           }
         }
-        struct.setSignalsIsSet(true);
+        struct.setRecordsIsSet(true);
       }
     }
   }

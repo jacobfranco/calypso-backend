@@ -111,4 +111,48 @@ public class CoreTest {
                                         "Auth code should be removed and no longer mapped");
                 }
         }
+
+        @Test
+        public void signalsTopologyStoresRecords(TestInfo testInfo) throws Exception {
+                List<Class> serializations = Collections.singletonList(CalypsoSerialization.class);
+
+                try (InProcessCluster ipc = InProcessCluster.create(serializations)) {
+                        Core coreModule = new Core();
+                        TestHelpers.launchModule(ipc, coreModule, testInfo);
+                        String coreName = coreModule.getClass().getName();
+
+                        Depot signalsDepot = ipc.clusterDepot(coreName, "*signalsDepot");
+                        QueryTopologyClient<Signals> getSignals = ipc.clusterQuery(coreName, "getSignalsFromAccountId");
+
+                        long accountId = 777L;
+                        SignalRecord record = new SignalRecord()
+                                        .setToken("loves_coffee")
+                                        .setSource("test")
+                                        .setFirstSeen(123L)
+                                        .setLastSeen(456L)
+                                        .setCount(3)
+                                        .setLastContext("prefers pour over");
+
+                        Signals payload = new Signals();
+                        payload.setAccountId(accountId);
+                        payload.setRecords(List.of(record));
+                        signalsDepot.append(payload);
+
+                        TestHelpers.attainConditionPred(
+                                        () -> getSignals.invoke(accountId, accountId),
+                                        s -> s != null && s.isSetRecords() && !s.getRecords().isEmpty());
+
+                        Signals stored = getSignals.invoke(accountId, accountId);
+                        assertNotNull(stored, "Expected stored signals");
+                        assertEquals(accountId, stored.getAccountId());
+                        assertTrue(stored.isSetRecords());
+                        SignalRecord storedRecord = stored.getRecords().get(0);
+                        assertEquals("loves_coffee", storedRecord.getToken());
+                        assertEquals("test", storedRecord.getSource());
+                        assertEquals(123L, storedRecord.getFirstSeen());
+                        assertEquals(456L, storedRecord.getLastSeen());
+                        assertEquals(3, storedRecord.getCount());
+                        assertEquals("prefers pour over", storedRecord.getLastContext());
+                }
+        }
 }

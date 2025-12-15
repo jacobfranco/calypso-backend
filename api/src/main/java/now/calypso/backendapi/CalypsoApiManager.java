@@ -140,45 +140,89 @@ public class CalypsoApiManager {
     }
 
     /** Read current signals for the owner (treat null as empty list). */
-    private CompletableFuture<List<String>> readCurrentSignals(long accountId) {
+    private CompletableFuture<List<SignalRecord>> readCurrentSignalRecords(long accountId) {
         return getSignals(accountId, accountId).thenApply(s -> {
-            if (s == null || s.signals == null)
-                return new ArrayList<>();
-            return new ArrayList<>(s.signals);
+            List<SignalRecord> copy = new ArrayList<>();
+            if (s != null && s.getRecords() != null) {
+                for (SignalRecord record : s.getRecords()) {
+                    if (record != null) {
+                        copy.add(new SignalRecord(record));
+                    }
+                }
+            }
+            return copy;
         });
     }
 
-    /** Set-semantics union preserving insertion order. */
-    private static List<String> union(List<String> current, List<String> delta) {
-        LinkedHashSet<String> set = new LinkedHashSet<>();
-        if (current != null)
-            set.addAll(current);
-        if (delta != null)
-            set.addAll(delta);
-        return new ArrayList<>(set);
+    private static LinkedHashMap<String, SignalRecord> toRecordMap(List<SignalRecord> records) {
+        LinkedHashMap<String, SignalRecord> map = new LinkedHashMap<>();
+        if (records == null)
+            return map;
+        for (SignalRecord r : records) {
+            if (r == null || r.getToken() == null)
+                continue;
+            map.put(r.getToken(), r);
+        }
+        return map;
+    }
+
+    private static String normalizeSource(String source) {
+        if (source == null || source.isBlank())
+            return "manual";
+        return source.trim();
+    }
+
+    private static String clampContext(String context) {
+        if (context == null)
+            return null;
+        String trimmed = context.trim();
+        if (trimmed.isEmpty())
+            return null;
+        return trimmed.length() > 280 ? trimmed.substring(0, 280) : trimmed;
     }
 
     /**
-     * Normalize + append (union) tokens, writing a full Signals object. Serialized
-     * per account.
+     * Normalize + append tokens, tracking metadata per token. Serialized per
+     * account.
      */
-    public CompletableFuture<Boolean> postSignals(long accountId, List<String> rawTokens) {
+    public CompletableFuture<Boolean> postSignals(long accountId, List<String> rawTokens, String source,
+            String contextMaybe) {
         List<String> tokens = SignalNormalizer.normalizeTokens(rawTokens);
         if (tokens.isEmpty())
             return CompletableFuture.completedFuture(false);
 
+        final long now = System.currentTimeMillis();
+        final String normalizedSource = normalizeSource(source);
+        final String context = clampContext(contextMaybe);
+
         CompletableFuture<Void> chained = serialByAccount.compute(accountId, (k, prev) -> {
             CompletableFuture<Void> start = (prev == null) ? CompletableFuture.completedFuture(null) : prev;
-            CompletableFuture<Void> next = start.thenCompose(v -> readCurrentSignals(accountId).thenCompose(current -> {
-                List<String> merged = union(current, tokens);
-                if (merged.equals(current))
-                    return CompletableFuture.completedFuture(null); // no-op
-                Signals updated = new Signals();
-                updated.setAccountId(accountId);
-                updated.setSignals(merged);
-
-                return signalsDepot.appendAsync(updated).thenApply(res -> null);
-            }));
+            CompletableFuture<Void> next = start.thenCompose(
+                    v -> readCurrentSignalRecords(accountId).thenCompose(current -> {
+                        LinkedHashMap<String, SignalRecord> map = toRecordMap(current);
+                        for (String token : tokens) {
+                            SignalRecord record = map.get(token);
+                            if (record == null) {
+                                record = new SignalRecord();
+                                record.setToken(token);
+                                record.setFirstSeen(now);
+                                record.setCount(1);
+                            } else {
+                                record.setCount(record.isSetCount() ? record.getCount() + 1 : 1);
+                            }
+                            record.setSource(normalizedSource);
+                            record.setLastSeen(now);
+                            if (!record.isSetFirstSeen())
+                                record.setFirstSeen(now);
+                            if (context != null)
+                                record.setLastContext(context);
+                            map.put(token, record);
+                        }
+                        Signals updated = new Signals();
+                        updated.setAccountId(accountId);
+                        updated.setRecords(new ArrayList<>(map.values()));
+                        return signalsDepot.appendAsync(updated).thenApply(res -> null);
+                    }));
             next.whenComplete((r, e) -> serialByAccount.remove(k, next));
             return next;
         });
@@ -195,11 +239,12 @@ public class CalypsoApiManager {
      * Convenience: extract from text, append, and return the tokens that were
      * attempted.
      */
-    public CompletableFuture<List<String>> extractAndAppendSignals(long accountId, String text, String source) {
+    public CompletableFuture<List<String>> extractAndAppendSignals(long accountId, String text, String source,
+            String contextMaybe) {
         return extractSignalsFromText(text).thenCompose(tokens -> {
             if (tokens.isEmpty())
                 return CompletableFuture.completedFuture(List.of());
-            return postSignals(accountId, tokens).thenApply(ok -> tokens);
+            return postSignals(accountId, tokens, source, contextMaybe).thenApply(ok -> tokens);
         });
     }
 
