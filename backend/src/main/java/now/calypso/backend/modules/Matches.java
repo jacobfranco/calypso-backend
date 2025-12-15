@@ -355,6 +355,16 @@ public class Matches implements RamaModule {
         }
 
         private void declareQueries(Topologies topologies) {
+                // Direct filter fetch by account id (used by API)
+                topologies.query("getFiltersFromAccountId", "*requesterId", "*accountId").out("*filters")
+                                .each((Number n) -> n == null ? 0L : n.longValue(), "*accountId").out("*accountIdL")
+                                .each((Long aid) -> 0L, "*accountIdL").out("*partKey")
+                                .hashPartition("*partKey")
+                                .localSelect("$$accountIdToFiltersProjection", Path.key("*accountIdL"))
+                                .out("*filtersRaw")
+                                .originPartition()
+                                .each((Filters f) -> f, "*filtersRaw").out("*filters");
+
                 // Simple paged fetch (startIdx/limit) without cursor
                 topologies.query("getMatchesFromAccountId", "*viewerId", "*startIdx", "*limit").out("*results")
                                 // Normalize viewer id to Long before partitioning/reads

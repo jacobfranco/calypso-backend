@@ -33,7 +33,6 @@ public class CalypsoApiManager {
     // Core Depots
     private final Depot accountDepot;
     private final Depot authCodeDepot;
-    private final Depot filtersDepot;
     private final Depot signalsDepot;
 
     // Core PStates
@@ -42,14 +41,15 @@ public class CalypsoApiManager {
 
     // Core Queries
     private final QueryTopologyClient<List<AccountWithId>> getAccountsFromAccountIds;
-    private final QueryTopologyClient<Filters> getFiltersFromAccountId;
     private final QueryTopologyClient<Signals> getSignalsFromAccountId;
 
     // Matches Depots
+    private final Depot filtersDepot;
     private final Depot matchRefillDepot;
     private final Depot matchesServeDepot;
 
     // Matches Queries
+    private final QueryTopologyClient<Filters> getFiltersFromAccountId;
     private final QueryTopologyClient<List<MatchCandidate>> getMatchesFromAccountId;
 
     public CalypsoApiManager(ClusterManagerBase cluster, OpenAIClient openAI) {
@@ -59,7 +59,6 @@ public class CalypsoApiManager {
         // Core Depots
         accountDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*accountDepot");
         authCodeDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*authCodeDepot");
-        filtersDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*filtersDepot");
         signalsDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*signalsDepot");
 
         // Core PStates
@@ -68,14 +67,15 @@ public class CalypsoApiManager {
 
         // Core Queries
         getAccountsFromAccountIds = cluster.clusterQuery(CORE_MODULE_NAME, "getAccountsFromAccountIds");
-        getFiltersFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getFiltersFromAccountId");
         getSignalsFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getSignalsFromAccountId");
 
         // Matches Depots
+        filtersDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*filtersDepot");
         matchRefillDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*matchRefillDepot");
         matchesServeDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*matchesServeDepot");
 
         // Matches Queries
+        getFiltersFromAccountId = cluster.clusterQuery(MATCHES_MODULE_NAME, "getFiltersFromAccountId");
         getMatchesFromAccountId = cluster.clusterQuery(MATCHES_MODULE_NAME, "getMatchesFromAccountId");
 
     }
@@ -161,9 +161,22 @@ public class CalypsoApiManager {
         for (SignalRecord r : records) {
             if (r == null || r.getToken() == null)
                 continue;
-            map.put(r.getToken(), r);
+            map.put(recordKey(r), r);
         }
         return map;
+    }
+
+    private static String recordKey(SignalRecord record) {
+        if (record == null || record.getToken() == null)
+            return null;
+        return recordKey(record.getToken(), record.getIntent());
+    }
+
+    private static String recordKey(String token, SignalIntent intent) {
+        if (token == null)
+            return null;
+        String intentPart = (intent == null) ? "NONE" : intent.name();
+        return intentPart + "|" + token;
     }
 
     private static String normalizeSource(String source) {
@@ -181,14 +194,41 @@ public class CalypsoApiManager {
         return trimmed.length() > 280 ? trimmed.substring(0, 280) : trimmed;
     }
 
+    private static List<ExtractedSignal> sanitizeSignals(List<ExtractedSignal> signals) {
+        if (signals == null || signals.isEmpty())
+            return List.of();
+        List<ExtractedSignal> out = new ArrayList<>();
+        for (ExtractedSignal sig : signals) {
+            if (sig == null)
+                continue;
+            if (sig.token() == null || sig.token().isBlank())
+                continue;
+            out.add(sig);
+        }
+        return out;
+    }
+
     /**
-     * Normalize + append tokens, tracking metadata per token. Serialized per
-     * account.
+     * Normalize + append tokens coming directly from the client.
      */
     public CompletableFuture<Boolean> postSignals(long accountId, List<String> rawTokens, String source,
             String contextMaybe) {
         List<String> tokens = SignalNormalizer.normalizeTokens(rawTokens);
         if (tokens.isEmpty())
+            return CompletableFuture.completedFuture(false);
+        List<ExtractedSignal> manual = new ArrayList<>(tokens.size());
+        for (String token : tokens) {
+            ExtractedSignal sig = ExtractedSignal.manual(token);
+            if (sig != null)
+                manual.add(sig);
+        }
+        return persistSignals(accountId, manual, source, contextMaybe);
+    }
+
+    private CompletableFuture<Boolean> persistSignals(long accountId, List<ExtractedSignal> signals, String source,
+            String contextMaybe) {
+        List<ExtractedSignal> sanitized = sanitizeSignals(signals);
+        if (sanitized.isEmpty())
             return CompletableFuture.completedFuture(false);
 
         final long now = System.currentTimeMillis();
@@ -200,23 +240,28 @@ public class CalypsoApiManager {
             CompletableFuture<Void> next = start.thenCompose(
                     v -> readCurrentSignalRecords(accountId).thenCompose(current -> {
                         LinkedHashMap<String, SignalRecord> map = toRecordMap(current);
-                        for (String token : tokens) {
-                            SignalRecord record = map.get(token);
+                        for (ExtractedSignal sig : sanitized) {
+                            String key = recordKey(sig.token(), sig.intent());
+                            SignalRecord record = map.get(key);
                             if (record == null) {
                                 record = new SignalRecord();
-                                record.setToken(token);
+                                record.setToken(sig.token());
                                 record.setFirstSeen(now);
                                 record.setCount(1);
                             } else {
                                 record.setCount(record.isSetCount() ? record.getCount() + 1 : 1);
+                                if (!record.isSetFirstSeen())
+                                    record.setFirstSeen(now);
                             }
                             record.setSource(normalizedSource);
                             record.setLastSeen(now);
-                            if (!record.isSetFirstSeen())
-                                record.setFirstSeen(now);
                             if (context != null)
                                 record.setLastContext(context);
-                            map.put(token, record);
+                            if (sig.intent() != null)
+                                record.setIntent(sig.intent());
+                            if (sig.confidence() != null)
+                                record.setConfidence(sig.confidence());
+                            map.put(key, record);
                         }
                         Signals updated = new Signals();
                         updated.setAccountId(accountId);
@@ -231,8 +276,18 @@ public class CalypsoApiManager {
     }
 
     /** Robust extraction (LLM + normalization). Returns tokens only; no write. */
-    public CompletableFuture<List<String>> extractSignalsFromText(String text) {
-        return CompletableFuture.supplyAsync(() -> SignalExtractor.extract(openAI, text));
+    public CompletableFuture<List<ExtractedSignal>> extractSignalsFromText(String text) {
+        return CompletableFuture.supplyAsync(() -> SignalExtractor.extractFreeform(openAI, text));
+    }
+
+    public CompletableFuture<List<ExtractedSignal>> extractSignalsFromAgentConversation(List<String> conversation) {
+        return CompletableFuture.supplyAsync(
+                () -> SignalExtractor.extractFromAgentConversation(openAI, conversation, Set.of()));
+    }
+
+    public CompletableFuture<List<ExtractedSignal>> extractSignalsFromPrompt(String question, String answer) {
+        return CompletableFuture.supplyAsync(
+                () -> SignalExtractor.extractFromPromptAnswer(openAI, question, answer, Set.of()));
     }
 
     /**
@@ -241,11 +296,43 @@ public class CalypsoApiManager {
      */
     public CompletableFuture<List<String>> extractAndAppendSignals(long accountId, String text, String source,
             String contextMaybe) {
-        return extractSignalsFromText(text).thenCompose(tokens -> {
-            if (tokens.isEmpty())
+        return extractSignalsFromText(text).thenCompose(signals -> {
+            if (signals.isEmpty())
                 return CompletableFuture.completedFuture(List.of());
-            return postSignals(accountId, tokens, source, contextMaybe).thenApply(ok -> tokens);
+            List<String> tokens = tokens(signals);
+            return persistSignals(accountId, signals, source, contextMaybe).thenApply(ok -> tokens);
         });
+    }
+
+    public CompletableFuture<List<String>> extractAndAppendSignalsFromAgentConversation(long accountId,
+            List<String> conversation, String source, String contextMaybe) {
+        return extractSignalsFromAgentConversation(conversation).thenCompose(signals -> {
+            if (signals.isEmpty())
+                return CompletableFuture.completedFuture(List.of());
+            List<String> tokens = tokens(signals);
+            return persistSignals(accountId, signals, source, contextMaybe).thenApply(ok -> tokens);
+        });
+    }
+
+    public CompletableFuture<List<String>> extractAndAppendSignalsFromPrompt(long accountId, String question,
+            String answer, String source) {
+        return extractSignalsFromPrompt(question, answer).thenCompose(signals -> {
+            if (signals.isEmpty())
+                return CompletableFuture.completedFuture(List.of());
+            List<String> tokens = tokens(signals);
+            return persistSignals(accountId, signals, source, answer).thenApply(ok -> tokens);
+        });
+    }
+
+    private static List<String> tokens(List<ExtractedSignal> signals) {
+        if (signals == null || signals.isEmpty())
+            return List.of();
+        List<String> out = new ArrayList<>(signals.size());
+        for (ExtractedSignal sig : signals) {
+            if (sig != null && sig.token() != null)
+                out.add(sig.token());
+        }
+        return out;
     }
 
     private CompletableFuture<Void> requestRefill(long viewerId, int targetSize) {

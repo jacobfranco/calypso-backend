@@ -65,6 +65,8 @@ public class CalypsoApiApplication {
 
         Core coreModule = new Core();
         ipc.launchModule(coreModule, new LaunchConfig(2, 1));
+        Matches matchesModule = new Matches();
+        ipc.launchModule(matchesModule, new LaunchConfig(2, 1));
 
         // Build openAI Client
         OpenAIClient openAI = OpenAIOkHttpClient.builder()

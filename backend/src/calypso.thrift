@@ -106,6 +106,12 @@ struct ModeFilter {
   1: required string self;              // "casual", "serious"
 }
 
+enum SignalIntent {
+  SELF = 1,
+  SEEKING = 2,
+  JUDGMENT = 3
+}
+
 struct SignalRecord {
   1: required string token;
   2: optional string source;
@@ -113,6 +119,8 @@ struct SignalRecord {
   4: optional Timestamp lastSeen;
   5: optional i32 count;
   6: optional string lastContext;
+  7: optional SignalIntent intent;
+  8: optional double confidence;
 }
 
 struct Signals {
