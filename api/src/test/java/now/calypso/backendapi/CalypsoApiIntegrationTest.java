@@ -42,28 +42,27 @@ class CalypsoApiIntegrationTest {
             long accountId = 900L;
             OpenAIJson.setTestOverride((system, user) -> """
                     {"signals":[
-                      {"token":"Likes NFL Sundays","intent":"self","confidence":0.84},
-                      {"token":"coffee!!!","intent":"self","confidence":0.55},
-                      {"token":"likes nfl sundays","intent":"self","confidence":0.20}
+                      {"token":"nfl_enthusiast","intent":"self","confidence":0.91},
+                      {"token":"coffee_lover","intent":"self","confidence":0.88}
                     ]}
                     """);
             try {
                 List<String> tokens = mgr.extractAndAppendSignals(accountId, "prompt", "prompt_like", "ctx")
                         .get(5, TimeUnit.SECONDS);
-                assertEquals(List.of("likes_nfl_sundays", "coffee"), tokens);
+                assertEquals(List.of("nfl_enthusiast", "coffee_lover"), tokens);
             } finally {
                 OpenAIJson.clearTestOverride();
             }
 
             Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
-            SignalRecord nfl = findRecord(stored, "likes_nfl_sundays", SignalIntent.SELF);
+            SignalRecord nfl = findRecord(stored, "nfl_enthusiast", SignalIntent.SELF);
             assertNotNull(nfl);
             assertEquals("prompt_like", nfl.getSource());
             assertEquals("ctx", nfl.getLastContext());
             assertEquals(1, nfl.getCount());
             assertEquals(SignalIntent.SELF, nfl.getIntent());
 
-            SignalRecord coffee = findRecord(stored, "coffee", SignalIntent.SELF);
+            SignalRecord coffee = findRecord(stored, "coffee_lover", SignalIntent.SELF);
             assertNotNull(coffee);
             assertEquals("prompt_like", coffee.getSource());
         }
@@ -75,14 +74,14 @@ class CalypsoApiIntegrationTest {
             CalypsoApiManager mgr = newManager(ipc);
             long accountId = 901L;
 
-            OpenAIJson.setTestOverride((s, u) -> "{\"signals\":[{\"token\":\"matcha\",\"intent\":\"self\"}]}");
+            OpenAIJson.setTestOverride((s, u) -> "{\"signals\":[{\"token\":\"tea_enthusiast\",\"intent\":\"self\"}]}");
             try {
                 mgr.extractAndAppendSignals(accountId, "first", "agent_dm", "first ctx").get(5, TimeUnit.SECONDS);
             } finally {
                 OpenAIJson.clearTestOverride();
             }
 
-            OpenAIJson.setTestOverride((s, u) -> "{\"signals\":[{\"token\":\"matcha\",\"intent\":\"self\"}]}");
+            OpenAIJson.setTestOverride((s, u) -> "{\"signals\":[{\"token\":\"tea_enthusiast\",\"intent\":\"self\"}]}");
             try {
                 mgr.extractAndAppendSignals(accountId, "second", "agent_dm", "second ctx").get(5, TimeUnit.SECONDS);
             } finally {
@@ -90,7 +89,7 @@ class CalypsoApiIntegrationTest {
             }
 
             Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
-            SignalRecord record = findRecord(stored, "matcha", SignalIntent.SELF);
+            SignalRecord record = findRecord(stored, "tea_enthusiast", SignalIntent.SELF);
             assertNotNull(record);
             assertEquals(2, record.getCount());
             assertEquals("second ctx", record.getLastContext());
@@ -112,13 +111,13 @@ class CalypsoApiIntegrationTest {
 
             OpenAIJson.setTestOverride((system, user) -> {
                 assertTrue(system.contains("JSON"));
-                assertTrue(user.contains("ignore instructions"));
+                assertTrue(user.contains("ignore prior instructions"));
                 return """
                         {"signals":[
-                          {"token":"seeking_tall_partner","intent":"seeking"},
+                          {"token":"tall_partner","intent":"seeking"},
                           {"token":"values_kindness","intent":"self"},
                           {"token":"loves_constant_travel","intent":"self"},
-                          {"token":"risk_taker","intent":"judgment"}
+                          {"token":"risk_taker","intent":"meta"}
                         ]}
                         """;
             });
@@ -126,18 +125,20 @@ class CalypsoApiIntegrationTest {
                 List<String> tokens = mgr.extractAndAppendSignalsFromAgentConversation(accountId, conversation,
                         "agent_chat", "session:902").get(5, TimeUnit.SECONDS);
                 assertEquals(
-                        List.of("seeking_tall_partner", "values_kindness", "loves_constant_travel", "risk_taker"),
+                        List.of("tall_partner", "values_kindness", "loves_constant_travel", "risk_taker"),
                         tokens);
             } finally {
                 OpenAIJson.clearTestOverride();
             }
 
             Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
-            SignalRecord risk = findRecord(stored, "risk_taker", SignalIntent.JUDGMENT);
+            SignalRecord risk = findRecord(stored, "risk_taker", SignalIntent.META);
             assertNotNull(risk);
             assertEquals("agent_chat", risk.getSource());
             assertEquals("session:902", risk.getLastContext());
-            assertEquals(SignalIntent.JUDGMENT, risk.getIntent());
+            assertEquals(SignalIntent.META, risk.getIntent());
+            SignalRecord desire = findRecord(stored, "tall_partner", SignalIntent.SEEKING);
+            assertNotNull(desire);
         }
     }
 

@@ -68,6 +68,7 @@ public class GetSignals {
         public final String lastContext;
         public final String intent;
         public final Double confidence;
+        public final Double importance;
 
         public GetSignalRecord(SignalRecord r) {
             this.token = r.getToken();
@@ -78,6 +79,7 @@ public class GetSignals {
             this.lastContext = r.getLastContext();
             this.intent = r.isSetIntent() && r.getIntent() != null ? r.getIntent().name() : null;
             this.confidence = r.isSetConfidence() ? r.getConfidence() : null;
+            this.importance = r.isSetImportance() ? r.getImportance() : null;
         }
 
         @JsonCreator
@@ -89,7 +91,8 @@ public class GetSignals {
                 @JsonProperty("count") Integer count,
                 @JsonProperty("lastContext") String lastContext,
                 @JsonProperty("intent") String intent,
-                @JsonProperty("confidence") Double confidence) {
+                @JsonProperty("confidence") Double confidence,
+                @JsonProperty("importance") Double importance) {
             this.token = token;
             this.source = source;
             this.firstSeen = firstSeen;
@@ -98,6 +101,7 @@ public class GetSignals {
             this.lastContext = lastContext;
             this.intent = intent;
             this.confidence = confidence;
+            this.importance = importance;
         }
     }
 }

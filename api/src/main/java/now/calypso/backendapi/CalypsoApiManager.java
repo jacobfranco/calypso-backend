@@ -261,6 +261,8 @@ public class CalypsoApiManager {
                                 record.setIntent(sig.intent());
                             if (sig.confidence() != null)
                                 record.setConfidence(sig.confidence());
+                            if (sig.importance() != null)
+                                record.setImportance(sig.importance());
                             map.put(key, record);
                         }
                         Signals updated = new Signals();

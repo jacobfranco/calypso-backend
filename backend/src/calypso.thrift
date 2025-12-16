@@ -109,7 +109,8 @@ struct ModeFilter {
 enum SignalIntent {
   SELF = 1,
   SEEKING = 2,
-  JUDGMENT = 3
+  META = 3,
+  BOTH = 4 // Both self + seeking, TODO maybe change this later
 }
 
 struct SignalRecord {
@@ -121,6 +122,7 @@ struct SignalRecord {
   6: optional string lastContext;
   7: optional SignalIntent intent;
   8: optional double confidence;
+  9: optional double importance; // system inferred 0..1
 }
 
 struct Signals {

@@ -10,7 +10,8 @@ package now.calypso.backend.data;
 public enum SignalIntent implements org.apache.thrift.TEnum {
   SELF(1),
   SEEKING(2),
-  JUDGMENT(3);
+  META(3),
+  BOTH(4);
 
   private final int value;
 
@@ -38,7 +39,9 @@ public enum SignalIntent implements org.apache.thrift.TEnum {
       case 2:
         return SEEKING;
       case 3:
-        return JUDGMENT;
+        return META;
+      case 4:
+        return BOTH;
       default:
         return null;
     }

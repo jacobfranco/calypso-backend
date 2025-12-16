@@ -3,6 +3,7 @@ package now.calypso.backendapi.signals;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -35,9 +36,11 @@ public final class SignalExtractor {
 
         for (String c : chunks) {
             for (int i = 0; i < PER_CHUNK_PASSES && acc.size() < GLOBAL_SOFT_CAP; i++) {
+                List<String> already = tokens(acc.values());
                 List<ExtractedSignal> raw = call(openAI, SignalPrompts.FREEFORM_SYSTEM_PROMPT,
-                        SignalPrompts.freeformUserPrompt(c, tokens(acc.values())),
-                        Math.min(PER_CALL_MAX, GLOBAL_SOFT_CAP - acc.size()), tokens(acc.values()));
+                        SignalPrompts.freeformUserPrompt(c, already),
+                        Math.min(PER_CALL_MAX, GLOBAL_SOFT_CAP - acc.size()), already);
+
                 boolean any = merge(acc, raw);
                 if (!any)
                     break;
@@ -59,9 +62,7 @@ public final class SignalExtractor {
                 SignalPrompts.agentChatUserPrompt(conversation, normalizedAlreadyHave),
                 PER_CALL_MAX, normalizedAlreadyHave);
         merge(acc, raw);
-        if (!normalizedAlreadyHave.isEmpty())
-            acc.values().removeIf(sig -> normalizedAlreadyHave.contains(sig.token()));
-        return new ArrayList<>(acc.values());
+        return filtered(acc.values(), normalizedAlreadyHave);
     }
 
     public static List<ExtractedSignal> extractFromPromptAnswer(OpenAIClient openAI, String question, String answer,
@@ -74,9 +75,7 @@ public final class SignalExtractor {
                 PER_CALL_MAX, normalizedAlreadyHave);
         LinkedHashMap<String, ExtractedSignal> acc = new LinkedHashMap<>();
         merge(acc, raw);
-        if (!normalizedAlreadyHave.isEmpty())
-            acc.values().removeIf(sig -> normalizedAlreadyHave.contains(sig.token()));
-        return new ArrayList<>(acc.values());
+        return filtered(acc.values(), normalizedAlreadyHave);
     }
 
     private static List<String> chunk(String text, int maxChars) {
@@ -107,18 +106,114 @@ public final class SignalExtractor {
         return out;
     }
 
+    private static List<ExtractedSignal> filtered(Collection<ExtractedSignal> signals,
+            Collection<String> alreadyHave) {
+        if (signals == null || signals.isEmpty())
+            return List.of();
+        if (alreadyHave == null || alreadyHave.isEmpty())
+            return new ArrayList<>(signals);
+        List<ExtractedSignal> filtered = new ArrayList<>();
+        for (ExtractedSignal sig : signals) {
+            if (sig == null || sig.token() == null)
+                continue;
+            if (!alreadyHave.contains(sig.token()))
+                filtered.add(sig);
+        }
+        return filtered;
+    }
+
+    /**
+     * Merge signals into acc with deterministic intent semantics:
+     *
+     * - BOTH dominates: if BOTH|token exists, drop SELF|token and SEEKING|token.
+     * - If SELF and SEEKING both exist for a token (and BOTH does not), collapse
+     * them into BOTH.
+     * - If a SELF/SEEKING entry arrives but BOTH|token already exists, ignore it.
+     *
+     * This prevents model "hedging" and keeps one concept per token.
+     */
     private static boolean merge(LinkedHashMap<String, ExtractedSignal> acc, List<ExtractedSignal> raw) {
         boolean any = false;
+        if (raw == null)
+            return false;
+
         for (ExtractedSignal sig : raw) {
             if (sig == null || sig.token() == null)
                 continue;
-            String key = key(sig.token(), sig.intent());
-            if (!acc.containsKey(key)) {
-                acc.put(key, sig);
+
+            String token = sig.token();
+            SignalIntent intent = sig.intent();
+
+            String bothKey = key(token, SignalIntent.BOTH);
+            String selfKey = key(token, SignalIntent.SELF);
+            String seekingKey = key(token, SignalIntent.SEEKING);
+
+            // 1) If model emits BOTH, it dominates.
+            if (intent == SignalIntent.BOTH) {
+                boolean removed = (acc.remove(selfKey) != null) | (acc.remove(seekingKey) != null);
+                if (!acc.containsKey(bothKey)) {
+                    acc.put(bothKey, sig);
+                    any = true;
+                } else if (removed) {
+                    any = true;
+                }
+                continue;
+            }
+
+            // If BOTH already exists, ignore any other intent for same token.
+            if (acc.containsKey(bothKey)) {
+                continue;
+            }
+
+            // 2) Normal insert for non-BOTH
+            String k = key(token, intent);
+            if (!acc.containsKey(k)) {
+                acc.put(k, sig);
                 any = true;
             }
+
+            // 3) Optional upgrade: if we now have BOTH self+seeking, collapse to BOTH.
+            // Only for SELF+SEEKING. META should not participate.
+            if (intent == SignalIntent.SELF || intent == SignalIntent.SEEKING) {
+                ExtractedSignal selfSig = acc.get(selfKey);
+                ExtractedSignal seekingSig = acc.get(seekingKey);
+
+                if (selfSig != null && seekingSig != null) {
+                    Double combinedConfidence = minNonNull(selfSig.confidence(), seekingSig.confidence());
+                    Double combinedImportance = maxNonNull(selfSig.importance(), seekingSig.importance());
+
+                    // Remove the two and replace with BOTH
+                    acc.remove(selfKey);
+                    acc.remove(seekingKey);
+
+                    ExtractedSignal bothSig = ExtractedSignal.from(token, SignalIntent.BOTH,
+                            combinedConfidence, combinedImportance);
+
+                    if (bothSig != null) {
+                        acc.put(bothKey, bothSig);
+                        any = true;
+                    }
+                }
+            }
         }
+
         return any;
+    }
+
+    private static Double minNonNull(Double a, Double b) {
+        if (a == null)
+            return b;
+        if (b == null)
+            return a;
+        return Math.min(a.doubleValue(), b.doubleValue());
+    }
+
+    private static Double maxNonNull(Double a, Double b) {
+        if (a == null)
+            return b;
+        if (b == null)
+            return a;
+        return Math.max(a.doubleValue(), b.doubleValue());
     }
 
     @SuppressWarnings("unchecked")
@@ -136,7 +231,7 @@ public final class SignalExtractor {
             List<ExtractedSignal> out = new ArrayList<>();
             for (Object o : list) {
                 ExtractedSignal sig = parseSignal(o);
-                if (sig != null && (alreadyHave == null || !alreadyHave.contains(sig.token())))
+                if (sig != null)
                     out.add(sig);
             }
             return out;
@@ -152,10 +247,12 @@ public final class SignalExtractor {
             Object tokenObj = map.get("token");
             Object intentObj = map.get("intent");
             Object confidenceObj = map.get("confidence");
+            Object importanceObj = map.get("importance");
             String token = tokenObj == null ? null : String.valueOf(tokenObj);
             SignalIntent intent = parseIntent(intentObj);
             Double confidence = parseConfidence(confidenceObj);
-            return ExtractedSignal.from(token, intent, confidence);
+            Double importance = parseImportance(importanceObj);
+            return ExtractedSignal.from(token, intent, confidence, importance);
         }
         return ExtractedSignal.from(String.valueOf(raw), SignalIntent.SELF, null);
     }
@@ -185,6 +282,16 @@ public final class SignalExtractor {
         }
     }
 
+    private static Double parseImportance(Object raw) {
+        if (raw == null)
+            return null;
+        try {
+            return Double.valueOf(String.valueOf(raw));
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
     private static String maybeFormat(String template, int maxSignals) {
         if (template.contains("%"))
             return template.formatted(maxSignals);
@@ -197,15 +304,20 @@ public final class SignalExtractor {
         return SignalNormalizer.normalizeTokens(alreadyHave);
     }
 
+    /**
+     * Returns a de-duplicated list of tokens (ignoring intent) to reduce prompt
+     * size
+     * and make "already_have" stable.
+     */
     private static List<String> tokens(Collection<ExtractedSignal> signals) {
         if (signals == null || signals.isEmpty())
             return List.of();
-        List<String> toks = new ArrayList<>(signals.size());
+        LinkedHashSet<String> toks = new LinkedHashSet<>();
         for (ExtractedSignal sig : signals) {
             if (sig != null && sig.token() != null)
                 toks.add(sig.token());
         }
-        return toks;
+        return new ArrayList<>(toks);
     }
 
     private static String key(String token, SignalIntent intent) {
