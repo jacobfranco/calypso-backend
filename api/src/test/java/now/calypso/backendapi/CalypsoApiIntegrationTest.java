@@ -1,12 +1,15 @@
 package now.calypso.backendapi;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
@@ -20,6 +23,9 @@ import com.rpl.rama.test.InProcessCluster;
 import com.rpl.rama.test.LaunchConfig;
 
 import now.calypso.backend.data.Filters;
+import now.calypso.backend.data.AttachmentWithId;
+import now.calypso.backend.data.PromptResponse;
+import now.calypso.backend.data.PromptState;
 import now.calypso.backend.data.SignalIntent;
 import now.calypso.backend.data.SignalRecord;
 import now.calypso.backend.data.Signals;
@@ -27,6 +33,8 @@ import now.calypso.backend.modules.Core;
 import now.calypso.backend.modules.Matches;
 import now.calypso.backend.serialization.CalypsoSerialization;
 import now.calypso.backendapi.llm.OpenAIJson;
+import now.calypso.backendapi.pojos.PostPromptResponseRequest;
+import now.calypso.backendapi.prompts.PromptSuggestion;
 
 class CalypsoApiIntegrationTest {
 
@@ -146,6 +154,105 @@ class CalypsoApiIntegrationTest {
             assertEquals(SignalIntent.META, risk.getIntent());
             SignalRecord desire = findRecord(stored, "tall_partner", SignalIntent.SEEKING);
             assertNotNull(desire);
+        }
+    }
+
+    @Test
+    void promptResponsesPersistAndEmitSignals() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 903L;
+            PromptSuggestion suggestion = mgr.nextPrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(suggestion);
+            OpenAIJson.setTestOverride(
+                    (system, user) -> "{\"signals\":[{\"token\":\"prompt_signal\",\"intent\":\"self\"}]}");
+            PromptResponse response;
+            try {
+                PostPromptResponseRequest req = new PostPromptResponseRequest("LIKE", "Sunrise hikes and good coffee",
+                        "HELL YES", null, null);
+                response = mgr.postPromptResponse(accountId, suggestion.question().getPromptId(), req)
+                        .get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            PromptState state = mgr.getPrompts(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(state);
+            assertTrue(state.isSetResponses());
+            PromptResponse storedResponse = state.getResponses().get(state.getResponses().size() - 1);
+            assertEquals(response.getResponseId(), storedResponse.getResponseId());
+            assertEquals("Sunrise hikes and good coffee", storedResponse.getAnswerText());
+
+            Signals signals = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord signal = findRecord(signals, "prompt_signal", SignalIntent.SELF);
+            assertNotNull(signal);
+            assertEquals("prompt", signal.getSource());
+        }
+    }
+
+    @Test
+    void nextPromptSkipsAnsweredPrompts() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 904L;
+            PromptSuggestion first = mgr.nextPrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(first);
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            try {
+                PostPromptResponseRequest req = new PostPromptResponseRequest("LIKE", "Beach days", null, null, null);
+                mgr.postPromptResponse(accountId, first.question().getPromptId(), req).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+            PromptSuggestion second = mgr.nextPrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(second);
+            assertNotEquals(first.question().getPromptId(), second.question().getPromptId(),
+                    "Answered prompt should not repeat until rotation");
+        }
+    }
+
+    @Test
+    void promptResponseStoresAttachmentsAndTargetReference() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 905L;
+            PromptSuggestion suggestion = mgr.nextPrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(suggestion);
+            List<PostPromptResponseRequest.AttachmentPayload> attPayloads = List.of(
+                    new PostPromptResponseRequest.AttachmentPayload("att-1", "IMAGE", "/tmp/photo.jpg", "sunset view"));
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            try {
+                PostPromptResponseRequest req = new PostPromptResponseRequest("DISLIKE", null, "Not my vibe", 42L,
+                        attPayloads);
+                mgr.postPromptResponse(accountId, suggestion.question().getPromptId(), req).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+            PromptState stored = mgr.getPrompts(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(stored);
+            PromptResponse latest = stored.getResponses().get(stored.getResponses().size() - 1);
+            assertEquals(42L, latest.getRelatedTargetAccountId());
+            assertTrue(latest.isSetAttachments());
+            assertEquals(1, latest.getAttachmentsSize());
+            AttachmentWithId att = latest.getAttachments().get(0);
+            assertEquals("att-1", att.getUuid());
+            assertEquals("sunset view", att.getAttachment().getDescription());
+        }
+    }
+
+    @Test
+    void postPromptResponseRejectsUnknownPrompt() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 906L;
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            try {
+                PostPromptResponseRequest req = new PostPromptResponseRequest("LIKE", "Sure", null, null, null);
+                assertThrows(IllegalArgumentException.class,
+                        () -> mgr.postPromptResponse(accountId, "nonexistent_prompt", req));
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
         }
     }
 

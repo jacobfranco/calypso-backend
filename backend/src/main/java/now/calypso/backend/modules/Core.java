@@ -69,15 +69,15 @@ public class Core implements RamaModule {
                                                             Path.key("*code").termVoid()));
       }
 
-      private static void declareSignalsTopology(Topologies topologies) {
-            StreamTopology stream = topologies.stream("signals");
+      private static void declarePromptsTopology(Topologies topologies) {
+            StreamTopology stream = topologies.stream("prompts");
 
-            stream.pstate("$$accountIdToSignals", PState.mapSchema(Long.class, Signals.class));
+            stream.pstate("$$accountIdToPrompts", PState.mapSchema(Long.class, PromptState.class));
 
-            stream.source("*signalsDepot")
+            stream.source("*promptsDepot")
                         .out("*data")
                         .macro(extractFields("*data", "*accountId"))
-                        .localTransform("$$accountIdToSignals",
+                        .localTransform("$$accountIdToPrompts",
                                     Path.key("*accountId").termVal("*data"));
       }
 
@@ -103,9 +103,9 @@ public class Core implements RamaModule {
                                           .collect(Collectors.toList());
                         }, "*unsortedResults").out("*results");
 
-            topologies.query("getSignalsFromAccountId", "*requestAccountId", "*accountId").out("*signals")
+            topologies.query("getPromptsStateFromAccountId", "*requestAccountId", "*accountId").out("*prompts")
                         .hashPartition("*accountId")
-                        .localSelect("$$accountIdToSignals", Path.key("*accountId")).out("*signals")
+                        .localSelect("$$accountIdToPrompts", Path.key("*accountId")).out("*prompts")
                         .originPartition();
       }
 
@@ -114,11 +114,11 @@ public class Core implements RamaModule {
             setup.declareDepot("*accountDepot", Depot.hashBy(CalypsoHelpers.ExtractEmail.class));
             setup.declareDepot("*accountWithIdDepot", Depot.disallow());
             setup.declareDepot("*authCodeDepot", Depot.hashBy(ExtractCode.class));
-            setup.declareDepot("*signalsDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
+            setup.declareDepot("*promptsDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
 
             declareAccountsTopology(topologies);
             declareAuthTopology(topologies);
-            declareSignalsTopology(topologies);
+            declarePromptsTopology(topologies);
 
             declareQueries(topologies);
       }

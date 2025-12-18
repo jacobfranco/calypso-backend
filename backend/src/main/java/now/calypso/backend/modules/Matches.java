@@ -118,6 +118,18 @@ public class Matches implements RamaModule {
                                                 Path.key("*aidL").termVal("*aidL"));
         }
 
+        private static void declareSignalsTopology(Topologies topologies) {
+                StreamTopology stream = topologies.stream("signals");
+
+                stream.pstate("$$accountIdToSignals", PState.mapSchema(Long.class, Signals.class));
+
+                stream.source("*signalsDepot")
+                                .out("*data")
+                                .macro(extractFields("*data", "*accountId"))
+                                .localTransform("$$accountIdToSignals",
+                                                Path.key("*accountId").termVal("*data"));
+        }
+
         private void declareServeAndCursorTopology(Topologies topologies) {
                 StreamTopology stream = topologies.stream("serveAndCursor");
 
@@ -457,6 +469,10 @@ public class Matches implements RamaModule {
                                         out.put("nextWrapped", nextPageIdx >= 2);
                                         return out;
                                 }, "*heap", "*pageIdx", "*limit").out("*out");
+                topologies.query("getSignalsFromAccountId", "*requestAccountId", "*accountId").out("*signals")
+                                .hashPartition("*accountId")
+                                .localSelect("$$accountIdToSignals", Path.key("*accountId")).out("*signals")
+                                .originPartition();
         }
 
         @Override
@@ -466,10 +482,12 @@ public class Matches implements RamaModule {
                 setup.declareDepot("*matchRefillDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
                 setup.declareDepot("*matchesServeDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
                 setup.declareDepot("*matchesCursorAckDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
+                setup.declareDepot("*signalsDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
 
                 declareFiltersTopology(topologies);
                 declareServeAndCursorTopology(topologies);
                 declareRefillTopology(topologies);
+                declareSignalsTopology(topologies);
                 declareQueries(topologies);
         }
 }

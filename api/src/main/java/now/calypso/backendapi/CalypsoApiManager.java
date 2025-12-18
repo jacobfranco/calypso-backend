@@ -11,6 +11,7 @@ import com.rpl.rama.*;
 import com.rpl.rama.cluster.ClusterManagerBase;
 
 import now.calypso.backendapi.pojos.*;
+import now.calypso.backendapi.prompts.*;
 import now.calypso.backendapi.signals.*;
 import now.calypso.backend.*;
 import now.calypso.backend.data.*;
@@ -25,6 +26,7 @@ public class CalypsoApiManager {
     private final OpenAIClient openAI;
 
     private final ConcurrentHashMap<Long, CompletableFuture<Void>> serialByAccount = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, CompletableFuture<Void>> promptSerialByAccount = new ConcurrentHashMap<>();
 
     // Modules
     public static final String CORE_MODULE_NAME = Core.class.getName();
@@ -33,7 +35,7 @@ public class CalypsoApiManager {
     // Core Depots
     private final Depot accountDepot;
     private final Depot authCodeDepot;
-    private final Depot signalsDepot;
+    private final Depot promptsDepot;
 
     // Core PStates
     private final PState emailToUser;
@@ -41,9 +43,11 @@ public class CalypsoApiManager {
 
     // Core Queries
     private final QueryTopologyClient<List<AccountWithId>> getAccountsFromAccountIds;
+    private final QueryTopologyClient<PromptState> getPromptsStateFromAccountId;
     private final QueryTopologyClient<Signals> getSignalsFromAccountId;
 
     // Matches Depots
+    private final Depot signalsDepot;
     private final Depot filtersDepot;
     private final Depot matchRefillDepot;
     private final Depot matchesServeDepot;
@@ -59,7 +63,7 @@ public class CalypsoApiManager {
         // Core Depots
         accountDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*accountDepot");
         authCodeDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*authCodeDepot");
-        signalsDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*signalsDepot");
+        promptsDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*promptsDepot");
 
         // Core PStates
         emailToUser = cluster.clusterPState(CORE_MODULE_NAME, "$$emailToUser");
@@ -67,9 +71,10 @@ public class CalypsoApiManager {
 
         // Core Queries
         getAccountsFromAccountIds = cluster.clusterQuery(CORE_MODULE_NAME, "getAccountsFromAccountIds");
-        getSignalsFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getSignalsFromAccountId");
+        getPromptsStateFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getPromptsStateFromAccountId");
 
         // Matches Depots
+        signalsDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*signalsDepot");
         filtersDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*filtersDepot");
         matchRefillDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*matchRefillDepot");
         matchesServeDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*matchesServeDepot");
@@ -77,6 +82,7 @@ public class CalypsoApiManager {
         // Matches Queries
         getFiltersFromAccountId = cluster.clusterQuery(MATCHES_MODULE_NAME, "getFiltersFromAccountId");
         getMatchesFromAccountId = cluster.clusterQuery(MATCHES_MODULE_NAME, "getMatchesFromAccountId");
+        getSignalsFromAccountId = cluster.clusterQuery(MATCHES_MODULE_NAME, "getSignalsFromAccountId");
 
     }
 
@@ -139,6 +145,10 @@ public class CalypsoApiManager {
         return getSignalsFromAccountId.invokeAsync(requesterId, accountId);
     }
 
+    public CompletableFuture<PromptState> getPrompts(long requesterId, long accountId) {
+        return getPromptsStateFromAccountId.invokeAsync(requesterId, accountId);
+    }
+
     /** Read current signals for the owner (treat null as empty list). */
     private CompletableFuture<List<SignalRecord>> readCurrentSignalRecords(long accountId) {
         return getSignals(accountId, accountId).thenApply(s -> {
@@ -166,6 +176,21 @@ public class CalypsoApiManager {
         return map;
     }
 
+    private CompletableFuture<PromptState> readCurrentPromptState(long accountId) {
+        return getPrompts(accountId, accountId).thenApply(state -> {
+            if (state == null) {
+                PromptState empty = new PromptState();
+                empty.setAccountId(accountId);
+                empty.setResponses(new ArrayList<>());
+                return empty;
+            }
+            PromptState copy = new PromptState(state);
+            if (!copy.isSetResponses())
+                copy.setResponses(new ArrayList<>());
+            return copy;
+        });
+    }
+
     private static String recordKey(SignalRecord record) {
         if (record == null || record.getToken() == null)
             return null;
@@ -177,6 +202,20 @@ public class CalypsoApiManager {
             return null;
         String intentPart = (intent == null) ? "NONE" : intent.name();
         return intentPart + "|" + token;
+    }
+
+    private static MatchCandidate selectCandidate(List<MatchCandidate> candidates) {
+        if (candidates == null)
+            return null;
+        MatchCandidate best = null;
+        for (MatchCandidate c : candidates) {
+            if (c == null)
+                continue;
+            if (best == null || c.getStage0Score() > best.getStage0Score()) {
+                best = c;
+            }
+        }
+        return best;
     }
 
     private static String normalizeSource(String source) {
@@ -201,6 +240,15 @@ public class CalypsoApiManager {
         return trimmed.length() > 280 ? trimmed.substring(0, 280) : trimmed;
     }
 
+    private static String clampPromptText(String text, int limit) {
+        if (text == null)
+            return null;
+        String trimmed = text.trim();
+        if (trimmed.isEmpty())
+            return null;
+        return trimmed.length() > limit ? trimmed.substring(0, limit) : trimmed;
+    }
+
     private static List<ExtractedSignal> sanitizeSignals(List<ExtractedSignal> signals) {
         if (signals == null || signals.isEmpty())
             return List.of();
@@ -213,6 +261,103 @@ public class CalypsoApiManager {
             out.add(sig);
         }
         return out;
+    }
+
+    public CompletableFuture<PromptSuggestion> nextPrompt(long accountId) {
+        CompletableFuture<PromptState> stateFuture = getPrompts(accountId, accountId);
+        CompletableFuture<List<MatchCandidate>> matchesFuture = getMatchesFromAccountId.invokeAsync(accountId,
+                accountId, 5);
+        return stateFuture.thenCombine(matchesFuture, (state, matches) -> {
+            List<PromptQuestion> prompts = PromptLibrary.all();
+            if (prompts.isEmpty())
+                throw new IllegalStateException("No prompts available");
+            Set<String> answered = new HashSet<>();
+            if (state != null && state.getResponses() != null) {
+                for (PromptResponse resp : state.getResponses()) {
+                    if (resp == null || resp.getQuestion() == null)
+                        continue;
+                    String pid = resp.getQuestion().getPromptId();
+                    if (pid != null)
+                        answered.add(pid);
+                }
+            }
+            List<PromptQuestion> candidates = new ArrayList<>();
+            for (PromptQuestion q : prompts) {
+                if (q != null && !answered.contains(q.getPromptId()))
+                    candidates.add(q);
+            }
+            if (candidates.isEmpty())
+                candidates = prompts;
+            PromptQuestion choice = candidates.get(ThreadLocalRandom.current().nextInt(candidates.size()));
+            PromptQuestion question = new PromptQuestion(choice);
+            MatchCandidate best = selectCandidate(matches);
+            Long targetId = best == null ? null : best.getTargetAccountId();
+            Double score = best == null ? null : best.getStage0Score();
+            return new PromptSuggestion(question, targetId, score);
+        });
+    }
+
+    public CompletableFuture<PromptResponse> postPromptResponse(long accountId, String promptId,
+            PostPromptResponseRequest request) {
+        PromptQuestion prompt = PromptLibrary.getById(promptId);
+        if (prompt == null)
+            throw new IllegalArgumentException("Unknown prompt: " + promptId);
+        PostPromptResponseRequest payload = request == null
+                ? new PostPromptResponseRequest(null, null, null, null, null)
+                : request;
+        String responseId = UUID.randomUUID().toString();
+        long now = System.currentTimeMillis();
+        PromptResponse response = new PromptResponse();
+        response.setResponseId(responseId);
+        response.setAccountId(accountId);
+        response.setQuestion(new PromptQuestion(prompt));
+        response.setServedAt(now);
+        response.setAnsweredAt(now);
+        if (payload.targetAccountId != null)
+            response.setRelatedTargetAccountId(payload.targetAccountId);
+        PromptReaction reaction = payload.parsedReaction();
+        if (reaction != null)
+            response.setReaction(reaction);
+        String answerText = clampPromptText(payload.answerText, 512);
+        if (answerText != null)
+            response.setAnswerText(answerText);
+        String comment = clampPromptText(payload.comment, 512);
+        if (comment != null)
+            response.setComment(comment);
+        List<AttachmentWithId> attachments = payload.toThriftAttachments();
+        if (!attachments.isEmpty())
+            response.setAttachments(attachments);
+
+        CompletableFuture<Void> persist = persistPromptResponse(accountId, response);
+        String signalText = (answerText == null) ? comment
+                : (comment == null ? answerText : answerText + "\n" + comment);
+        CompletableFuture<List<String>> signals = (signalText == null)
+                ? CompletableFuture.completedFuture(List.of())
+                : extractAndAppendSignalsFromPrompt(accountId, prompt.getQuestion(), signalText, "prompt",
+                        responseId);
+
+        return persist.thenCombine(signals, (v, tokens) -> new PromptResponse(response));
+    }
+
+    private CompletableFuture<Void> persistPromptResponse(long accountId, PromptResponse response) {
+        CompletableFuture<Void> chained = promptSerialByAccount.compute(accountId, (k, prev) -> {
+            CompletableFuture<Void> start = (prev == null) ? CompletableFuture.completedFuture(null) : prev;
+            CompletableFuture<Void> next = start.thenCompose(
+                    v -> readCurrentPromptState(accountId).thenCompose(state -> {
+                        List<PromptResponse> responses = state.getResponses() == null
+                                ? new ArrayList<>()
+                                : new ArrayList<>(state.getResponses());
+                        responses.add(new PromptResponse(response));
+                        if (responses.size() > 200) {
+                            responses = new ArrayList<>(responses.subList(responses.size() - 200, responses.size()));
+                        }
+                        state.setResponses(responses);
+                        return promptsDepot.appendAsync(state).thenApply(res -> null);
+                    }));
+            next.whenComplete((r, e) -> promptSerialByAccount.remove(k, next));
+            return next;
+        });
+        return chained;
     }
 
     /**

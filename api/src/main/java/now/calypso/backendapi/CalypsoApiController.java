@@ -238,6 +238,37 @@ public class CalypsoApiController {
                 .defaultIfEmpty(new GetSignals(accountId, List.of()));
     }
 
+    @GetMapping("/api/accounts/{id}/prompts/next")
+    public Mono<GetPromptSuggestion> nextPrompt(@PathVariable("id") String idStr, WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.nextPrompt(accountId))
+                .map(suggestion -> new GetPromptSuggestion(suggestion.question(), suggestion.targetAccountId(),
+                        suggestion.targetScore()))
+                .onErrorMap(IllegalStateException.class,
+                        ex -> new ResponseStatusException(HttpStatus.NOT_FOUND, ex.getMessage(), ex));
+    }
+
+    @PostMapping("/api/accounts/{id}/prompts/{promptId}/response")
+    public Mono<GetPromptResponse> respondToPrompt(
+            @PathVariable("id") String idStr,
+            @PathVariable("promptId") String promptId,
+            @RequestBody(required = false) PostPromptResponseRequest params,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.postPromptResponse(accountId, promptId, params))
+                .map(GetPromptResponse::new)
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
     @PostMapping("/api/accounts/{id}/signals")
     public Mono<GetSignals> postSignals(@PathVariable("id") String idStr,
             @RequestBody(required = false) PostSignalsRequest params,

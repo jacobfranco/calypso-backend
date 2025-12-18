@@ -28,6 +28,9 @@ public class CalypsoSerialization extends ThriftSerialization {
                 ServedPairs.class,
                 Signals.class,
                 SignalRecord.class,
+                PromptQuestion.class,
+                PromptResponse.class,
+                PromptState.class,
                 TagPreference.class,
 
         };

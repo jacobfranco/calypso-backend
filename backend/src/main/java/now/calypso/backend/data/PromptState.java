@@ -7,25 +7,22 @@
 package now.calypso.backend.data;
 
 @SuppressWarnings({"cast", "rawtypes", "serial", "unchecked", "unused"})
-public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedPairs._Fields>, java.io.Serializable, Cloneable, Comparable<ServedPairs> {
-  private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("ServedPairs");
+public class PromptState implements org.apache.thrift.TBase<PromptState, PromptState._Fields>, java.io.Serializable, Cloneable, Comparable<PromptState> {
+  private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("PromptState");
 
   private static final org.apache.thrift.protocol.TField ACCOUNT_ID_FIELD_DESC = new org.apache.thrift.protocol.TField("accountId", org.apache.thrift.protocol.TType.I64, (short)1);
-  private static final org.apache.thrift.protocol.TField TARGET_IDS_FIELD_DESC = new org.apache.thrift.protocol.TField("targetIds", org.apache.thrift.protocol.TType.LIST, (short)2);
-  private static final org.apache.thrift.protocol.TField SERVED_AT_FIELD_DESC = new org.apache.thrift.protocol.TField("servedAt", org.apache.thrift.protocol.TType.I64, (short)3);
+  private static final org.apache.thrift.protocol.TField RESPONSES_FIELD_DESC = new org.apache.thrift.protocol.TField("responses", org.apache.thrift.protocol.TType.LIST, (short)2);
 
-  private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new ServedPairsStandardSchemeFactory();
-  private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new ServedPairsTupleSchemeFactory();
+  private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new PromptStateStandardSchemeFactory();
+  private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new PromptStateTupleSchemeFactory();
 
   public long accountId; // required
-  public @org.apache.thrift.annotation.Nullable java.util.List<java.lang.Long> targetIds; // required
-  public long servedAt; // required
+  public @org.apache.thrift.annotation.Nullable java.util.List<PromptResponse> responses; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
     ACCOUNT_ID((short)1, "accountId"),
-    TARGET_IDS((short)2, "targetIds"),
-    SERVED_AT((short)3, "servedAt");
+    RESPONSES((short)2, "responses");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -43,10 +40,8 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
       switch(fieldId) {
         case 1: // ACCOUNT_ID
           return ACCOUNT_ID;
-        case 2: // TARGET_IDS
-          return TARGET_IDS;
-        case 3: // SERVED_AT
-          return SERVED_AT;
+        case 2: // RESPONSES
+          return RESPONSES;
         default:
           return null;
       }
@@ -91,73 +86,63 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
 
   // isset id assignments
   private static final int __ACCOUNTID_ISSET_ID = 0;
-  private static final int __SERVEDAT_ISSET_ID = 1;
   private byte __isset_bitfield = 0;
+  private static final _Fields[] optionals = {_Fields.RESPONSES};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
     tmpMap.put(_Fields.ACCOUNT_ID, new org.apache.thrift.meta_data.FieldMetaData("accountId", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I64        , "AccountId")));
-    tmpMap.put(_Fields.TARGET_IDS, new org.apache.thrift.meta_data.FieldMetaData("targetIds", org.apache.thrift.TFieldRequirementType.REQUIRED, 
+    tmpMap.put(_Fields.RESPONSES, new org.apache.thrift.meta_data.FieldMetaData("responses", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.ListMetaData(org.apache.thrift.protocol.TType.LIST, 
-            new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I64            , "AccountId"))));
-    tmpMap.put(_Fields.SERVED_AT, new org.apache.thrift.meta_data.FieldMetaData("servedAt", org.apache.thrift.TFieldRequirementType.REQUIRED, 
-        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I64        , "Timestamp")));
+            new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, PromptResponse.class))));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
-    org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(ServedPairs.class, metaDataMap);
+    org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(PromptState.class, metaDataMap);
   }
 
-  public ServedPairs() {
+  public PromptState() {
   }
 
-  public ServedPairs(
-    long accountId,
-    java.util.List<java.lang.Long> targetIds,
-    long servedAt)
+  public PromptState(
+    long accountId)
   {
     this();
     this.accountId = accountId;
     setAccountIdIsSet(true);
-    this.targetIds = targetIds;
-    this.servedAt = servedAt;
-    setServedAtIsSet(true);
   }
 
   /**
    * Performs a deep copy on <i>other</i>.
    */
-  public ServedPairs(ServedPairs other) {
+  public PromptState(PromptState other) {
     __isset_bitfield = other.__isset_bitfield;
     this.accountId = other.accountId;
-    if (other.isSetTargetIds()) {
-      java.util.List<java.lang.Long> __this__targetIds = new java.util.ArrayList<java.lang.Long>(other.targetIds.size());
-      for (java.lang.Long other_element : other.targetIds) {
-        __this__targetIds.add(other_element);
+    if (other.isSetResponses()) {
+      java.util.List<PromptResponse> __this__responses = new java.util.ArrayList<PromptResponse>(other.responses.size());
+      for (PromptResponse other_element : other.responses) {
+        __this__responses.add(new PromptResponse(other_element));
       }
-      this.targetIds = __this__targetIds;
+      this.responses = __this__responses;
     }
-    this.servedAt = other.servedAt;
   }
 
   @Override
-  public ServedPairs deepCopy() {
-    return new ServedPairs(this);
+  public PromptState deepCopy() {
+    return new PromptState(this);
   }
 
   @Override
   public void clear() {
     setAccountIdIsSet(false);
     this.accountId = 0;
-    this.targetIds = null;
-    setServedAtIsSet(false);
-    this.servedAt = 0;
+    this.responses = null;
   }
 
   public long getAccountId() {
     return this.accountId;
   }
 
-  public ServedPairs setAccountId(long accountId) {
+  public PromptState setAccountId(long accountId) {
     this.accountId = accountId;
     setAccountIdIsSet(true);
     return this;
@@ -176,68 +161,45 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
     __isset_bitfield = org.apache.thrift.EncodingUtils.setBit(__isset_bitfield, __ACCOUNTID_ISSET_ID, value);
   }
 
-  public int getTargetIdsSize() {
-    return (this.targetIds == null) ? 0 : this.targetIds.size();
+  public int getResponsesSize() {
+    return (this.responses == null) ? 0 : this.responses.size();
   }
 
   @org.apache.thrift.annotation.Nullable
-  public java.util.Iterator<java.lang.Long> getTargetIdsIterator() {
-    return (this.targetIds == null) ? null : this.targetIds.iterator();
+  public java.util.Iterator<PromptResponse> getResponsesIterator() {
+    return (this.responses == null) ? null : this.responses.iterator();
   }
 
-  public void addToTargetIds(long elem) {
-    if (this.targetIds == null) {
-      this.targetIds = new java.util.ArrayList<java.lang.Long>();
+  public void addToResponses(PromptResponse elem) {
+    if (this.responses == null) {
+      this.responses = new java.util.ArrayList<PromptResponse>();
     }
-    this.targetIds.add(elem);
+    this.responses.add(elem);
   }
 
   @org.apache.thrift.annotation.Nullable
-  public java.util.List<java.lang.Long> getTargetIds() {
-    return this.targetIds;
+  public java.util.List<PromptResponse> getResponses() {
+    return this.responses;
   }
 
-  public ServedPairs setTargetIds(@org.apache.thrift.annotation.Nullable java.util.List<java.lang.Long> targetIds) {
-    this.targetIds = targetIds;
+  public PromptState setResponses(@org.apache.thrift.annotation.Nullable java.util.List<PromptResponse> responses) {
+    this.responses = responses;
     return this;
   }
 
-  public void unsetTargetIds() {
-    this.targetIds = null;
+  public void unsetResponses() {
+    this.responses = null;
   }
 
-  /** Returns true if field targetIds is set (has been assigned a value) and false otherwise */
-  public boolean isSetTargetIds() {
-    return this.targetIds != null;
+  /** Returns true if field responses is set (has been assigned a value) and false otherwise */
+  public boolean isSetResponses() {
+    return this.responses != null;
   }
 
-  public void setTargetIdsIsSet(boolean value) {
+  public void setResponsesIsSet(boolean value) {
     if (!value) {
-      this.targetIds = null;
+      this.responses = null;
     }
-  }
-
-  public long getServedAt() {
-    return this.servedAt;
-  }
-
-  public ServedPairs setServedAt(long servedAt) {
-    this.servedAt = servedAt;
-    setServedAtIsSet(true);
-    return this;
-  }
-
-  public void unsetServedAt() {
-    __isset_bitfield = org.apache.thrift.EncodingUtils.clearBit(__isset_bitfield, __SERVEDAT_ISSET_ID);
-  }
-
-  /** Returns true if field servedAt is set (has been assigned a value) and false otherwise */
-  public boolean isSetServedAt() {
-    return org.apache.thrift.EncodingUtils.testBit(__isset_bitfield, __SERVEDAT_ISSET_ID);
-  }
-
-  public void setServedAtIsSet(boolean value) {
-    __isset_bitfield = org.apache.thrift.EncodingUtils.setBit(__isset_bitfield, __SERVEDAT_ISSET_ID, value);
   }
 
   @Override
@@ -251,19 +213,11 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
       }
       break;
 
-    case TARGET_IDS:
+    case RESPONSES:
       if (value == null) {
-        unsetTargetIds();
+        unsetResponses();
       } else {
-        setTargetIds((java.util.List<java.lang.Long>)value);
-      }
-      break;
-
-    case SERVED_AT:
-      if (value == null) {
-        unsetServedAt();
-      } else {
-        setServedAt((java.lang.Long)value);
+        setResponses((java.util.List<PromptResponse>)value);
       }
       break;
 
@@ -277,11 +231,8 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
     case ACCOUNT_ID:
       return getAccountId();
 
-    case TARGET_IDS:
-      return getTargetIds();
-
-    case SERVED_AT:
-      return getServedAt();
+    case RESPONSES:
+      return getResponses();
 
     }
     throw new java.lang.IllegalStateException();
@@ -297,22 +248,20 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
     switch (field) {
     case ACCOUNT_ID:
       return isSetAccountId();
-    case TARGET_IDS:
-      return isSetTargetIds();
-    case SERVED_AT:
-      return isSetServedAt();
+    case RESPONSES:
+      return isSetResponses();
     }
     throw new java.lang.IllegalStateException();
   }
 
   @Override
   public boolean equals(java.lang.Object that) {
-    if (that instanceof ServedPairs)
-      return this.equals((ServedPairs)that);
+    if (that instanceof PromptState)
+      return this.equals((PromptState)that);
     return false;
   }
 
-  public boolean equals(ServedPairs that) {
+  public boolean equals(PromptState that) {
     if (that == null)
       return false;
     if (this == that)
@@ -327,21 +276,12 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
         return false;
     }
 
-    boolean this_present_targetIds = true && this.isSetTargetIds();
-    boolean that_present_targetIds = true && that.isSetTargetIds();
-    if (this_present_targetIds || that_present_targetIds) {
-      if (!(this_present_targetIds && that_present_targetIds))
+    boolean this_present_responses = true && this.isSetResponses();
+    boolean that_present_responses = true && that.isSetResponses();
+    if (this_present_responses || that_present_responses) {
+      if (!(this_present_responses && that_present_responses))
         return false;
-      if (!this.targetIds.equals(that.targetIds))
-        return false;
-    }
-
-    boolean this_present_servedAt = true;
-    boolean that_present_servedAt = true;
-    if (this_present_servedAt || that_present_servedAt) {
-      if (!(this_present_servedAt && that_present_servedAt))
-        return false;
-      if (this.servedAt != that.servedAt)
+      if (!this.responses.equals(that.responses))
         return false;
     }
 
@@ -354,17 +294,15 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
 
     hashCode = hashCode * 8191 + org.apache.thrift.TBaseHelper.hashCode(accountId);
 
-    hashCode = hashCode * 8191 + ((isSetTargetIds()) ? 131071 : 524287);
-    if (isSetTargetIds())
-      hashCode = hashCode * 8191 + targetIds.hashCode();
-
-    hashCode = hashCode * 8191 + org.apache.thrift.TBaseHelper.hashCode(servedAt);
+    hashCode = hashCode * 8191 + ((isSetResponses()) ? 131071 : 524287);
+    if (isSetResponses())
+      hashCode = hashCode * 8191 + responses.hashCode();
 
     return hashCode;
   }
 
   @Override
-  public int compareTo(ServedPairs other) {
+  public int compareTo(PromptState other) {
     if (!getClass().equals(other.getClass())) {
       return getClass().getName().compareTo(other.getClass().getName());
     }
@@ -381,22 +319,12 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
         return lastComparison;
       }
     }
-    lastComparison = java.lang.Boolean.compare(isSetTargetIds(), other.isSetTargetIds());
+    lastComparison = java.lang.Boolean.compare(isSetResponses(), other.isSetResponses());
     if (lastComparison != 0) {
       return lastComparison;
     }
-    if (isSetTargetIds()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.targetIds, other.targetIds);
-      if (lastComparison != 0) {
-        return lastComparison;
-      }
-    }
-    lastComparison = java.lang.Boolean.compare(isSetServedAt(), other.isSetServedAt());
-    if (lastComparison != 0) {
-      return lastComparison;
-    }
-    if (isSetServedAt()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.servedAt, other.servedAt);
+    if (isSetResponses()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.responses, other.responses);
       if (lastComparison != 0) {
         return lastComparison;
       }
@@ -422,24 +350,22 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
 
   @Override
   public java.lang.String toString() {
-    java.lang.StringBuilder sb = new java.lang.StringBuilder("ServedPairs(");
+    java.lang.StringBuilder sb = new java.lang.StringBuilder("PromptState(");
     boolean first = true;
 
     sb.append("accountId:");
     sb.append(this.accountId);
     first = false;
-    if (!first) sb.append(", ");
-    sb.append("targetIds:");
-    if (this.targetIds == null) {
-      sb.append("null");
-    } else {
-      sb.append(this.targetIds);
+    if (isSetResponses()) {
+      if (!first) sb.append(", ");
+      sb.append("responses:");
+      if (this.responses == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.responses);
+      }
+      first = false;
     }
-    first = false;
-    if (!first) sb.append(", ");
-    sb.append("servedAt:");
-    sb.append(this.servedAt);
-    first = false;
     sb.append(")");
     return sb.toString();
   }
@@ -447,10 +373,6 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
   public void validate() throws org.apache.thrift.TException {
     // check for required fields
     // alas, we cannot check 'accountId' because it's a primitive and you chose the non-beans generator.
-    if (targetIds == null) {
-      throw new org.apache.thrift.protocol.TProtocolException("Required field 'targetIds' was not present! Struct: " + toString());
-    }
-    // alas, we cannot check 'servedAt' because it's a primitive and you chose the non-beans generator.
     // check for sub-struct validity
   }
 
@@ -472,17 +394,17 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
     }
   }
 
-  private static class ServedPairsStandardSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
+  private static class PromptStateStandardSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
     @Override
-    public ServedPairsStandardScheme getScheme() {
-      return new ServedPairsStandardScheme();
+    public PromptStateStandardScheme getScheme() {
+      return new PromptStateStandardScheme();
     }
   }
 
-  private static class ServedPairsStandardScheme extends org.apache.thrift.scheme.StandardScheme<ServedPairs> {
+  private static class PromptStateStandardScheme extends org.apache.thrift.scheme.StandardScheme<PromptState> {
 
     @Override
-    public void read(org.apache.thrift.protocol.TProtocol iprot, ServedPairs struct) throws org.apache.thrift.TException {
+    public void read(org.apache.thrift.protocol.TProtocol iprot, PromptState struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TField schemeField;
       iprot.readStructBegin();
       while (true)
@@ -500,28 +422,21 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 2: // TARGET_IDS
+          case 2: // RESPONSES
             if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
               {
-                org.apache.thrift.protocol.TList _list64 = iprot.readListBegin();
-                struct.targetIds = new java.util.ArrayList<java.lang.Long>(_list64.size);
-                long _elem65;
-                for (int _i66 = 0; _i66 < _list64.size; ++_i66)
+                org.apache.thrift.protocol.TList _list48 = iprot.readListBegin();
+                struct.responses = new java.util.ArrayList<PromptResponse>(_list48.size);
+                @org.apache.thrift.annotation.Nullable PromptResponse _elem49;
+                for (int _i50 = 0; _i50 < _list48.size; ++_i50)
                 {
-                  _elem65 = iprot.readI64();
-                  struct.targetIds.add(_elem65);
+                  _elem49 = new PromptResponse();
+                  _elem49.read(iprot);
+                  struct.responses.add(_elem49);
                 }
                 iprot.readListEnd();
               }
-              struct.setTargetIdsIsSet(true);
-            } else { 
-              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
-            }
-            break;
-          case 3: // SERVED_AT
-            if (schemeField.type == org.apache.thrift.protocol.TType.I64) {
-              struct.servedAt = iprot.readI64();
-              struct.setServedAtIsSet(true);
+              struct.setResponsesIsSet(true);
             } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
@@ -537,82 +452,86 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
       if (!struct.isSetAccountId()) {
         throw new org.apache.thrift.protocol.TProtocolException("Required field 'accountId' was not found in serialized data! Struct: " + toString());
       }
-      if (!struct.isSetServedAt()) {
-        throw new org.apache.thrift.protocol.TProtocolException("Required field 'servedAt' was not found in serialized data! Struct: " + toString());
-      }
       struct.validate();
     }
 
     @Override
-    public void write(org.apache.thrift.protocol.TProtocol oprot, ServedPairs struct) throws org.apache.thrift.TException {
+    public void write(org.apache.thrift.protocol.TProtocol oprot, PromptState struct) throws org.apache.thrift.TException {
       struct.validate();
 
       oprot.writeStructBegin(STRUCT_DESC);
       oprot.writeFieldBegin(ACCOUNT_ID_FIELD_DESC);
       oprot.writeI64(struct.accountId);
       oprot.writeFieldEnd();
-      if (struct.targetIds != null) {
-        oprot.writeFieldBegin(TARGET_IDS_FIELD_DESC);
-        {
-          oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.I64, struct.targetIds.size()));
-          for (long _iter67 : struct.targetIds)
+      if (struct.responses != null) {
+        if (struct.isSetResponses()) {
+          oprot.writeFieldBegin(RESPONSES_FIELD_DESC);
           {
-            oprot.writeI64(_iter67);
+            oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRUCT, struct.responses.size()));
+            for (PromptResponse _iter51 : struct.responses)
+            {
+              _iter51.write(oprot);
+            }
+            oprot.writeListEnd();
           }
-          oprot.writeListEnd();
+          oprot.writeFieldEnd();
         }
-        oprot.writeFieldEnd();
       }
-      oprot.writeFieldBegin(SERVED_AT_FIELD_DESC);
-      oprot.writeI64(struct.servedAt);
-      oprot.writeFieldEnd();
       oprot.writeFieldStop();
       oprot.writeStructEnd();
     }
 
   }
 
-  private static class ServedPairsTupleSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
+  private static class PromptStateTupleSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
     @Override
-    public ServedPairsTupleScheme getScheme() {
-      return new ServedPairsTupleScheme();
+    public PromptStateTupleScheme getScheme() {
+      return new PromptStateTupleScheme();
     }
   }
 
-  private static class ServedPairsTupleScheme extends org.apache.thrift.scheme.TupleScheme<ServedPairs> {
+  private static class PromptStateTupleScheme extends org.apache.thrift.scheme.TupleScheme<PromptState> {
 
     @Override
-    public void write(org.apache.thrift.protocol.TProtocol prot, ServedPairs struct) throws org.apache.thrift.TException {
+    public void write(org.apache.thrift.protocol.TProtocol prot, PromptState struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol oprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       oprot.writeI64(struct.accountId);
-      {
-        oprot.writeI32(struct.targetIds.size());
-        for (long _iter68 : struct.targetIds)
+      java.util.BitSet optionals = new java.util.BitSet();
+      if (struct.isSetResponses()) {
+        optionals.set(0);
+      }
+      oprot.writeBitSet(optionals, 1);
+      if (struct.isSetResponses()) {
         {
-          oprot.writeI64(_iter68);
+          oprot.writeI32(struct.responses.size());
+          for (PromptResponse _iter52 : struct.responses)
+          {
+            _iter52.write(oprot);
+          }
         }
       }
-      oprot.writeI64(struct.servedAt);
     }
 
     @Override
-    public void read(org.apache.thrift.protocol.TProtocol prot, ServedPairs struct) throws org.apache.thrift.TException {
+    public void read(org.apache.thrift.protocol.TProtocol prot, PromptState struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       struct.accountId = iprot.readI64();
       struct.setAccountIdIsSet(true);
-      {
-        org.apache.thrift.protocol.TList _list69 = iprot.readListBegin(org.apache.thrift.protocol.TType.I64);
-        struct.targetIds = new java.util.ArrayList<java.lang.Long>(_list69.size);
-        long _elem70;
-        for (int _i71 = 0; _i71 < _list69.size; ++_i71)
+      java.util.BitSet incoming = iprot.readBitSet(1);
+      if (incoming.get(0)) {
         {
-          _elem70 = iprot.readI64();
-          struct.targetIds.add(_elem70);
+          org.apache.thrift.protocol.TList _list53 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRUCT);
+          struct.responses = new java.util.ArrayList<PromptResponse>(_list53.size);
+          @org.apache.thrift.annotation.Nullable PromptResponse _elem54;
+          for (int _i55 = 0; _i55 < _list53.size; ++_i55)
+          {
+            _elem54 = new PromptResponse();
+            _elem54.read(iprot);
+            struct.responses.add(_elem54);
+          }
         }
+        struct.setResponsesIsSet(true);
       }
-      struct.setTargetIdsIsSet(true);
-      struct.servedAt = iprot.readI64();
-      struct.setServedAtIsSet(true);
     }
   }
 

@@ -131,6 +131,37 @@ struct Signals {
   2: optional list<SignalRecord> records;
 }
 
+enum PromptReaction {
+  LIKE = 1,
+  DISLIKE = 2,
+  SKIP = 3
+}
+
+struct PromptQuestion {
+  1: required string promptId;
+  2: required string question;
+  3: optional string topic;
+  4: optional list<string> tags;
+}
+
+struct PromptResponse {
+  1: required string responseId;
+  2: required AccountId accountId;
+  3: required PromptQuestion question;
+  4: optional PromptReaction reaction;
+  5: optional string answerText;
+  6: optional list<AttachmentWithId> attachments;
+  7: optional Timestamp servedAt;
+  8: optional Timestamp answeredAt;
+  9: optional AccountId relatedTargetAccountId;
+ 10: optional string comment;
+}
+
+struct PromptState {
+  1: required AccountId accountId;
+  2: optional list<PromptResponse> responses;
+}
+
 struct MatchCandidate {
   1: required AccountId targetAccountId;
   2: required double    stage0Score;
