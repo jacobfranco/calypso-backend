@@ -9,6 +9,7 @@ public class PostSignalsRequest {
     public String text;
     public String source;
     public String context;
+    public String sourceId;
 
     public List<String> safeTokens() {
         if (tokens == null) {
@@ -31,5 +32,12 @@ public class PostSignalsRequest {
 
     public String contextOrNull() {
         return (context == null || context.isBlank()) ? null : context.trim();
+    }
+
+    public String sourceIdOrNull() {
+        if (sourceId == null)
+            return null;
+        String trimmed = sourceId.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

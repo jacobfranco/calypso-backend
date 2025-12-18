@@ -19,6 +19,7 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
   private static final org.apache.thrift.protocol.TField INTENT_FIELD_DESC = new org.apache.thrift.protocol.TField("intent", org.apache.thrift.protocol.TType.I32, (short)7);
   private static final org.apache.thrift.protocol.TField CONFIDENCE_FIELD_DESC = new org.apache.thrift.protocol.TField("confidence", org.apache.thrift.protocol.TType.DOUBLE, (short)8);
   private static final org.apache.thrift.protocol.TField IMPORTANCE_FIELD_DESC = new org.apache.thrift.protocol.TField("importance", org.apache.thrift.protocol.TType.DOUBLE, (short)9);
+  private static final org.apache.thrift.protocol.TField SOURCE_ID_FIELD_DESC = new org.apache.thrift.protocol.TField("sourceId", org.apache.thrift.protocol.TType.STRING, (short)10);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new SignalRecordStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new SignalRecordTupleSchemeFactory();
@@ -36,6 +37,7 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
   public @org.apache.thrift.annotation.Nullable SignalIntent intent; // optional
   public double confidence; // optional
   public double importance; // optional
+  public @org.apache.thrift.annotation.Nullable java.lang.String sourceId; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
@@ -51,7 +53,8 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
      */
     INTENT((short)7, "intent"),
     CONFIDENCE((short)8, "confidence"),
-    IMPORTANCE((short)9, "importance");
+    IMPORTANCE((short)9, "importance"),
+    SOURCE_ID((short)10, "sourceId");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -85,6 +88,8 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
           return CONFIDENCE;
         case 9: // IMPORTANCE
           return IMPORTANCE;
+        case 10: // SOURCE_ID
+          return SOURCE_ID;
         default:
           return null;
       }
@@ -134,7 +139,7 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
   private static final int __CONFIDENCE_ISSET_ID = 3;
   private static final int __IMPORTANCE_ISSET_ID = 4;
   private byte __isset_bitfield = 0;
-  private static final _Fields[] optionals = {_Fields.SOURCE,_Fields.FIRST_SEEN,_Fields.LAST_SEEN,_Fields.COUNT,_Fields.LAST_CONTEXT,_Fields.INTENT,_Fields.CONFIDENCE,_Fields.IMPORTANCE};
+  private static final _Fields[] optionals = {_Fields.SOURCE,_Fields.FIRST_SEEN,_Fields.LAST_SEEN,_Fields.COUNT,_Fields.LAST_CONTEXT,_Fields.INTENT,_Fields.CONFIDENCE,_Fields.IMPORTANCE,_Fields.SOURCE_ID};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
@@ -156,6 +161,8 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.DOUBLE)));
     tmpMap.put(_Fields.IMPORTANCE, new org.apache.thrift.meta_data.FieldMetaData("importance", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.DOUBLE)));
+    tmpMap.put(_Fields.SOURCE_ID, new org.apache.thrift.meta_data.FieldMetaData("sourceId", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(SignalRecord.class, metaDataMap);
   }
@@ -192,6 +199,9 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
     }
     this.confidence = other.confidence;
     this.importance = other.importance;
+    if (other.isSetSourceId()) {
+      this.sourceId = other.sourceId;
+    }
   }
 
   @Override
@@ -215,6 +225,7 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
     this.confidence = 0.0;
     setImportanceIsSet(false);
     this.importance = 0.0;
+    this.sourceId = null;
   }
 
   @org.apache.thrift.annotation.Nullable
@@ -440,6 +451,31 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
     __isset_bitfield = org.apache.thrift.EncodingUtils.setBit(__isset_bitfield, __IMPORTANCE_ISSET_ID, value);
   }
 
+  @org.apache.thrift.annotation.Nullable
+  public java.lang.String getSourceId() {
+    return this.sourceId;
+  }
+
+  public SignalRecord setSourceId(@org.apache.thrift.annotation.Nullable java.lang.String sourceId) {
+    this.sourceId = sourceId;
+    return this;
+  }
+
+  public void unsetSourceId() {
+    this.sourceId = null;
+  }
+
+  /** Returns true if field sourceId is set (has been assigned a value) and false otherwise */
+  public boolean isSetSourceId() {
+    return this.sourceId != null;
+  }
+
+  public void setSourceIdIsSet(boolean value) {
+    if (!value) {
+      this.sourceId = null;
+    }
+  }
+
   @Override
   public void setFieldValue(_Fields field, @org.apache.thrift.annotation.Nullable java.lang.Object value) {
     switch (field) {
@@ -515,6 +551,14 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       }
       break;
 
+    case SOURCE_ID:
+      if (value == null) {
+        unsetSourceId();
+      } else {
+        setSourceId((java.lang.String)value);
+      }
+      break;
+
     }
   }
 
@@ -549,6 +593,9 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
     case IMPORTANCE:
       return getImportance();
 
+    case SOURCE_ID:
+      return getSourceId();
+
     }
     throw new java.lang.IllegalStateException();
   }
@@ -579,6 +626,8 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       return isSetConfidence();
     case IMPORTANCE:
       return isSetImportance();
+    case SOURCE_ID:
+      return isSetSourceId();
     }
     throw new java.lang.IllegalStateException();
   }
@@ -677,6 +726,15 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
         return false;
     }
 
+    boolean this_present_sourceId = true && this.isSetSourceId();
+    boolean that_present_sourceId = true && that.isSetSourceId();
+    if (this_present_sourceId || that_present_sourceId) {
+      if (!(this_present_sourceId && that_present_sourceId))
+        return false;
+      if (!this.sourceId.equals(that.sourceId))
+        return false;
+    }
+
     return true;
   }
 
@@ -719,6 +777,10 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
     hashCode = hashCode * 8191 + ((isSetImportance()) ? 131071 : 524287);
     if (isSetImportance())
       hashCode = hashCode * 8191 + org.apache.thrift.TBaseHelper.hashCode(importance);
+
+    hashCode = hashCode * 8191 + ((isSetSourceId()) ? 131071 : 524287);
+    if (isSetSourceId())
+      hashCode = hashCode * 8191 + sourceId.hashCode();
 
     return hashCode;
   }
@@ -821,6 +883,16 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
         return lastComparison;
       }
     }
+    lastComparison = java.lang.Boolean.compare(isSetSourceId(), other.isSetSourceId());
+    if (lastComparison != 0) {
+      return lastComparison;
+    }
+    if (isSetSourceId()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.sourceId, other.sourceId);
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+    }
     return 0;
   }
 
@@ -910,6 +982,16 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       if (!first) sb.append(", ");
       sb.append("importance:");
       sb.append(this.importance);
+      first = false;
+    }
+    if (isSetSourceId()) {
+      if (!first) sb.append(", ");
+      sb.append("sourceId:");
+      if (this.sourceId == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.sourceId);
+      }
       first = false;
     }
     sb.append(")");
@@ -1034,6 +1116,14 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
+          case 10: // SOURCE_ID
+            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
+              struct.sourceId = iprot.readString();
+              struct.setSourceIdIsSet(true);
+            } else { 
+              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+            }
+            break;
           default:
             org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
         }
@@ -1101,6 +1191,13 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
         oprot.writeDouble(struct.importance);
         oprot.writeFieldEnd();
       }
+      if (struct.sourceId != null) {
+        if (struct.isSetSourceId()) {
+          oprot.writeFieldBegin(SOURCE_ID_FIELD_DESC);
+          oprot.writeString(struct.sourceId);
+          oprot.writeFieldEnd();
+        }
+      }
       oprot.writeFieldStop();
       oprot.writeStructEnd();
     }
@@ -1145,7 +1242,10 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       if (struct.isSetImportance()) {
         optionals.set(7);
       }
-      oprot.writeBitSet(optionals, 8);
+      if (struct.isSetSourceId()) {
+        optionals.set(8);
+      }
+      oprot.writeBitSet(optionals, 9);
       if (struct.isSetSource()) {
         oprot.writeString(struct.source);
       }
@@ -1170,6 +1270,9 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       if (struct.isSetImportance()) {
         oprot.writeDouble(struct.importance);
       }
+      if (struct.isSetSourceId()) {
+        oprot.writeString(struct.sourceId);
+      }
     }
 
     @Override
@@ -1177,7 +1280,7 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       struct.token = iprot.readString();
       struct.setTokenIsSet(true);
-      java.util.BitSet incoming = iprot.readBitSet(8);
+      java.util.BitSet incoming = iprot.readBitSet(9);
       if (incoming.get(0)) {
         struct.source = iprot.readString();
         struct.setSourceIsSet(true);
@@ -1209,6 +1312,10 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       if (incoming.get(7)) {
         struct.importance = iprot.readDouble();
         struct.setImportanceIsSet(true);
+      }
+      if (incoming.get(8)) {
+        struct.sourceId = iprot.readString();
+        struct.setSourceIdIsSet(true);
       }
     }
   }

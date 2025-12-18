@@ -62,6 +62,7 @@ public class GetSignals {
     public static final class GetSignalRecord {
         public final String token;
         public final String source;
+        public final String sourceId;
         public final Long firstSeen;
         public final Long lastSeen;
         public final Integer count;
@@ -73,6 +74,7 @@ public class GetSignals {
         public GetSignalRecord(SignalRecord r) {
             this.token = r.getToken();
             this.source = r.getSource();
+            this.sourceId = r.getSourceId();
             this.firstSeen = r.isSetFirstSeen() ? r.getFirstSeen() : null;
             this.lastSeen = r.isSetLastSeen() ? r.getLastSeen() : null;
             this.count = r.isSetCount() ? r.getCount() : null;
@@ -86,6 +88,7 @@ public class GetSignals {
         public GetSignalRecord(
                 @JsonProperty("token") String token,
                 @JsonProperty("source") String source,
+                @JsonProperty("sourceId") String sourceId,
                 @JsonProperty("firstSeen") Long firstSeen,
                 @JsonProperty("lastSeen") Long lastSeen,
                 @JsonProperty("count") Integer count,
@@ -95,6 +98,7 @@ public class GetSignals {
                 @JsonProperty("importance") Double importance) {
             this.token = token;
             this.source = source;
+            this.sourceId = sourceId;
             this.firstSeen = firstSeen;
             this.lastSeen = lastSeen;
             this.count = count;

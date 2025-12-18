@@ -128,6 +128,7 @@ public class CoreTest {
                         SignalRecord record = new SignalRecord()
                                         .setToken("loves_coffee")
                                         .setSource("test")
+                                        .setSourceId("test-record-1")
                                         .setFirstSeen(123L)
                                         .setLastSeen(456L)
                                         .setCount(3)
@@ -149,6 +150,7 @@ public class CoreTest {
                         SignalRecord storedRecord = stored.getRecords().get(0);
                         assertEquals("loves_coffee", storedRecord.getToken());
                         assertEquals("test", storedRecord.getSource());
+                        assertEquals("test-record-1", storedRecord.getSourceId());
                         assertEquals(123L, storedRecord.getFirstSeen());
                         assertEquals(456L, storedRecord.getLastSeen());
                         assertEquals(3, storedRecord.getCount());

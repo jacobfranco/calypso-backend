@@ -254,15 +254,16 @@ public class CalypsoApiController {
         CompletableFuture<Void> writes = CompletableFuture.completedFuture(null);
         String source = params.sourceOrDefault();
         String context = params.contextOrNull();
+        String sourceId = params.sourceIdOrNull();
         if (params.hasTokens()) {
             List<String> tokens = params.safeTokens();
-            writes = writes.thenCompose(v -> manager.postSignals(accountId, tokens, source, context)
+            writes = writes.thenCompose(v -> manager.postSignals(accountId, tokens, source, sourceId, context)
                     .thenApply(ok -> null));
         }
         if (params.hasText()) {
             String text = params.text;
             writes = writes.thenCompose(
-                    v -> manager.extractAndAppendSignals(accountId, text, source,
+                    v -> manager.extractAndAppendSignals(accountId, text, source, sourceId,
                             context != null ? context : text)
                             .thenApply(ignored -> null));
         }

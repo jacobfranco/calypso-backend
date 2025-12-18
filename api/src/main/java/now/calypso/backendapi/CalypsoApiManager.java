@@ -185,6 +185,13 @@ public class CalypsoApiManager {
         return source.trim();
     }
 
+    private static String normalizeSourceId(String sourceId) {
+        if (sourceId == null)
+            return null;
+        String trimmed = sourceId.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
     private static String clampContext(String context) {
         if (context == null)
             return null;
@@ -212,7 +219,7 @@ public class CalypsoApiManager {
      * Normalize + append tokens coming directly from the client.
      */
     public CompletableFuture<Boolean> postSignals(long accountId, List<String> rawTokens, String source,
-            String contextMaybe) {
+            String sourceId, String contextMaybe) {
         List<String> tokens = SignalNormalizer.normalizeTokens(rawTokens);
         if (tokens.isEmpty())
             return CompletableFuture.completedFuture(false);
@@ -222,17 +229,18 @@ public class CalypsoApiManager {
             if (sig != null)
                 manual.add(sig);
         }
-        return persistSignals(accountId, manual, source, contextMaybe);
+        return persistSignals(accountId, manual, source, sourceId, contextMaybe);
     }
 
     private CompletableFuture<Boolean> persistSignals(long accountId, List<ExtractedSignal> signals, String source,
-            String contextMaybe) {
+            String sourceId, String contextMaybe) {
         List<ExtractedSignal> sanitized = sanitizeSignals(signals);
         if (sanitized.isEmpty())
             return CompletableFuture.completedFuture(false);
 
         final long now = System.currentTimeMillis();
         final String normalizedSource = normalizeSource(source);
+        final String normalizedSourceId = normalizeSourceId(sourceId);
         final String context = clampContext(contextMaybe);
 
         CompletableFuture<Void> chained = serialByAccount.compute(accountId, (k, prev) -> {
@@ -254,6 +262,8 @@ public class CalypsoApiManager {
                                     record.setFirstSeen(now);
                             }
                             record.setSource(normalizedSource);
+                            if (normalizedSourceId != null)
+                                record.setSourceId(normalizedSourceId);
                             record.setLastSeen(now);
                             if (context != null)
                                 record.setLastContext(context);
@@ -297,32 +307,32 @@ public class CalypsoApiManager {
      * attempted.
      */
     public CompletableFuture<List<String>> extractAndAppendSignals(long accountId, String text, String source,
-            String contextMaybe) {
+            String sourceId, String contextMaybe) {
         return extractSignalsFromText(text).thenCompose(signals -> {
             if (signals.isEmpty())
                 return CompletableFuture.completedFuture(List.of());
             List<String> tokens = tokens(signals);
-            return persistSignals(accountId, signals, source, contextMaybe).thenApply(ok -> tokens);
+            return persistSignals(accountId, signals, source, sourceId, contextMaybe).thenApply(ok -> tokens);
         });
     }
 
     public CompletableFuture<List<String>> extractAndAppendSignalsFromAgentConversation(long accountId,
-            List<String> conversation, String source, String contextMaybe) {
+            List<String> conversation, String source, String sourceId, String contextMaybe) {
         return extractSignalsFromAgentConversation(conversation).thenCompose(signals -> {
             if (signals.isEmpty())
                 return CompletableFuture.completedFuture(List.of());
             List<String> tokens = tokens(signals);
-            return persistSignals(accountId, signals, source, contextMaybe).thenApply(ok -> tokens);
+            return persistSignals(accountId, signals, source, sourceId, contextMaybe).thenApply(ok -> tokens);
         });
     }
 
     public CompletableFuture<List<String>> extractAndAppendSignalsFromPrompt(long accountId, String question,
-            String answer, String source) {
+            String answer, String source, String sourceId) {
         return extractSignalsFromPrompt(question, answer).thenCompose(signals -> {
             if (signals.isEmpty())
                 return CompletableFuture.completedFuture(List.of());
             List<String> tokens = tokens(signals);
-            return persistSignals(accountId, signals, source, answer).thenApply(ok -> tokens);
+            return persistSignals(accountId, signals, source, sourceId, answer).thenApply(ok -> tokens);
         });
     }
 

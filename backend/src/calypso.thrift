@@ -123,6 +123,7 @@ struct SignalRecord {
   7: optional SignalIntent intent;
   8: optional double confidence;
   9: optional double importance; // system inferred 0..1
+ 10: optional string sourceId; // pointer back to the originating entity
 }
 
 struct Signals {
