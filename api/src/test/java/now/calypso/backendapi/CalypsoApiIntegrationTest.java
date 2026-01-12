@@ -23,15 +23,20 @@ import com.rpl.rama.test.InProcessCluster;
 import com.rpl.rama.test.LaunchConfig;
 
 import now.calypso.backend.data.Filters;
+import now.calypso.backend.data.AgentMessage;
+import now.calypso.backend.data.AgentMessageSender;
+import now.calypso.backend.data.AgentSession;
 import now.calypso.backend.data.AttachmentWithId;
 import now.calypso.backend.data.PromptResponse;
 import now.calypso.backend.data.PromptState;
 import now.calypso.backend.data.SignalIntent;
 import now.calypso.backend.data.SignalRecord;
 import now.calypso.backend.data.Signals;
+import now.calypso.backend.modules.Agent;
 import now.calypso.backend.modules.Core;
 import now.calypso.backend.modules.Matches;
 import now.calypso.backend.serialization.CalypsoSerialization;
+import now.calypso.backendapi.agent.AgentResponder;
 import now.calypso.backendapi.llm.OpenAIJson;
 import now.calypso.backendapi.pojos.PostPromptResponseRequest;
 import now.calypso.backendapi.prompts.PromptSuggestion;
@@ -191,6 +196,44 @@ class CalypsoApiIntegrationTest {
     }
 
     @Test
+    void agentSessionLifecycle_generatesRepliesAndSignals() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 907L;
+            AgentResponder.setTestOverride(session -> {
+                List<AgentMessage> msgs = session == null ? List.of() : session.getMessages();
+                if (msgs != null) {
+                    for (int i = msgs.size() - 1; i >= 0; i--) {
+                        AgentMessage msg = msgs.get(i);
+                        if (msg != null && msg.getSender() == AgentMessageSender.USER && msg.getText() != null) {
+                            return "Noted on \"" + msg.getText() + "\". Want to explore more?";
+                        }
+                    }
+                }
+                return "Tell me more about your preferences.";
+            });
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[{\"token\":\"agent_signal\",\"intent\":\"self\"}]}");
+            try {
+                AgentSession session = mgr.getAgentSessionSnapshot(accountId).get(5, TimeUnit.SECONDS);
+                assertNotNull(session);
+                AgentSession updated = mgr.postAgentMessage(accountId, "I want someone spontaneous.").get(5,
+                        TimeUnit.SECONDS);
+                assertTrue(updated.isSetMessages());
+                assertTrue(updated.getMessagesSize() >= 2);
+                AgentMessage last = updated.getMessages().get(updated.getMessagesSize() - 1);
+                assertEquals(AgentMessageSender.AGENT, last.getSender());
+                SignalRecord sig = awaitSignal(mgr, accountId, "agent_signal", SignalIntent.SELF, 5000);
+                assertNotNull(sig);
+                assertEquals("agent_chat", sig.getSource());
+                assertEquals(updated.getSessionId(), sig.getSourceId());
+            } finally {
+                AgentResponder.clearTestOverride();
+                OpenAIJson.clearTestOverride();
+            }
+        }
+    }
+
+    @Test
     void nextPromptSkipsAnsweredPrompts() throws Exception {
         try (InProcessCluster ipc = newCluster()) {
             CalypsoApiManager mgr = newManager(ipc);
@@ -271,6 +314,19 @@ class CalypsoApiIntegrationTest {
         return null;
     }
 
+    private SignalRecord awaitSignal(CalypsoApiManager mgr, long accountId, String token, SignalIntent intent,
+            long timeoutMs) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            Signals signals = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord found = findRecord(signals, token, intent);
+            if (found != null)
+                return found;
+            Thread.sleep(50);
+        }
+        return null;
+    }
+
     private InProcessCluster newCluster() {
         return InProcessCluster.create(List.of(CalypsoSerialization.class));
     }
@@ -279,6 +335,7 @@ class CalypsoApiIntegrationTest {
         LaunchConfig cfg = new LaunchConfig(2, 1);
         ipc.launchModule(new Core(), cfg);
         ipc.launchModule(new Matches(), cfg);
+        ipc.launchModule(new Agent(), cfg);
         return new CalypsoApiManager(new RoutingCluster(ipc), null);
     }
 

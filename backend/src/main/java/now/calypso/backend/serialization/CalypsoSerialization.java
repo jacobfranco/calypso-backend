@@ -31,6 +31,8 @@ public class CalypsoSerialization extends ThriftSerialization {
                 PromptQuestion.class,
                 PromptResponse.class,
                 PromptState.class,
+                AgentMessage.class,
+                AgentSession.class,
                 TagPreference.class,
 
         };

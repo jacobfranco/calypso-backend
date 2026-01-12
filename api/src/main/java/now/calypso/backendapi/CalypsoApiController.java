@@ -269,6 +269,37 @@ public class CalypsoApiController {
                         ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
     }
 
+    @GetMapping("/api/accounts/{id}/agent/session")
+    public Mono<GetAgentSession> getAgentSession(@PathVariable("id") String idStr, WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getAgentSessionSnapshot(accountId))
+                .map(GetAgentSession::new);
+    }
+
+    @PostMapping("/api/accounts/{id}/agent/messages")
+    public Mono<GetAgentSession> postAgentMessage(
+            @PathVariable("id") String idStr,
+            @RequestBody PostAgentMessageRequest payload,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        String text = payload == null ? null : payload.safeText();
+        if (text == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Message text is required.");
+        }
+        return Mono.fromFuture(manager.postAgentMessage(accountId, text))
+                .map(GetAgentSession::new)
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
     @PostMapping("/api/accounts/{id}/signals")
     public Mono<GetSignals> postSignals(@PathVariable("id") String idStr,
             @RequestBody(required = false) PostSignalsRequest params,

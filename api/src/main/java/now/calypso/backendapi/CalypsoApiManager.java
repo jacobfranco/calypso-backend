@@ -10,6 +10,7 @@ import com.openai.client.OpenAIClient;
 import com.rpl.rama.*;
 import com.rpl.rama.cluster.ClusterManagerBase;
 
+import now.calypso.backendapi.agent.AgentResponder;
 import now.calypso.backendapi.pojos.*;
 import now.calypso.backendapi.prompts.*;
 import now.calypso.backendapi.signals.*;
@@ -27,10 +28,12 @@ public class CalypsoApiManager {
 
     private final ConcurrentHashMap<Long, CompletableFuture<Void>> serialByAccount = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, CompletableFuture<Void>> promptSerialByAccount = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, CompletableFuture<AgentSession>> agentSerialByAccount = new ConcurrentHashMap<>();
 
     // Modules
     public static final String CORE_MODULE_NAME = Core.class.getName();
     public static final String MATCHES_MODULE_NAME = Matches.class.getName();
+    public static final String AGENT_MODULE_NAME = Agent.class.getName();
 
     // Core Depots
     private final Depot accountDepot;
@@ -55,6 +58,10 @@ public class CalypsoApiManager {
     // Matches Queries
     private final QueryTopologyClient<Filters> getFiltersFromAccountId;
     private final QueryTopologyClient<List<MatchCandidate>> getMatchesFromAccountId;
+    private final QueryTopologyClient<AgentSession> getAgentSessionFromAccountId;
+
+    // Agent Depots
+    private final Depot agentSessionDepot;
 
     public CalypsoApiManager(ClusterManagerBase cluster, OpenAIClient openAI) {
 
@@ -78,11 +85,13 @@ public class CalypsoApiManager {
         filtersDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*filtersDepot");
         matchRefillDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*matchRefillDepot");
         matchesServeDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*matchesServeDepot");
+        agentSessionDepot = cluster.clusterDepot(AGENT_MODULE_NAME, "*agentSessionDepot");
 
         // Matches Queries
         getFiltersFromAccountId = cluster.clusterQuery(MATCHES_MODULE_NAME, "getFiltersFromAccountId");
         getMatchesFromAccountId = cluster.clusterQuery(MATCHES_MODULE_NAME, "getMatchesFromAccountId");
         getSignalsFromAccountId = cluster.clusterQuery(MATCHES_MODULE_NAME, "getSignalsFromAccountId");
+        getAgentSessionFromAccountId = cluster.clusterQuery(AGENT_MODULE_NAME, "getAgentSessionFromAccountId");
 
     }
 
@@ -149,6 +158,26 @@ public class CalypsoApiManager {
         return getPromptsStateFromAccountId.invokeAsync(requesterId, accountId);
     }
 
+    public CompletableFuture<AgentSession> getAgentSessionSnapshot(long accountId) {
+        CompletableFuture<AgentSession> inflight = agentSerialByAccount.get(accountId);
+        if (inflight != null)
+            return inflight.thenApply(AgentSession::new);
+        return ensureAgentSession(accountId).thenApply(AgentSession::new);
+    }
+
+    public CompletableFuture<AgentSession> postAgentMessage(long accountId, String text) {
+        String normalized = clampAgentText(text);
+        if (normalized == null)
+            throw new IllegalArgumentException("Message text required.");
+        return agentSerialByAccount.compute(accountId, (k, prev) -> {
+            CompletableFuture<AgentSession> base = (prev == null) ? ensureAgentSession(accountId) : prev;
+            CompletableFuture<AgentSession> next = base.thenCompose(session -> processAgentMessage(accountId, session,
+                    normalized));
+            next.whenComplete((r, e) -> agentSerialByAccount.remove(k, next));
+            return next;
+        });
+    }
+
     /** Read current signals for the owner (treat null as empty list). */
     private CompletableFuture<List<SignalRecord>> readCurrentSignalRecords(long accountId) {
         return getSignals(accountId, accountId).thenApply(s -> {
@@ -188,6 +217,103 @@ public class CalypsoApiManager {
             if (!copy.isSetResponses())
                 copy.setResponses(new ArrayList<>());
             return copy;
+        });
+    }
+
+    private CompletableFuture<AgentSession> ensureAgentSession(long accountId) {
+        return getAgentSessionFromAccountId.invokeAsync(accountId, accountId).thenCompose(existing -> {
+            if (existing != null) {
+                AgentSession copy = new AgentSession(existing);
+                if (!copy.isSetMessages())
+                    copy.setMessages(new ArrayList<>());
+                return CompletableFuture.completedFuture(copy);
+            }
+            AgentSession fresh = new AgentSession();
+            fresh.setSessionId(UUID.randomUUID().toString());
+            fresh.setAccountId(accountId);
+            long now = System.currentTimeMillis();
+            fresh.setCreatedAt(now);
+            fresh.setLastInteractionAt(now);
+            fresh.setStatus(AgentSessionStatus.ACTIVE);
+            fresh.setMessages(new ArrayList<>());
+            return agentSessionDepot.appendAsync(fresh).thenApply(res -> fresh);
+        });
+    }
+
+    private CompletableFuture<Void> persistAgentSession(AgentSession session) {
+        AgentSession copy = new AgentSession(session);
+        return agentSessionDepot.appendAsync(copy).thenApply(res -> null);
+    }
+
+    private static void appendMessage(AgentSession session, AgentMessageSender sender, String text, long timestamp) {
+        if (!session.isSetMessages() || session.getMessages() == null)
+            session.setMessages(new ArrayList<>());
+        AgentMessage msg = new AgentMessage();
+        msg.setMessageId(UUID.randomUUID().toString());
+        msg.setSessionId(session.getSessionId());
+        msg.setSender(sender);
+        msg.setText(text);
+        msg.setTimestamp(timestamp);
+        session.getMessages().add(msg);
+    }
+
+    private static String clampAgentText(String text) {
+        if (text == null)
+            return null;
+        String trimmed = text.trim();
+        if (trimmed.isEmpty())
+            return null;
+        return trimmed.length() > 800 ? trimmed.substring(0, 800) : trimmed;
+    }
+
+    private static List<String> toConversation(List<AgentMessage> messages) {
+        if (messages == null || messages.isEmpty())
+            return List.of();
+        List<String> out = new ArrayList<>(messages.size());
+        for (AgentMessage msg : messages) {
+            if (msg == null || msg.getText() == null)
+                continue;
+            String prefix = (msg.getSender() == AgentMessageSender.AGENT) ? "agent" : "user";
+            out.add(prefix + ": " + msg.getText());
+        }
+        return out;
+    }
+
+    private void emitAgentSignals(long accountId, AgentSession session) {
+        List<String> conversation = toConversation(session.getMessages());
+        if (conversation.isEmpty())
+            return;
+        extractAndAppendSignalsFromAgentConversation(accountId, conversation, "agent_chat", session.getSessionId(),
+                "session:" + session.getSessionId()).exceptionally(ex -> {
+                    LOG.warn("Agent signal extraction failed for account {}", accountId, ex);
+                    return List.of();
+                });
+    }
+
+    private CompletableFuture<AgentSession> processAgentMessage(long accountId, AgentSession current, String text) {
+        AgentSession updated = (current == null) ? new AgentSession() : new AgentSession(current);
+        if (!updated.isSetSessionId() || updated.getSessionId() == null) {
+            updated.setSessionId(UUID.randomUUID().toString());
+            updated.setAccountId(accountId);
+            updated.setCreatedAt(System.currentTimeMillis());
+            updated.setStatus(AgentSessionStatus.ACTIVE);
+            updated.setMessages(new ArrayList<>());
+        }
+        long now = System.currentTimeMillis();
+        appendMessage(updated, AgentMessageSender.USER, text, now);
+        updated.setLastInteractionAt(now);
+
+        CompletableFuture<String> replyFuture = CompletableFuture
+                .supplyAsync(() -> AgentResponder.generate(openAI, updated));
+
+        return replyFuture.thenCompose(reply -> {
+            long replyTs = System.currentTimeMillis();
+            appendMessage(updated, AgentMessageSender.AGENT, reply, replyTs);
+            updated.setLastInteractionAt(replyTs);
+            return persistAgentSession(updated).thenApply(v -> {
+                emitAgentSignals(accountId, updated);
+                return new AgentSession(updated);
+            });
         });
     }
 

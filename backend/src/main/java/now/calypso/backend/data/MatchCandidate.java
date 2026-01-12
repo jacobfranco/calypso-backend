@@ -582,13 +582,13 @@ public class MatchCandidate implements org.apache.thrift.TBase<MatchCandidate, M
           case 3: // REASONS
             if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
               {
-                org.apache.thrift.protocol.TList _list56 = iprot.readListBegin();
-                struct.reasons = new java.util.ArrayList<java.lang.String>(_list56.size);
-                @org.apache.thrift.annotation.Nullable java.lang.String _elem57;
-                for (int _i58 = 0; _i58 < _list56.size; ++_i58)
+                org.apache.thrift.protocol.TList _list64 = iprot.readListBegin();
+                struct.reasons = new java.util.ArrayList<java.lang.String>(_list64.size);
+                @org.apache.thrift.annotation.Nullable java.lang.String _elem65;
+                for (int _i66 = 0; _i66 < _list64.size; ++_i66)
                 {
-                  _elem57 = iprot.readString();
-                  struct.reasons.add(_elem57);
+                  _elem65 = iprot.readString();
+                  struct.reasons.add(_elem65);
                 }
                 iprot.readListEnd();
               }
@@ -641,9 +641,9 @@ public class MatchCandidate implements org.apache.thrift.TBase<MatchCandidate, M
           oprot.writeFieldBegin(REASONS_FIELD_DESC);
           {
             oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRING, struct.reasons.size()));
-            for (java.lang.String _iter59 : struct.reasons)
+            for (java.lang.String _iter67 : struct.reasons)
             {
-              oprot.writeString(_iter59);
+              oprot.writeString(_iter67);
             }
             oprot.writeListEnd();
           }
@@ -682,9 +682,9 @@ public class MatchCandidate implements org.apache.thrift.TBase<MatchCandidate, M
       if (struct.isSetReasons()) {
         {
           oprot.writeI32(struct.reasons.size());
-          for (java.lang.String _iter60 : struct.reasons)
+          for (java.lang.String _iter68 : struct.reasons)
           {
-            oprot.writeString(_iter60);
+            oprot.writeString(_iter68);
           }
         }
       }
@@ -702,13 +702,13 @@ public class MatchCandidate implements org.apache.thrift.TBase<MatchCandidate, M
       java.util.BitSet incoming = iprot.readBitSet(1);
       if (incoming.get(0)) {
         {
-          org.apache.thrift.protocol.TList _list61 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
-          struct.reasons = new java.util.ArrayList<java.lang.String>(_list61.size);
-          @org.apache.thrift.annotation.Nullable java.lang.String _elem62;
-          for (int _i63 = 0; _i63 < _list61.size; ++_i63)
+          org.apache.thrift.protocol.TList _list69 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
+          struct.reasons = new java.util.ArrayList<java.lang.String>(_list69.size);
+          @org.apache.thrift.annotation.Nullable java.lang.String _elem70;
+          for (int _i71 = 0; _i71 < _list69.size; ++_i71)
           {
-            _elem62 = iprot.readString();
-            struct.reasons.add(_elem62);
+            _elem70 = iprot.readString();
+            struct.reasons.add(_elem70);
           }
         }
         struct.setReasonsIsSet(true);

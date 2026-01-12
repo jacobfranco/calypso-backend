@@ -162,6 +162,33 @@ struct PromptState {
   2: optional list<PromptResponse> responses;
 }
 
+enum AgentMessageSender {
+  USER = 1,
+  AGENT = 2
+}
+
+struct AgentMessage {
+  1: required string messageId;
+  2: required string sessionId;
+  3: required AgentMessageSender sender;
+  4: required string text;
+  5: required Timestamp timestamp;
+}
+
+enum AgentSessionStatus {
+  ACTIVE = 1,
+  CLOSED = 2
+}
+
+struct AgentSession {
+  1: required string sessionId;
+  2: required AccountId accountId;
+  3: required Timestamp createdAt;
+  4: required Timestamp lastInteractionAt;
+  5: required AgentSessionStatus status;
+  6: optional list<AgentMessage> messages;
+}
+
 struct MatchCandidate {
   1: required AccountId targetAccountId;
   2: required double    stage0Score;
