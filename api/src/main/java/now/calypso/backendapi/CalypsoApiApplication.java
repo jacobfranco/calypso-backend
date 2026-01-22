@@ -1,6 +1,7 @@
 package now.calypso.backendapi;
 
 import now.calypso.backend.*;
+import now.calypso.backend.data.Account;
 import now.calypso.backend.modules.*;
 import now.calypso.backend.serialization.CalypsoSerialization;
 
@@ -11,6 +12,9 @@ import com.rpl.rama.test.*;
 
 import software.amazon.awssdk.core.exception.SdkClientException;
 
+import java.io.IOException;
+import java.security.NoSuchAlgorithmException;
+import java.security.NoSuchProviderException;
 import java.util.*;
 
 import org.springframework.boot.SpringApplication;
@@ -19,7 +23,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 @SpringBootApplication
 public class CalypsoApiApplication {
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws NoSuchAlgorithmException, IOException, NoSuchProviderException {
         if (args.length > 1) {
             CalypsoConfig.API_URL = args[1];
             CalypsoConfig.API_WEB_SOCKET_URL = args[2];
@@ -58,15 +62,23 @@ public class CalypsoApiApplication {
 
     }
 
-    public static InProcessCluster initIPC() {
+    public static InProcessCluster initIPC() throws NoSuchAlgorithmException, IOException, NoSuchProviderException {
         List<Class> sers = new ArrayList<>();
         sers.add(CalypsoSerialization.class);
         InProcessCluster ipc = InProcessCluster.create(sers);
 
         Core coreModule = new Core();
+        String coreModuleName = Core.class.getName();
         ipc.launchModule(coreModule, new LaunchConfig(2, 1));
+
         Matches matchesModule = new Matches();
         ipc.launchModule(matchesModule, new LaunchConfig(2, 1));
+
+        Agent agentModule = new Agent();
+        ipc.launchModule(agentModule, new LaunchConfig(2, 1));
+
+        int weekMillis = 1000 * 60 * 60 * 24 * 7;
+        long ts = System.currentTimeMillis() - weekMillis;
 
         // Build openAI Client
         OpenAIClient openAI = OpenAIOkHttpClient.builder()
@@ -74,6 +86,14 @@ public class CalypsoApiApplication {
                 .build();
 
         CalypsoApiController.manager = new CalypsoApiManager(ipc, openAI);
+
+        Depot accountDepot = ipc.clusterDepot(coreModuleName, "*accountDepot");
+        CalypsoWebHelpers.SigningKeyPair jacobKeys = CalypsoWebHelpers.generateKeys();
+        accountDepot.append(
+                                new Account("jacob", "jacob@foo.com", CalypsoApiHelpers.encodePassword("jacob"), "en-US",
+                                                UUID.randomUUID().toString(), jacobKeys.publicKey, ts += 1, false));
+        
+
         return ipc;
     }
 
