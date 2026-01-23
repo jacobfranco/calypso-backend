@@ -69,6 +69,17 @@ public class Core implements RamaModule {
                                                             Path.key("*code").termVoid()));
       }
 
+      private static void declareApplicationTopology(Topologies topologies) {
+                StreamTopology stream = topologies.stream("applications");
+                // Declare a PState to map client IDs to Application objects
+                stream.pstate("$$clientIdToApplication", PState.mapSchema(String.class, Application.class));
+                // Source from the application depot
+                stream.source("*applicationDepot").out("*application")
+                                .localTransform("$$clientIdToApplication",
+                                                Path.key(new Expr(Application::getClient_id, "*application"))
+                                                                .termVal("*application"));
+        }
+
       private static void declarePromptsTopology(Topologies topologies) {
             StreamTopology stream = topologies.stream("prompts");
 
@@ -103,6 +114,15 @@ public class Core implements RamaModule {
                                           .collect(Collectors.toList());
                         }, "*unsortedResults").out("*results");
 
+            topologies.query("getApplicationFromClientId", "*client_id").out("*result")
+                                .hashPartition("*client_id")
+                                .localSelect("$$clientIdToApplication", Path.key("*client_id"))
+                                .out("*application")
+                                .ifTrue(new Expr(Ops.IS_NULL, "*application"),
+                                                Block.each(() -> null).out("*result"),
+                                                Block.each(Ops.IDENTITY, "*application").out("*result"))
+                                .originPartition();
+
             topologies.query("getPromptsStateFromAccountId", "*requestAccountId", "*accountId").out("*prompts")
                         .hashPartition("*accountId")
                         .localSelect("$$accountIdToPrompts", Path.key("*accountId")).out("*prompts")
@@ -113,10 +133,12 @@ public class Core implements RamaModule {
       public void define(Setup setup, Topologies topologies) {
             setup.declareDepot("*accountDepot", Depot.hashBy(CalypsoHelpers.ExtractEmail.class));
             setup.declareDepot("*accountWithIdDepot", Depot.disallow());
+            setup.declareDepot("*applicationDepot", Depot.hashBy(CalypsoHelpers.ExtractClientId.class));
             setup.declareDepot("*authCodeDepot", Depot.hashBy(ExtractCode.class));
             setup.declareDepot("*promptsDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
 
             declareAccountsTopology(topologies);
+            declareApplicationTopology(topologies);
             declareAuthTopology(topologies);
             declarePromptsTopology(topologies);
 

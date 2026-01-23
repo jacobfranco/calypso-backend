@@ -4,10 +4,11 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
+import org.springframework.http.*;
 import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebSession;
 
 import now.calypso.backend.CalypsoHelpers;
@@ -38,6 +39,94 @@ public class CalypsoApiController {
         // Store the session id in the backend and return token
         return Mono.fromFuture(manager.postAuthCode(accountWithId.accountId, session.getId()))
                 .map(res -> new GetToken(session.getId(), scope));
+    }
+
+    // Define a controller method to handle POST requests for application
+    // registration with JSON payload
+    @PostMapping(value = "/api/apps", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<GetApplication> postApplication(@RequestBody(required = true) PostApplication params) {
+        return Mono.fromFuture(manager.postApplication(params))
+                .map(GetApplication::new);
+    }
+
+    @GetMapping("/api/apps/{clientId}")
+    public Mono<GetApplication> getApplication(@PathVariable String clientId) {
+        return Mono.fromFuture(manager.getApplication(clientId))
+                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Application not found")))
+                .map(GetApplication::new);
+    }
+
+    // Define a controller method to handle POST requests for application
+    // registration with form URL encoded payload
+    @PostMapping(value = "/api/apps", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+    public Mono<GetApplication> postApplication(ServerWebExchange exchange) {
+        return exchange.getFormData()
+                .flatMap(formParams -> {
+                    PostApplication params = CalypsoApiFormParser.parseParams(formParams, new PostApplication());
+                    return this.postApplication(params);
+                });
+    }
+
+    // Define a controller method to handle POST requests for OAuth token generation
+    // with JSON payload
+    @PostMapping(value = "/oauth/token", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<GetToken> postOauthToken(WebSession session, @RequestBody(required = true) PostToken params) {
+        // Handle the "password" grant type
+        if ("password".equals(params.grant_type)) {
+            return Mono.fromFuture(manager.getAccountId(params.username))
+                    .switchIfEmpty(
+                            Mono.error(new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Username not found")))
+                    // Attempt to retrieve the account using the account ID
+                    .flatMap(accountId -> Mono.fromFuture(manager.getAccountWithId(accountId)))
+                    .switchIfEmpty(
+                            Mono.error(new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Username not found")))
+                    // Validate the password and log in the user
+                    .flatMap(accountWithId -> {
+                        if (!CalypsoApiHelpers.matchesPassword(params.password, accountWithId.account.pwdHash)) {
+                            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Password does not match");
+                        }
+                        return this.loginWithAccount(session, params.scope, accountWithId);
+                    });
+        } else if ("client_credentials".equals(params.grant_type)) {
+            // Handle the "client_credentials" grant type
+            return Mono.just(new GetToken(session.getId(), params.scope));
+        } else {
+            // Handle unsupported grant types
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    // Define a controller method to handle POST requests for OAuth token generation
+    // with form URL encoded payload
+    @PostMapping(value = "/oauth/token", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+    public Mono<GetToken> postOauthToken(WebSession session, ServerWebExchange exchange) {
+        return exchange.getFormData()
+                .flatMap(formParams -> {
+                    PostToken params = CalypsoApiFormParser.parseParams(formParams, new PostToken());
+                    return this.postOauthToken(session, params);
+                });
+    }
+
+    // Define a POST endpoint for revoking OAuth tokens with JSON payload
+    @PostMapping(value = "/oauth/revoke", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<Object> postRevokeOauthToken(@RequestBody(required = true) PostRevokeToken params) {
+        // Invoke the manager to remove the authorization code using the token provided
+        // and return an empty map as the response
+        return Mono.fromFuture(manager.postRemoveAuthCode(params.token)).map(res -> new HashMap<String, Object>());
+    }
+
+    // Overloaded POST endpoint for revoking OAuth tokens using form-urlencoded
+    // payload
+    @PostMapping(value = "/oauth/revoke", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+    public Mono<Object> postRevokeOauthToken(ServerWebExchange exchange) {
+        // Extract form data from the request
+        return exchange.getFormData()
+                .flatMap(formParams -> {
+                    // Parse form parameters into a PostRevokeToken object
+                    PostRevokeToken params = CalypsoApiFormParser.parseParams(formParams, new PostRevokeToken());
+                    // Delegate to the other postRevokeOauthToken method for processing
+                    return this.postRevokeOauthToken(params);
+                });
     }
 
     @PostMapping("/api/accounts")

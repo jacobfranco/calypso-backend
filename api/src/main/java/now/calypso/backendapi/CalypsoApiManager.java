@@ -37,6 +37,7 @@ public class CalypsoApiManager {
 
     // Core Depots
     private final Depot accountDepot;
+    private final Depot applicationDepot;
     private final Depot authCodeDepot;
     private final Depot promptsDepot;
 
@@ -46,8 +47,9 @@ public class CalypsoApiManager {
 
     // Core Queries
     private final QueryTopologyClient<List<AccountWithId>> getAccountsFromAccountIds;
+    private final QueryTopologyClient<Application> getApplicationFromClientId;
     private final QueryTopologyClient<PromptState> getPromptsStateFromAccountId;
-    private final QueryTopologyClient<Signals> getSignalsFromAccountId;
+    
 
     // Matches Depots
     private final Depot signalsDepot;
@@ -58,6 +60,7 @@ public class CalypsoApiManager {
     // Matches Queries
     private final QueryTopologyClient<Filters> getFiltersFromAccountId;
     private final QueryTopologyClient<List<MatchCandidate>> getMatchesFromAccountId;
+    private final QueryTopologyClient<Signals> getSignalsFromAccountId;
     private final QueryTopologyClient<AgentSession> getAgentSessionFromAccountId;
 
     // Agent Depots
@@ -69,6 +72,7 @@ public class CalypsoApiManager {
 
         // Core Depots
         accountDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*accountDepot");
+        applicationDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*applicationDepot");
         authCodeDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*authCodeDepot");
         promptsDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*promptsDepot");
 
@@ -78,6 +82,7 @@ public class CalypsoApiManager {
 
         // Core Queries
         getAccountsFromAccountIds = cluster.clusterQuery(CORE_MODULE_NAME, "getAccountsFromAccountIds");
+         getApplicationFromClientId = cluster.clusterQuery(CORE_MODULE_NAME, "getApplicationFromClientId");
         getPromptsStateFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getPromptsStateFromAccountId");
 
         // Matches Depots
@@ -93,6 +98,27 @@ public class CalypsoApiManager {
         getSignalsFromAccountId = cluster.clusterQuery(MATCHES_MODULE_NAME, "getSignalsFromAccountId");
         getAgentSessionFromAccountId = cluster.clusterQuery(AGENT_MODULE_NAME, "getAgentSessionFromAccountId");
 
+    }
+
+    public CompletableFuture<Application> postApplication(PostApplication params) {
+        Application newApp = new Application(
+                CalypsoHelpers.randomString(16), // client_id
+                CalypsoHelpers.generateSecureRandomString(32), // client_secret
+                params.client_name,
+                params.redirect_uris,
+                params.scopes);
+
+        return applicationDepot
+                .appendAsync(newApp)
+                .thenApply(v -> newApp);
+    }
+
+    public CompletableFuture<Application> getApplication(String clientId) {
+        return getApplicationFromClientId.invokeAsync(clientId);
+    }
+
+    public CompletableFuture<Boolean> postRemoveAuthCode(String code) {
+        return authCodeDepot.appendAsync(new RemoveAuthCode(code)).thenApply(res -> true);
     }
 
     public CompletableFuture<Boolean> postAccount(PostAccount params) {

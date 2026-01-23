@@ -6,22 +6,15 @@
  */
 package now.calypso.backend.data;
 
-@SuppressWarnings({ "cast", "rawtypes", "serial", "unchecked", "unused" })
-public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, AgentMessage._Fields>, java.io.Serializable,
-    Cloneable, Comparable<AgentMessage> {
-  private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct(
-      "AgentMessage");
+@SuppressWarnings({"cast", "rawtypes", "serial", "unchecked", "unused"})
+public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, AgentMessage._Fields>, java.io.Serializable, Cloneable, Comparable<AgentMessage> {
+  private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("AgentMessage");
 
-  private static final org.apache.thrift.protocol.TField MESSAGE_ID_FIELD_DESC = new org.apache.thrift.protocol.TField(
-      "messageId", org.apache.thrift.protocol.TType.STRING, (short) 1);
-  private static final org.apache.thrift.protocol.TField SESSION_ID_FIELD_DESC = new org.apache.thrift.protocol.TField(
-      "sessionId", org.apache.thrift.protocol.TType.STRING, (short) 2);
-  private static final org.apache.thrift.protocol.TField SENDER_FIELD_DESC = new org.apache.thrift.protocol.TField(
-      "sender", org.apache.thrift.protocol.TType.I32, (short) 3);
-  private static final org.apache.thrift.protocol.TField TEXT_FIELD_DESC = new org.apache.thrift.protocol.TField("text",
-      org.apache.thrift.protocol.TType.STRING, (short) 4);
-  private static final org.apache.thrift.protocol.TField TIMESTAMP_FIELD_DESC = new org.apache.thrift.protocol.TField(
-      "timestamp", org.apache.thrift.protocol.TType.I64, (short) 5);
+  private static final org.apache.thrift.protocol.TField MESSAGE_ID_FIELD_DESC = new org.apache.thrift.protocol.TField("messageId", org.apache.thrift.protocol.TType.STRING, (short)1);
+  private static final org.apache.thrift.protocol.TField SESSION_ID_FIELD_DESC = new org.apache.thrift.protocol.TField("sessionId", org.apache.thrift.protocol.TType.STRING, (short)2);
+  private static final org.apache.thrift.protocol.TField SENDER_FIELD_DESC = new org.apache.thrift.protocol.TField("sender", org.apache.thrift.protocol.TType.I32, (short)3);
+  private static final org.apache.thrift.protocol.TField TEXT_FIELD_DESC = new org.apache.thrift.protocol.TField("text", org.apache.thrift.protocol.TType.STRING, (short)4);
+  private static final org.apache.thrift.protocol.TField TIMESTAMP_FIELD_DESC = new org.apache.thrift.protocol.TField("timestamp", org.apache.thrift.protocol.TType.I64, (short)5);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new AgentMessageStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new AgentMessageTupleSchemeFactory();
@@ -36,20 +29,17 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
   public @org.apache.thrift.annotation.Nullable java.lang.String text; // required
   public long timestamp; // required
 
-  /**
-   * The set of fields this struct contains, along with convenience methods for
-   * finding and manipulating them.
-   */
+  /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
-    MESSAGE_ID((short) 1, "messageId"),
-    SESSION_ID((short) 2, "sessionId"),
+    MESSAGE_ID((short)1, "messageId"),
+    SESSION_ID((short)2, "sessionId"),
     /**
      * 
      * @see AgentMessageSender
      */
-    SENDER((short) 3, "sender"),
-    TEXT((short) 4, "text"),
-    TIMESTAMP((short) 5, "timestamp");
+    SENDER((short)3, "sender"),
+    TEXT((short)4, "text"),
+    TIMESTAMP((short)5, "timestamp");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -64,7 +54,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
      */
     @org.apache.thrift.annotation.Nullable
     public static _Fields findByThriftId(int fieldId) {
-      switch (fieldId) {
+      switch(fieldId) {
         case 1: // MESSAGE_ID
           return MESSAGE_ID;
         case 2: // SESSION_ID
@@ -86,8 +76,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
      */
     public static _Fields findByThriftIdOrThrow(int fieldId) {
       _Fields fields = findByThriftId(fieldId);
-      if (fields == null)
-        throw new java.lang.IllegalArgumentException("Field " + fieldId + " doesn't exist!");
+      if (fields == null) throw new java.lang.IllegalArgumentException("Field " + fieldId + " doesn't exist!");
       return fields;
     }
 
@@ -123,23 +112,17 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
   private byte __isset_bitfield = 0;
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
-    java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(
-        _Fields.class);
-    tmpMap.put(_Fields.MESSAGE_ID,
-        new org.apache.thrift.meta_data.FieldMetaData("messageId", org.apache.thrift.TFieldRequirementType.REQUIRED,
-            new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
-    tmpMap.put(_Fields.SESSION_ID,
-        new org.apache.thrift.meta_data.FieldMetaData("sessionId", org.apache.thrift.TFieldRequirementType.REQUIRED,
-            new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
-    tmpMap.put(_Fields.SENDER, new org.apache.thrift.meta_data.FieldMetaData("sender",
-        org.apache.thrift.TFieldRequirementType.REQUIRED,
+    java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
+    tmpMap.put(_Fields.MESSAGE_ID, new org.apache.thrift.meta_data.FieldMetaData("messageId", org.apache.thrift.TFieldRequirementType.REQUIRED, 
+        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
+    tmpMap.put(_Fields.SESSION_ID, new org.apache.thrift.meta_data.FieldMetaData("sessionId", org.apache.thrift.TFieldRequirementType.REQUIRED, 
+        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
+    tmpMap.put(_Fields.SENDER, new org.apache.thrift.meta_data.FieldMetaData("sender", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.EnumMetaData(org.apache.thrift.protocol.TType.ENUM, AgentMessageSender.class)));
-    tmpMap.put(_Fields.TEXT,
-        new org.apache.thrift.meta_data.FieldMetaData("text", org.apache.thrift.TFieldRequirementType.REQUIRED,
-            new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
-    tmpMap.put(_Fields.TIMESTAMP,
-        new org.apache.thrift.meta_data.FieldMetaData("timestamp", org.apache.thrift.TFieldRequirementType.REQUIRED,
-            new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I64, "Timestamp")));
+    tmpMap.put(_Fields.TEXT, new org.apache.thrift.meta_data.FieldMetaData("text", org.apache.thrift.TFieldRequirementType.REQUIRED, 
+        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
+    tmpMap.put(_Fields.TIMESTAMP, new org.apache.thrift.meta_data.FieldMetaData("timestamp", org.apache.thrift.TFieldRequirementType.REQUIRED, 
+        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I64        , "Timestamp")));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(AgentMessage.class, metaDataMap);
   }
@@ -148,11 +131,12 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
   }
 
   public AgentMessage(
-      java.lang.String messageId,
-      java.lang.String sessionId,
-      AgentMessageSender sender,
-      java.lang.String text,
-      long timestamp) {
+    java.lang.String messageId,
+    java.lang.String sessionId,
+    AgentMessageSender sender,
+    java.lang.String text,
+    long timestamp)
+  {
     this();
     this.messageId = messageId;
     this.sessionId = sessionId;
@@ -211,10 +195,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
     this.messageId = null;
   }
 
-  /**
-   * Returns true if field messageId is set (has been assigned a value) and false
-   * otherwise
-   */
+  /** Returns true if field messageId is set (has been assigned a value) and false otherwise */
   public boolean isSetMessageId() {
     return this.messageId != null;
   }
@@ -239,10 +220,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
     this.sessionId = null;
   }
 
-  /**
-   * Returns true if field sessionId is set (has been assigned a value) and false
-   * otherwise
-   */
+  /** Returns true if field sessionId is set (has been assigned a value) and false otherwise */
   public boolean isSetSessionId() {
     return this.sessionId != null;
   }
@@ -275,10 +253,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
     this.sender = null;
   }
 
-  /**
-   * Returns true if field sender is set (has been assigned a value) and false
-   * otherwise
-   */
+  /** Returns true if field sender is set (has been assigned a value) and false otherwise */
   public boolean isSetSender() {
     return this.sender != null;
   }
@@ -303,10 +278,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
     this.text = null;
   }
 
-  /**
-   * Returns true if field text is set (has been assigned a value) and false
-   * otherwise
-   */
+  /** Returns true if field text is set (has been assigned a value) and false otherwise */
   public boolean isSetText() {
     return this.text != null;
   }
@@ -331,10 +303,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
     __isset_bitfield = org.apache.thrift.EncodingUtils.clearBit(__isset_bitfield, __TIMESTAMP_ISSET_ID);
   }
 
-  /**
-   * Returns true if field timestamp is set (has been assigned a value) and false
-   * otherwise
-   */
+  /** Returns true if field timestamp is set (has been assigned a value) and false otherwise */
   public boolean isSetTimestamp() {
     return org.apache.thrift.EncodingUtils.testBit(__isset_bitfield, __TIMESTAMP_ISSET_ID);
   }
@@ -346,45 +315,45 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
   @Override
   public void setFieldValue(_Fields field, @org.apache.thrift.annotation.Nullable java.lang.Object value) {
     switch (field) {
-      case MESSAGE_ID:
-        if (value == null) {
-          unsetMessageId();
-        } else {
-          setMessageId((java.lang.String) value);
-        }
-        break;
+    case MESSAGE_ID:
+      if (value == null) {
+        unsetMessageId();
+      } else {
+        setMessageId((java.lang.String)value);
+      }
+      break;
 
-      case SESSION_ID:
-        if (value == null) {
-          unsetSessionId();
-        } else {
-          setSessionId((java.lang.String) value);
-        }
-        break;
+    case SESSION_ID:
+      if (value == null) {
+        unsetSessionId();
+      } else {
+        setSessionId((java.lang.String)value);
+      }
+      break;
 
-      case SENDER:
-        if (value == null) {
-          unsetSender();
-        } else {
-          setSender((AgentMessageSender) value);
-        }
-        break;
+    case SENDER:
+      if (value == null) {
+        unsetSender();
+      } else {
+        setSender((AgentMessageSender)value);
+      }
+      break;
 
-      case TEXT:
-        if (value == null) {
-          unsetText();
-        } else {
-          setText((java.lang.String) value);
-        }
-        break;
+    case TEXT:
+      if (value == null) {
+        unsetText();
+      } else {
+        setText((java.lang.String)value);
+      }
+      break;
 
-      case TIMESTAMP:
-        if (value == null) {
-          unsetTimestamp();
-        } else {
-          setTimestamp((java.lang.Long) value);
-        }
-        break;
+    case TIMESTAMP:
+      if (value == null) {
+        unsetTimestamp();
+      } else {
+        setTimestamp((java.lang.Long)value);
+      }
+      break;
 
     }
   }
@@ -393,29 +362,26 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
   @Override
   public java.lang.Object getFieldValue(_Fields field) {
     switch (field) {
-      case MESSAGE_ID:
-        return getMessageId();
+    case MESSAGE_ID:
+      return getMessageId();
 
-      case SESSION_ID:
-        return getSessionId();
+    case SESSION_ID:
+      return getSessionId();
 
-      case SENDER:
-        return getSender();
+    case SENDER:
+      return getSender();
 
-      case TEXT:
-        return getText();
+    case TEXT:
+      return getText();
 
-      case TIMESTAMP:
-        return getTimestamp();
+    case TIMESTAMP:
+      return getTimestamp();
 
     }
     throw new java.lang.IllegalStateException();
   }
 
-  /**
-   * Returns true if field corresponding to fieldID is set (has been assigned a
-   * value) and false otherwise
-   */
+  /** Returns true if field corresponding to fieldID is set (has been assigned a value) and false otherwise */
   @Override
   public boolean isSet(_Fields field) {
     if (field == null) {
@@ -423,16 +389,16 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
     }
 
     switch (field) {
-      case MESSAGE_ID:
-        return isSetMessageId();
-      case SESSION_ID:
-        return isSetSessionId();
-      case SENDER:
-        return isSetSender();
-      case TEXT:
-        return isSetText();
-      case TIMESTAMP:
-        return isSetTimestamp();
+    case MESSAGE_ID:
+      return isSetMessageId();
+    case SESSION_ID:
+      return isSetSessionId();
+    case SENDER:
+      return isSetSender();
+    case TEXT:
+      return isSetText();
+    case TIMESTAMP:
+      return isSetTimestamp();
     }
     throw new java.lang.IllegalStateException();
   }
@@ -440,7 +406,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
   @Override
   public boolean equals(java.lang.Object that) {
     if (that instanceof AgentMessage)
-      return this.equals((AgentMessage) that);
+      return this.equals((AgentMessage)that);
     return false;
   }
 
@@ -612,8 +578,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
       sb.append(this.messageId);
     }
     first = false;
-    if (!first)
-      sb.append(", ");
+    if (!first) sb.append(", ");
     sb.append("sessionId:");
     if (this.sessionId == null) {
       sb.append("null");
@@ -621,8 +586,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
       sb.append(this.sessionId);
     }
     first = false;
-    if (!first)
-      sb.append(", ");
+    if (!first) sb.append(", ");
     sb.append("sender:");
     if (this.sender == null) {
       sb.append("null");
@@ -630,8 +594,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
       sb.append(this.sender);
     }
     first = false;
-    if (!first)
-      sb.append(", ");
+    if (!first) sb.append(", ");
     sb.append("text:");
     if (this.text == null) {
       sb.append("null");
@@ -639,8 +602,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
       sb.append(this.text);
     }
     first = false;
-    if (!first)
-      sb.append(", ");
+    if (!first) sb.append(", ");
     sb.append("timestamp:");
     sb.append(this.timestamp);
     first = false;
@@ -651,23 +613,18 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
   public void validate() throws org.apache.thrift.TException {
     // check for required fields
     if (messageId == null) {
-      throw new org.apache.thrift.protocol.TProtocolException(
-          "Required field 'messageId' was not present! Struct: " + toString());
+      throw new org.apache.thrift.protocol.TProtocolException("Required field 'messageId' was not present! Struct: " + toString());
     }
     if (sessionId == null) {
-      throw new org.apache.thrift.protocol.TProtocolException(
-          "Required field 'sessionId' was not present! Struct: " + toString());
+      throw new org.apache.thrift.protocol.TProtocolException("Required field 'sessionId' was not present! Struct: " + toString());
     }
     if (sender == null) {
-      throw new org.apache.thrift.protocol.TProtocolException(
-          "Required field 'sender' was not present! Struct: " + toString());
+      throw new org.apache.thrift.protocol.TProtocolException("Required field 'sender' was not present! Struct: " + toString());
     }
     if (text == null) {
-      throw new org.apache.thrift.protocol.TProtocolException(
-          "Required field 'text' was not present! Struct: " + toString());
+      throw new org.apache.thrift.protocol.TProtocolException("Required field 'text' was not present! Struct: " + toString());
     }
-    // alas, we cannot check 'timestamp' because it's a primitive and you chose the
-    // non-beans generator.
+    // alas, we cannot check 'timestamp' because it's a primitive and you chose the non-beans generator.
     // check for sub-struct validity
   }
 
@@ -681,8 +638,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
 
   private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, java.lang.ClassNotFoundException {
     try {
-      // it doesn't seem like you should have to do this, but java serialization is
-      // wacky, and doesn't call the default constructor.
+      // it doesn't seem like you should have to do this, but java serialization is wacky, and doesn't call the default constructor.
       __isset_bitfield = 0;
       read(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(in)));
     } catch (org.apache.thrift.TException te) {
@@ -700,13 +656,13 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
   private static class AgentMessageStandardScheme extends org.apache.thrift.scheme.StandardScheme<AgentMessage> {
 
     @Override
-    public void read(org.apache.thrift.protocol.TProtocol iprot, AgentMessage struct)
-        throws org.apache.thrift.TException {
+    public void read(org.apache.thrift.protocol.TProtocol iprot, AgentMessage struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TField schemeField;
       iprot.readStructBegin();
-      while (true) {
+      while (true)
+      {
         schemeField = iprot.readFieldBegin();
-        if (schemeField.type == org.apache.thrift.protocol.TType.STOP) {
+        if (schemeField.type == org.apache.thrift.protocol.TType.STOP) { 
           break;
         }
         switch (schemeField.id) {
@@ -714,7 +670,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
             if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
               struct.messageId = iprot.readString();
               struct.setMessageIdIsSet(true);
-            } else {
+            } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
@@ -722,7 +678,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
             if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
               struct.sessionId = iprot.readString();
               struct.setSessionIdIsSet(true);
-            } else {
+            } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
@@ -730,7 +686,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
             if (schemeField.type == org.apache.thrift.protocol.TType.I32) {
               struct.sender = now.calypso.backend.data.AgentMessageSender.findByValue(iprot.readI32());
               struct.setSenderIsSet(true);
-            } else {
+            } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
@@ -738,7 +694,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
             if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
               struct.text = iprot.readString();
               struct.setTextIsSet(true);
-            } else {
+            } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
@@ -746,7 +702,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
             if (schemeField.type == org.apache.thrift.protocol.TType.I64) {
               struct.timestamp = iprot.readI64();
               struct.setTimestampIsSet(true);
-            } else {
+            } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
@@ -757,18 +713,15 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
       }
       iprot.readStructEnd();
 
-      // check for required fields of primitive type, which can't be checked in the
-      // validate method
+      // check for required fields of primitive type, which can't be checked in the validate method
       if (!struct.isSetTimestamp()) {
-        throw new org.apache.thrift.protocol.TProtocolException(
-            "Required field 'timestamp' was not found in serialized data! Struct: " + toString());
+        throw new org.apache.thrift.protocol.TProtocolException("Required field 'timestamp' was not found in serialized data! Struct: " + toString());
       }
       struct.validate();
     }
 
     @Override
-    public void write(org.apache.thrift.protocol.TProtocol oprot, AgentMessage struct)
-        throws org.apache.thrift.TException {
+    public void write(org.apache.thrift.protocol.TProtocol oprot, AgentMessage struct) throws org.apache.thrift.TException {
       struct.validate();
 
       oprot.writeStructBegin(STRUCT_DESC);
@@ -811,8 +764,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
   private static class AgentMessageTupleScheme extends org.apache.thrift.scheme.TupleScheme<AgentMessage> {
 
     @Override
-    public void write(org.apache.thrift.protocol.TProtocol prot, AgentMessage struct)
-        throws org.apache.thrift.TException {
+    public void write(org.apache.thrift.protocol.TProtocol prot, AgentMessage struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol oprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       oprot.writeString(struct.messageId);
       oprot.writeString(struct.sessionId);
@@ -822,8 +774,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
     }
 
     @Override
-    public void read(org.apache.thrift.protocol.TProtocol prot, AgentMessage struct)
-        throws org.apache.thrift.TException {
+    public void read(org.apache.thrift.protocol.TProtocol prot, AgentMessage struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       struct.messageId = iprot.readString();
       struct.setMessageIdIsSet(true);
@@ -839,7 +790,7 @@ public class AgentMessage implements org.apache.thrift.TBase<AgentMessage, Agent
   }
 
   private static <S extends org.apache.thrift.scheme.IScheme> S scheme(org.apache.thrift.protocol.TProtocol proto) {
-    return (org.apache.thrift.scheme.StandardScheme.class.equals(proto.getScheme()) ? STANDARD_SCHEME_FACTORY
-        : TUPLE_SCHEME_FACTORY).getScheme();
+    return (org.apache.thrift.scheme.StandardScheme.class.equals(proto.getScheme()) ? STANDARD_SCHEME_FACTORY : TUPLE_SCHEME_FACTORY).getScheme();
   }
 }
+

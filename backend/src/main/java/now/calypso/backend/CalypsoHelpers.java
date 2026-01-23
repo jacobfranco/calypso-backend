@@ -14,11 +14,17 @@ import com.rpl.rama.*;
 import now.calypso.backend.data.*;
 import now.calypso.backend.ops.ExtractField;
 
+import java.security.SecureRandom;
+
 public class CalypsoHelpers {
 
     public static final ConcurrentHashMap<Class, Map<String, TFieldIdEnum>> TFIELD_CACHE = new ConcurrentHashMap<>();
 
     private static final Pattern WS = Pattern.compile("\\s+");
+
+     private static final String ALPHA_NUMERIC_STRING = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz";
+  private static final SecureRandom secureRandom = new SecureRandom();
+  private static final Random random = new Random();
 
     public static class ExtractCode extends ExtractField {
         public ExtractCode() {
@@ -37,6 +43,12 @@ public class CalypsoHelpers {
             super("accountId");
         }
     }
+
+    public static class ExtractClientId extends ExtractField {
+    public ExtractClientId() {
+      super("client_id");
+    }
+  }
 
     public static Block extractFields(Object from, String... fieldVars) {
         Block.Impl ret = Block.create();
@@ -597,4 +609,22 @@ public class CalypsoHelpers {
             return -1.0;
         return 100.0;
     }
+
+    public static String generateSecureRandomString(int length) {
+    StringBuilder builder = new StringBuilder(length);
+    for (int i = 0; i < length; i++) {
+      int index = secureRandom.nextInt(ALPHA_NUMERIC_STRING.length());
+      builder.append(ALPHA_NUMERIC_STRING.charAt(index));
+    }
+    return builder.toString();
+  }
+
+  public static String randomString(int length) {
+    StringBuilder builder = new StringBuilder(length);
+    for (int i = 0; i < length; i++) {
+      int index = random.nextInt(ALPHA_NUMERIC_STRING.length());
+      builder.append(ALPHA_NUMERIC_STRING.charAt(index));
+    }
+    return builder.toString();
+  }
 }

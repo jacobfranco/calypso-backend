@@ -22,6 +22,10 @@ public class CalypsoApiHelpers {
         return PASSWORD_ENCODER.encode(password);
     }
 
+    public static boolean matchesPassword(String password, String passwordHash) {
+        return PASSWORD_ENCODER.matches(password, passwordHash);
+    }
+
     private static S3AsyncClient S3_CLIENT = null;
 
     public static void initS3Client() {
