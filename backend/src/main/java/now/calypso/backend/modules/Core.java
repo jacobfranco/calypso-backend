@@ -22,21 +22,21 @@ public class Core implements RamaModule {
             StreamTopology stream = topologies.stream("accounts");
             ModuleUniqueIdPState accountIdGen = new ModuleUniqueIdPState("$$accountIdGen");
             accountIdGen.declarePState(stream);
-            stream.pstate("$$emailToUser", PState.mapSchema(String.class,
+            stream.pstate("$$phoneToUser", PState.mapSchema(String.class,
                         PState.fixedKeysSchema("accountId", Long.class,
                                     "uuid", String.class)));
             stream.pstate("$$accountIdToAccount", PState.mapSchema(Long.class, Account.class));
 
             stream.source("*accountDepot").out("*data")
-                        .macro(extractFields("*data", "*email", "*uuid"))
-                        .localSelect("$$emailToUser", Path.key("*email")).out("*currInfo")
+                        .macro(extractFields("*data", "*phone_number", "*uuid"))
+                        .localSelect("$$phoneToUser", Path.key("*phone_number")).out("*currInfo")
                         .each(Ops.GET, "*currInfo", "uuid").out("*currUUID")
                         // Accept either first write or an idempotent retry from the same UUID
                         .ifTrue(new Expr(Ops.OR, new Expr(Ops.IS_NULL, "*currInfo"),
                                     new Expr(Ops.EQUAL, "*uuid", "*currUUID")),
                                     Block.macro(accountIdGen.genId("*accountId"))
-                                                .localTransform("$$emailToUser",
-                                                            Path.key("*email").multiPath(
+                                                .localTransform("$$phoneToUser",
+                                                            Path.key("*phone_number").multiPath(
                                                                         Path.key("accountId").termVal("*accountId"),
                                                                         Path.key("uuid").termVal("*uuid")))
                                                 .hashPartition("*accountId")
@@ -127,11 +127,12 @@ public class Core implements RamaModule {
                         .hashPartition("*accountId")
                         .localSelect("$$accountIdToPrompts", Path.key("*accountId")).out("*prompts")
                         .originPartition();
+
       }
 
       @Override
       public void define(Setup setup, Topologies topologies) {
-            setup.declareDepot("*accountDepot", Depot.hashBy(CalypsoHelpers.ExtractEmail.class));
+            setup.declareDepot("*accountDepot", Depot.hashBy(CalypsoHelpers.ExtractPhoneNumber.class));
             setup.declareDepot("*accountWithIdDepot", Depot.disallow());
             setup.declareDepot("*applicationDepot", Depot.hashBy(CalypsoHelpers.ExtractClientId.class));
             setup.declareDepot("*authCodeDepot", Depot.hashBy(ExtractCode.class));

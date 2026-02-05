@@ -2,6 +2,8 @@ package now.calypso.backendapi;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.time.LocalDate;
+import java.time.Period;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
@@ -10,6 +12,8 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebSession;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import now.calypso.backend.CalypsoHelpers;
 import now.calypso.backend.data.*;
@@ -19,10 +23,11 @@ import reactor.core.publisher.Mono;
 
 @RestController
 public class CalypsoApiController {
+    private static final Logger LOG = LoggerFactory.getLogger(CalypsoApiController.class);
 
-    private static final java.util.regex.Pattern EMAIL_PATTERN = java.util.regex.Pattern
-            .compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
-    private static final int MIN_PASSWORD_LENGTH = 8;
+    private static final java.util.regex.Pattern PHONE_PATTERN = java.util.regex.Pattern
+            .compile("^\\+[1-9][0-9]{7,14}$");
+    private static final int MIN_AGE_YEARS = 18;
 
     public static CalypsoApiManager manager;
 
@@ -73,20 +78,7 @@ public class CalypsoApiController {
     public Mono<GetToken> postOauthToken(WebSession session, @RequestBody(required = true) PostToken params) {
         // Handle the "password" grant type
         if ("password".equals(params.grant_type)) {
-            return Mono.fromFuture(manager.getAccountId(params.username))
-                    .switchIfEmpty(
-                            Mono.error(new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Username not found")))
-                    // Attempt to retrieve the account using the account ID
-                    .flatMap(accountId -> Mono.fromFuture(manager.getAccountWithId(accountId)))
-                    .switchIfEmpty(
-                            Mono.error(new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Username not found")))
-                    // Validate the password and log in the user
-                    .flatMap(accountWithId -> {
-                        if (!CalypsoApiHelpers.matchesPassword(params.password, accountWithId.account.pwdHash)) {
-                            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Password does not match");
-                        }
-                        return this.loginWithAccount(session, params.scope, accountWithId);
-                    });
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Password grant not supported");
         } else if ("client_credentials".equals(params.grant_type)) {
             // Handle the "client_credentials" grant type
             return Mono.just(new GetToken(session.getId(), params.scope));
@@ -187,60 +179,263 @@ public class CalypsoApiController {
                         }
                     }));
         }
-        // 5) Validate the email looks sane-ish
-        else if (params.email == null || !EMAIL_PATTERN.matcher(params.email).matches()) {
-            response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
-            return Mono.just(new GetErrorDetails(
-                    "Email is invalid",
-                    new HashMap<String, GetErrorDetails.Error>() {
-                        {
-                            put("email", new GetErrorDetails.Error(
-                                    "ERR_INVALID",
-                                    "Email must be a valid address"));
-                        }
-                    }));
-        }
-        // 6) Password guardrail
-        else if (params.password == null || params.password.length() < MIN_PASSWORD_LENGTH) {
-            response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
-            return Mono.just(new GetErrorDetails(
-                    "Password too short",
-                    new HashMap<String, GetErrorDetails.Error>() {
-                        {
-                            put("password", new GetErrorDetails.Error(
-                                    "ERR_INVALID",
-                                    "Password must be at least " + MIN_PASSWORD_LENGTH + " characters"));
-                        }
-                    }));
+        // 5) Phone + birthday validation
+        else {
+            if (params.phone_number == null || params.phone_number.trim().isEmpty()) {
+                response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+                return Mono.just(new GetErrorDetails(
+                        "Phone number is required",
+                        new HashMap<String, GetErrorDetails.Error>() {
+                            {
+                                put("phone_number", new GetErrorDetails.Error(
+                                        "ERR_REQUIRED",
+                                        "Phone number is required"));
+                            }
+                        }));
+            }
+            String phoneNumber = normalizePhoneNumber(params.phone_number);
+            if (phoneNumber == null || !PHONE_PATTERN.matcher(phoneNumber).matches()) {
+                response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+                return Mono.just(new GetErrorDetails(
+                        "Phone number is invalid",
+                        new HashMap<String, GetErrorDetails.Error>() {
+                            {
+                                put("phone_number", new GetErrorDetails.Error(
+                                        "ERR_INVALID",
+                                        "Phone number must be valid"));
+                            }
+                        }));
+            }
+            if (params.birthday == null || params.birthday.trim().isEmpty()) {
+                response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+                return Mono.just(new GetErrorDetails(
+                        "Birthday is required",
+                        new HashMap<String, GetErrorDetails.Error>() {
+                            {
+                                put("birthday", new GetErrorDetails.Error(
+                                        "ERR_REQUIRED",
+                                        "Birthday is required"));
+                            }
+                        }));
+            }
+            LocalDate birthDate;
+            try {
+                birthDate = LocalDate.parse(params.birthday.trim());
+            } catch (Exception ex) {
+                response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+                return Mono.just(new GetErrorDetails(
+                        "Birthday is invalid",
+                        new HashMap<String, GetErrorDetails.Error>() {
+                            {
+                                put("birthday", new GetErrorDetails.Error(
+                                        "ERR_INVALID",
+                                        "Birthday must be YYYY-MM-DD"));
+                            }
+                        }));
+            }
+            int age = Period.between(birthDate, LocalDate.now()).getYears();
+            if (age < MIN_AGE_YEARS) {
+                response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+                return Mono.just(new GetErrorDetails(
+                        "Must be 18 or older",
+                        new HashMap<String, GetErrorDetails.Error>() {
+                            {
+                                put("birthday", new GetErrorDetails.Error(
+                                        "ERR_INVALID",
+                                        "You need to be at least 18 to sign up"));
+                            }
+                        }));
+            }
+            if (params.verification_token == null || params.verification_token.trim().isEmpty()) {
+                response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+                return Mono.just(new GetErrorDetails(
+                        "Verification required",
+                        new HashMap<String, GetErrorDetails.Error>() {
+                            {
+                                put("verification_token", new GetErrorDetails.Error(
+                                        "ERR_REQUIRED",
+                                        "Phone verification required"));
+                            }
+                        }));
+            }
         }
 
-        // 7) Create the account
-        return Mono.fromFuture(manager.postAccount(params))
-                .flatMap(success -> {
-                    if (success) {
-                        // lookup by email instead of username
-                        return Mono.fromFuture(manager.getAccountId(params.email))
-                                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND)))
-                                .flatMap(accountId -> Mono.fromFuture(manager.getAccountWithId(accountId)))
-                                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND)))
-                                .flatMap(accountWithId -> this.loginWithAccount(
-                                        session,
-                                        "read write follow push",
-                                        accountWithId));
-                    } else {
-                        // on failure, treat it as email conflict (name no longer needs to be unique)
-                        response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
-                        return Mono.just(new GetErrorDetails(
-                                "Validation failed",
-                                new HashMap<String, GetErrorDetails.Error>() {
-                                    {
-                                        put("email", new GetErrorDetails.Error(
-                                                "ERR_TAKEN",
-                                                "Email already in use"));
-                                    }
-                                }));
+        String normalizedPhone = normalizePhoneNumber(params.phone_number);
+        Mono<Boolean> verification = Mono.fromFuture(manager.consumePhoneVerification(normalizedPhone,
+                params.verification_token.trim()));
+
+        return verification.flatMap(valid -> {
+            if (!valid) {
+                response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+                return Mono.just(new GetErrorDetails(
+                        "Verification required",
+                        new HashMap<String, GetErrorDetails.Error>() {
+                            {
+                                put("verification_token", new GetErrorDetails.Error(
+                                        "ERR_INVALID",
+                                        "Phone verification required"));
+                            }
+                        }));
+            }
+
+            PostAccount normalized = new PostAccount(
+                    params.name,
+                    normalizedPhone,
+                    params.birthday,
+                    params.verification_token,
+                    params.agreement,
+                    params.locale);
+            return Mono.fromFuture(manager.postAccount(normalized))
+                    .flatMap(success -> {
+                        if (success) {
+                            return Mono.fromFuture(manager.getAccountId(normalizedPhone))
+                                    .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND)))
+                                    .flatMap(accountId -> Mono.fromFuture(manager.getAccountWithId(accountId)))
+                                    .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND)))
+                                    .flatMap(accountWithId -> this.loginWithAccount(
+                                            session,
+                                            "read write follow push",
+                                            accountWithId));
+                        } else {
+                            // on failure, treat it as phone conflict (name no longer needs to be unique)
+                            response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+                            return Mono.just(new GetErrorDetails(
+                                    "Validation failed",
+                                    new HashMap<String, GetErrorDetails.Error>() {
+                                        {
+                                            put("phone_number", new GetErrorDetails.Error(
+                                                    "ERR_TAKEN",
+                                                    "Phone already in use"));
+                                        }
+                                    }));
+                        }
+                    });
+        });
+    }
+
+    @PostMapping("/api/accounts/phone/request")
+    public Mono<Object> requestPhoneCode(ServerHttpResponse response, @RequestBody PostPhoneRequest params) {
+        if (params.phone_number == null || params.phone_number.trim().isEmpty()) {
+            response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+            return Mono.just(new GetErrorDetails(
+                    "Phone number is required",
+                    new HashMap<String, GetErrorDetails.Error>() {
+                        {
+                            put("phone_number", new GetErrorDetails.Error(
+                                    "ERR_REQUIRED",
+                                    "Phone number is required"));
+                        }
+                    }));
+        }
+        String phoneNumber = normalizePhoneNumber(params.phone_number);
+        LOG.warn("Phone code request received for {}", phoneNumber);
+        if (phoneNumber == null || !PHONE_PATTERN.matcher(phoneNumber).matches()) {
+            response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+            return Mono.just(new GetErrorDetails(
+                    "Phone number is invalid",
+                    new HashMap<String, GetErrorDetails.Error>() {
+                        {
+                            put("phone_number", new GetErrorDetails.Error(
+                                    "ERR_INVALID",
+                                    "Phone number must be valid"));
+                        }
+                    }));
+        }
+        return Mono.fromFuture(manager.requestPhoneCode(phoneNumber))
+                .map(code -> {
+                    HashMap<String, Object> payload = new HashMap<>();
+                    String fallbackValue = System.getenv("CALYPSO_SMS_FALLBACK");
+                    if (fallbackValue != null && fallbackValue.trim().equalsIgnoreCase("true")) {
+                        payload.put("code", code);
+                        payload.put("fallback", true);
                     }
+                    return (Object) payload;
+                })
+                .onErrorResume(IllegalStateException.class, err -> {
+                    response.setStatusCode(HttpStatus.SERVICE_UNAVAILABLE);
+                    return Mono.just(new GetErrorDetails(
+                            "SMS provider unavailable",
+                            new HashMap<String, GetErrorDetails.Error>() {
+                                {
+                                    put("sms", new GetErrorDetails.Error(
+                                            "ERR_UNAVAILABLE",
+                                            err.getMessage()));
+                                }
+                            }));
                 });
+    }
+
+    @PostMapping("/api/accounts/phone/verify")
+    public Mono<Object> verifyPhoneCode(ServerHttpResponse response, @RequestBody PostPhoneVerify params) {
+        if (params.phone_number == null || params.phone_number.trim().isEmpty()) {
+            response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+            return Mono.just(new GetErrorDetails(
+                    "Phone number is required",
+                    new HashMap<String, GetErrorDetails.Error>() {
+                        {
+                            put("phone_number", new GetErrorDetails.Error(
+                                    "ERR_REQUIRED",
+                                    "Phone number is required"));
+                        }
+                    }));
+        }
+        if (params.code == null || params.code.trim().isEmpty()) {
+            response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+            return Mono.just(new GetErrorDetails(
+                    "Verification code is required",
+                    new HashMap<String, GetErrorDetails.Error>() {
+                        {
+                            put("code", new GetErrorDetails.Error(
+                                    "ERR_REQUIRED",
+                                    "Verification code is required"));
+                        }
+                    }));
+        }
+        String phoneNumber = normalizePhoneNumber(params.phone_number);
+        if (phoneNumber == null || !PHONE_PATTERN.matcher(phoneNumber).matches()) {
+            response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+            return Mono.just(new GetErrorDetails(
+                    "Phone number is invalid",
+                    new HashMap<String, GetErrorDetails.Error>() {
+                        {
+                            put("phone_number", new GetErrorDetails.Error(
+                                    "ERR_INVALID",
+                                    "Phone number must be valid"));
+                        }
+                    }));
+        }
+        String code = params.code.trim();
+        return Mono.fromFuture(manager.verifyPhoneCode(phoneNumber, code))
+                .map(result -> (Object) new GetPhoneVerification(result))
+                .onErrorResume(IllegalArgumentException.class, err -> {
+                    response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
+                    return Mono.just(new GetErrorDetails(
+                            err.getMessage(),
+                            new HashMap<String, GetErrorDetails.Error>() {
+                                {
+                                    put("code", new GetErrorDetails.Error(
+                                            "ERR_INVALID",
+                                            err.getMessage()));
+                                }
+                            }));
+                });
+    }
+
+    private static String normalizePhoneNumber(String raw) {
+        if (raw == null) return null;
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) return null;
+        if (trimmed.startsWith("+")) {
+            return trimmed.replaceAll("[^+0-9]", "");
+        }
+        String digits = trimmed.replaceAll("[^0-9]", "");
+        if (digits.length() == 10) {
+            return "+1" + digits;
+        }
+        if (digits.length() == 11 && digits.startsWith("1")) {
+            return "+" + digits;
+        }
+        return "+" + digits;
     }
 
     @GetMapping("/api/accounts/{id}")

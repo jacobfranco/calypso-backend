@@ -11,39 +11,39 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
   private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("Account");
 
   private static final org.apache.thrift.protocol.TField NAME_FIELD_DESC = new org.apache.thrift.protocol.TField("name", org.apache.thrift.protocol.TType.STRING, (short)1);
-  private static final org.apache.thrift.protocol.TField EMAIL_FIELD_DESC = new org.apache.thrift.protocol.TField("email", org.apache.thrift.protocol.TType.STRING, (short)2);
-  private static final org.apache.thrift.protocol.TField PWD_HASH_FIELD_DESC = new org.apache.thrift.protocol.TField("pwdHash", org.apache.thrift.protocol.TType.STRING, (short)3);
-  private static final org.apache.thrift.protocol.TField LOCALE_FIELD_DESC = new org.apache.thrift.protocol.TField("locale", org.apache.thrift.protocol.TType.STRING, (short)4);
-  private static final org.apache.thrift.protocol.TField UUID_FIELD_DESC = new org.apache.thrift.protocol.TField("uuid", org.apache.thrift.protocol.TType.STRING, (short)5);
-  private static final org.apache.thrift.protocol.TField PUBLIC_KEY_FIELD_DESC = new org.apache.thrift.protocol.TField("publicKey", org.apache.thrift.protocol.TType.STRING, (short)6);
-  private static final org.apache.thrift.protocol.TField TIMESTAMP_FIELD_DESC = new org.apache.thrift.protocol.TField("timestamp", org.apache.thrift.protocol.TType.I64, (short)7);
-  private static final org.apache.thrift.protocol.TField ADMIN_FIELD_DESC = new org.apache.thrift.protocol.TField("admin", org.apache.thrift.protocol.TType.BOOL, (short)8);
-  private static final org.apache.thrift.protocol.TField AVATAR_FIELD_DESC = new org.apache.thrift.protocol.TField("avatar", org.apache.thrift.protocol.TType.STRUCT, (short)9);
+  private static final org.apache.thrift.protocol.TField PHONE_NUMBER_FIELD_DESC = new org.apache.thrift.protocol.TField("phone_number", org.apache.thrift.protocol.TType.STRING, (short)2);
+  private static final org.apache.thrift.protocol.TField LOCALE_FIELD_DESC = new org.apache.thrift.protocol.TField("locale", org.apache.thrift.protocol.TType.STRING, (short)3);
+  private static final org.apache.thrift.protocol.TField UUID_FIELD_DESC = new org.apache.thrift.protocol.TField("uuid", org.apache.thrift.protocol.TType.STRING, (short)4);
+  private static final org.apache.thrift.protocol.TField PUBLIC_KEY_FIELD_DESC = new org.apache.thrift.protocol.TField("publicKey", org.apache.thrift.protocol.TType.STRING, (short)5);
+  private static final org.apache.thrift.protocol.TField TIMESTAMP_FIELD_DESC = new org.apache.thrift.protocol.TField("timestamp", org.apache.thrift.protocol.TType.I64, (short)6);
+  private static final org.apache.thrift.protocol.TField ADMIN_FIELD_DESC = new org.apache.thrift.protocol.TField("admin", org.apache.thrift.protocol.TType.BOOL, (short)7);
+  private static final org.apache.thrift.protocol.TField AVATAR_FIELD_DESC = new org.apache.thrift.protocol.TField("avatar", org.apache.thrift.protocol.TType.STRUCT, (short)8);
+  private static final org.apache.thrift.protocol.TField BIRTHDAY_FIELD_DESC = new org.apache.thrift.protocol.TField("birthday", org.apache.thrift.protocol.TType.STRING, (short)9);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new AccountStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new AccountTupleSchemeFactory();
 
   public @org.apache.thrift.annotation.Nullable java.lang.String name; // required
-  public @org.apache.thrift.annotation.Nullable java.lang.String email; // required
-  public @org.apache.thrift.annotation.Nullable java.lang.String pwdHash; // required
+  public @org.apache.thrift.annotation.Nullable java.lang.String phone_number; // required
   public @org.apache.thrift.annotation.Nullable java.lang.String locale; // required
   public @org.apache.thrift.annotation.Nullable java.lang.String uuid; // required
   public @org.apache.thrift.annotation.Nullable java.lang.String publicKey; // required
   public long timestamp; // required
   public boolean admin; // required
   public @org.apache.thrift.annotation.Nullable AttachmentWithId avatar; // optional
+  public @org.apache.thrift.annotation.Nullable java.lang.String birthday; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
     NAME((short)1, "name"),
-    EMAIL((short)2, "email"),
-    PWD_HASH((short)3, "pwdHash"),
-    LOCALE((short)4, "locale"),
-    UUID((short)5, "uuid"),
-    PUBLIC_KEY((short)6, "publicKey"),
-    TIMESTAMP((short)7, "timestamp"),
-    ADMIN((short)8, "admin"),
-    AVATAR((short)9, "avatar");
+    PHONE_NUMBER((short)2, "phone_number"),
+    LOCALE((short)3, "locale"),
+    UUID((short)4, "uuid"),
+    PUBLIC_KEY((short)5, "publicKey"),
+    TIMESTAMP((short)6, "timestamp"),
+    ADMIN((short)7, "admin"),
+    AVATAR((short)8, "avatar"),
+    BIRTHDAY((short)9, "birthday");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -61,22 +61,22 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       switch(fieldId) {
         case 1: // NAME
           return NAME;
-        case 2: // EMAIL
-          return EMAIL;
-        case 3: // PWD_HASH
-          return PWD_HASH;
-        case 4: // LOCALE
+        case 2: // PHONE_NUMBER
+          return PHONE_NUMBER;
+        case 3: // LOCALE
           return LOCALE;
-        case 5: // UUID
+        case 4: // UUID
           return UUID;
-        case 6: // PUBLIC_KEY
+        case 5: // PUBLIC_KEY
           return PUBLIC_KEY;
-        case 7: // TIMESTAMP
+        case 6: // TIMESTAMP
           return TIMESTAMP;
-        case 8: // ADMIN
+        case 7: // ADMIN
           return ADMIN;
-        case 9: // AVATAR
+        case 8: // AVATAR
           return AVATAR;
+        case 9: // BIRTHDAY
+          return BIRTHDAY;
         default:
           return null;
       }
@@ -123,15 +123,13 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
   private static final int __TIMESTAMP_ISSET_ID = 0;
   private static final int __ADMIN_ISSET_ID = 1;
   private byte __isset_bitfield = 0;
-  private static final _Fields[] optionals = {_Fields.AVATAR};
+  private static final _Fields[] optionals = {_Fields.AVATAR,_Fields.BIRTHDAY};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
     tmpMap.put(_Fields.NAME, new org.apache.thrift.meta_data.FieldMetaData("name", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
-    tmpMap.put(_Fields.EMAIL, new org.apache.thrift.meta_data.FieldMetaData("email", org.apache.thrift.TFieldRequirementType.REQUIRED, 
-        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
-    tmpMap.put(_Fields.PWD_HASH, new org.apache.thrift.meta_data.FieldMetaData("pwdHash", org.apache.thrift.TFieldRequirementType.REQUIRED, 
+    tmpMap.put(_Fields.PHONE_NUMBER, new org.apache.thrift.meta_data.FieldMetaData("phone_number", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
     tmpMap.put(_Fields.LOCALE, new org.apache.thrift.meta_data.FieldMetaData("locale", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
@@ -145,6 +143,8 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.BOOL)));
     tmpMap.put(_Fields.AVATAR, new org.apache.thrift.meta_data.FieldMetaData("avatar", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, AttachmentWithId.class)));
+    tmpMap.put(_Fields.BIRTHDAY, new org.apache.thrift.meta_data.FieldMetaData("birthday", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(Account.class, metaDataMap);
   }
@@ -154,8 +154,7 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
 
   public Account(
     java.lang.String name,
-    java.lang.String email,
-    java.lang.String pwdHash,
+    java.lang.String phone_number,
     java.lang.String locale,
     java.lang.String uuid,
     java.lang.String publicKey,
@@ -164,8 +163,7 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
   {
     this();
     this.name = name;
-    this.email = email;
-    this.pwdHash = pwdHash;
+    this.phone_number = phone_number;
     this.locale = locale;
     this.uuid = uuid;
     this.publicKey = publicKey;
@@ -183,11 +181,8 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     if (other.isSetName()) {
       this.name = other.name;
     }
-    if (other.isSetEmail()) {
-      this.email = other.email;
-    }
-    if (other.isSetPwdHash()) {
-      this.pwdHash = other.pwdHash;
+    if (other.isSetPhone_number()) {
+      this.phone_number = other.phone_number;
     }
     if (other.isSetLocale()) {
       this.locale = other.locale;
@@ -203,6 +198,9 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     if (other.isSetAvatar()) {
       this.avatar = new AttachmentWithId(other.avatar);
     }
+    if (other.isSetBirthday()) {
+      this.birthday = other.birthday;
+    }
   }
 
   @Override
@@ -213,8 +211,7 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
   @Override
   public void clear() {
     this.name = null;
-    this.email = null;
-    this.pwdHash = null;
+    this.phone_number = null;
     this.locale = null;
     this.uuid = null;
     this.publicKey = null;
@@ -223,6 +220,7 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     setAdminIsSet(false);
     this.admin = false;
     this.avatar = null;
+    this.birthday = null;
   }
 
   @org.apache.thrift.annotation.Nullable
@@ -251,52 +249,27 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
   }
 
   @org.apache.thrift.annotation.Nullable
-  public java.lang.String getEmail() {
-    return this.email;
+  public java.lang.String getPhone_number() {
+    return this.phone_number;
   }
 
-  public Account setEmail(@org.apache.thrift.annotation.Nullable java.lang.String email) {
-    this.email = email;
+  public Account setPhone_number(@org.apache.thrift.annotation.Nullable java.lang.String phone_number) {
+    this.phone_number = phone_number;
     return this;
   }
 
-  public void unsetEmail() {
-    this.email = null;
+  public void unsetPhone_number() {
+    this.phone_number = null;
   }
 
-  /** Returns true if field email is set (has been assigned a value) and false otherwise */
-  public boolean isSetEmail() {
-    return this.email != null;
+  /** Returns true if field phone_number is set (has been assigned a value) and false otherwise */
+  public boolean isSetPhone_number() {
+    return this.phone_number != null;
   }
 
-  public void setEmailIsSet(boolean value) {
+  public void setPhone_numberIsSet(boolean value) {
     if (!value) {
-      this.email = null;
-    }
-  }
-
-  @org.apache.thrift.annotation.Nullable
-  public java.lang.String getPwdHash() {
-    return this.pwdHash;
-  }
-
-  public Account setPwdHash(@org.apache.thrift.annotation.Nullable java.lang.String pwdHash) {
-    this.pwdHash = pwdHash;
-    return this;
-  }
-
-  public void unsetPwdHash() {
-    this.pwdHash = null;
-  }
-
-  /** Returns true if field pwdHash is set (has been assigned a value) and false otherwise */
-  public boolean isSetPwdHash() {
-    return this.pwdHash != null;
-  }
-
-  public void setPwdHashIsSet(boolean value) {
-    if (!value) {
-      this.pwdHash = null;
+      this.phone_number = null;
     }
   }
 
@@ -446,6 +419,31 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     }
   }
 
+  @org.apache.thrift.annotation.Nullable
+  public java.lang.String getBirthday() {
+    return this.birthday;
+  }
+
+  public Account setBirthday(@org.apache.thrift.annotation.Nullable java.lang.String birthday) {
+    this.birthday = birthday;
+    return this;
+  }
+
+  public void unsetBirthday() {
+    this.birthday = null;
+  }
+
+  /** Returns true if field birthday is set (has been assigned a value) and false otherwise */
+  public boolean isSetBirthday() {
+    return this.birthday != null;
+  }
+
+  public void setBirthdayIsSet(boolean value) {
+    if (!value) {
+      this.birthday = null;
+    }
+  }
+
   @Override
   public void setFieldValue(_Fields field, @org.apache.thrift.annotation.Nullable java.lang.Object value) {
     switch (field) {
@@ -457,19 +455,11 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       }
       break;
 
-    case EMAIL:
+    case PHONE_NUMBER:
       if (value == null) {
-        unsetEmail();
+        unsetPhone_number();
       } else {
-        setEmail((java.lang.String)value);
-      }
-      break;
-
-    case PWD_HASH:
-      if (value == null) {
-        unsetPwdHash();
-      } else {
-        setPwdHash((java.lang.String)value);
+        setPhone_number((java.lang.String)value);
       }
       break;
 
@@ -521,6 +511,14 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       }
       break;
 
+    case BIRTHDAY:
+      if (value == null) {
+        unsetBirthday();
+      } else {
+        setBirthday((java.lang.String)value);
+      }
+      break;
+
     }
   }
 
@@ -531,11 +529,8 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     case NAME:
       return getName();
 
-    case EMAIL:
-      return getEmail();
-
-    case PWD_HASH:
-      return getPwdHash();
+    case PHONE_NUMBER:
+      return getPhone_number();
 
     case LOCALE:
       return getLocale();
@@ -555,6 +550,9 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     case AVATAR:
       return getAvatar();
 
+    case BIRTHDAY:
+      return getBirthday();
+
     }
     throw new java.lang.IllegalStateException();
   }
@@ -569,10 +567,8 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     switch (field) {
     case NAME:
       return isSetName();
-    case EMAIL:
-      return isSetEmail();
-    case PWD_HASH:
-      return isSetPwdHash();
+    case PHONE_NUMBER:
+      return isSetPhone_number();
     case LOCALE:
       return isSetLocale();
     case UUID:
@@ -585,6 +581,8 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       return isSetAdmin();
     case AVATAR:
       return isSetAvatar();
+    case BIRTHDAY:
+      return isSetBirthday();
     }
     throw new java.lang.IllegalStateException();
   }
@@ -611,21 +609,12 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
         return false;
     }
 
-    boolean this_present_email = true && this.isSetEmail();
-    boolean that_present_email = true && that.isSetEmail();
-    if (this_present_email || that_present_email) {
-      if (!(this_present_email && that_present_email))
+    boolean this_present_phone_number = true && this.isSetPhone_number();
+    boolean that_present_phone_number = true && that.isSetPhone_number();
+    if (this_present_phone_number || that_present_phone_number) {
+      if (!(this_present_phone_number && that_present_phone_number))
         return false;
-      if (!this.email.equals(that.email))
-        return false;
-    }
-
-    boolean this_present_pwdHash = true && this.isSetPwdHash();
-    boolean that_present_pwdHash = true && that.isSetPwdHash();
-    if (this_present_pwdHash || that_present_pwdHash) {
-      if (!(this_present_pwdHash && that_present_pwdHash))
-        return false;
-      if (!this.pwdHash.equals(that.pwdHash))
+      if (!this.phone_number.equals(that.phone_number))
         return false;
     }
 
@@ -683,6 +672,15 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
         return false;
     }
 
+    boolean this_present_birthday = true && this.isSetBirthday();
+    boolean that_present_birthday = true && that.isSetBirthday();
+    if (this_present_birthday || that_present_birthday) {
+      if (!(this_present_birthday && that_present_birthday))
+        return false;
+      if (!this.birthday.equals(that.birthday))
+        return false;
+    }
+
     return true;
   }
 
@@ -694,13 +692,9 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     if (isSetName())
       hashCode = hashCode * 8191 + name.hashCode();
 
-    hashCode = hashCode * 8191 + ((isSetEmail()) ? 131071 : 524287);
-    if (isSetEmail())
-      hashCode = hashCode * 8191 + email.hashCode();
-
-    hashCode = hashCode * 8191 + ((isSetPwdHash()) ? 131071 : 524287);
-    if (isSetPwdHash())
-      hashCode = hashCode * 8191 + pwdHash.hashCode();
+    hashCode = hashCode * 8191 + ((isSetPhone_number()) ? 131071 : 524287);
+    if (isSetPhone_number())
+      hashCode = hashCode * 8191 + phone_number.hashCode();
 
     hashCode = hashCode * 8191 + ((isSetLocale()) ? 131071 : 524287);
     if (isSetLocale())
@@ -721,6 +715,10 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     hashCode = hashCode * 8191 + ((isSetAvatar()) ? 131071 : 524287);
     if (isSetAvatar())
       hashCode = hashCode * 8191 + avatar.hashCode();
+
+    hashCode = hashCode * 8191 + ((isSetBirthday()) ? 131071 : 524287);
+    if (isSetBirthday())
+      hashCode = hashCode * 8191 + birthday.hashCode();
 
     return hashCode;
   }
@@ -743,22 +741,12 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
         return lastComparison;
       }
     }
-    lastComparison = java.lang.Boolean.compare(isSetEmail(), other.isSetEmail());
+    lastComparison = java.lang.Boolean.compare(isSetPhone_number(), other.isSetPhone_number());
     if (lastComparison != 0) {
       return lastComparison;
     }
-    if (isSetEmail()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.email, other.email);
-      if (lastComparison != 0) {
-        return lastComparison;
-      }
-    }
-    lastComparison = java.lang.Boolean.compare(isSetPwdHash(), other.isSetPwdHash());
-    if (lastComparison != 0) {
-      return lastComparison;
-    }
-    if (isSetPwdHash()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.pwdHash, other.pwdHash);
+    if (isSetPhone_number()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.phone_number, other.phone_number);
       if (lastComparison != 0) {
         return lastComparison;
       }
@@ -823,6 +811,16 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
         return lastComparison;
       }
     }
+    lastComparison = java.lang.Boolean.compare(isSetBirthday(), other.isSetBirthday());
+    if (lastComparison != 0) {
+      return lastComparison;
+    }
+    if (isSetBirthday()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.birthday, other.birthday);
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+    }
     return 0;
   }
 
@@ -855,19 +853,11 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     }
     first = false;
     if (!first) sb.append(", ");
-    sb.append("email:");
-    if (this.email == null) {
+    sb.append("phone_number:");
+    if (this.phone_number == null) {
       sb.append("null");
     } else {
-      sb.append(this.email);
-    }
-    first = false;
-    if (!first) sb.append(", ");
-    sb.append("pwdHash:");
-    if (this.pwdHash == null) {
-      sb.append("null");
-    } else {
-      sb.append(this.pwdHash);
+      sb.append(this.phone_number);
     }
     first = false;
     if (!first) sb.append(", ");
@@ -912,6 +902,16 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       }
       first = false;
     }
+    if (isSetBirthday()) {
+      if (!first) sb.append(", ");
+      sb.append("birthday:");
+      if (this.birthday == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.birthday);
+      }
+      first = false;
+    }
     sb.append(")");
     return sb.toString();
   }
@@ -921,11 +921,8 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     if (name == null) {
       throw new org.apache.thrift.protocol.TProtocolException("Required field 'name' was not present! Struct: " + toString());
     }
-    if (email == null) {
-      throw new org.apache.thrift.protocol.TProtocolException("Required field 'email' was not present! Struct: " + toString());
-    }
-    if (pwdHash == null) {
-      throw new org.apache.thrift.protocol.TProtocolException("Required field 'pwdHash' was not present! Struct: " + toString());
+    if (phone_number == null) {
+      throw new org.apache.thrift.protocol.TProtocolException("Required field 'phone_number' was not present! Struct: " + toString());
     }
     if (locale == null) {
       throw new org.apache.thrift.protocol.TProtocolException("Required field 'locale' was not present! Struct: " + toString());
@@ -990,23 +987,15 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 2: // EMAIL
+          case 2: // PHONE_NUMBER
             if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
-              struct.email = iprot.readString();
-              struct.setEmailIsSet(true);
+              struct.phone_number = iprot.readString();
+              struct.setPhone_numberIsSet(true);
             } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 3: // PWD_HASH
-            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
-              struct.pwdHash = iprot.readString();
-              struct.setPwdHashIsSet(true);
-            } else { 
-              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
-            }
-            break;
-          case 4: // LOCALE
+          case 3: // LOCALE
             if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
               struct.locale = iprot.readString();
               struct.setLocaleIsSet(true);
@@ -1014,7 +1003,7 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 5: // UUID
+          case 4: // UUID
             if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
               struct.uuid = iprot.readString();
               struct.setUuidIsSet(true);
@@ -1022,7 +1011,7 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 6: // PUBLIC_KEY
+          case 5: // PUBLIC_KEY
             if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
               struct.publicKey = iprot.readString();
               struct.setPublicKeyIsSet(true);
@@ -1030,7 +1019,7 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 7: // TIMESTAMP
+          case 6: // TIMESTAMP
             if (schemeField.type == org.apache.thrift.protocol.TType.I64) {
               struct.timestamp = iprot.readI64();
               struct.setTimestampIsSet(true);
@@ -1038,7 +1027,7 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 8: // ADMIN
+          case 7: // ADMIN
             if (schemeField.type == org.apache.thrift.protocol.TType.BOOL) {
               struct.admin = iprot.readBool();
               struct.setAdminIsSet(true);
@@ -1046,11 +1035,19 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 9: // AVATAR
+          case 8: // AVATAR
             if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
               struct.avatar = new AttachmentWithId();
               struct.avatar.read(iprot);
               struct.setAvatarIsSet(true);
+            } else { 
+              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+            }
+            break;
+          case 9: // BIRTHDAY
+            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
+              struct.birthday = iprot.readString();
+              struct.setBirthdayIsSet(true);
             } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
@@ -1082,14 +1079,9 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
         oprot.writeString(struct.name);
         oprot.writeFieldEnd();
       }
-      if (struct.email != null) {
-        oprot.writeFieldBegin(EMAIL_FIELD_DESC);
-        oprot.writeString(struct.email);
-        oprot.writeFieldEnd();
-      }
-      if (struct.pwdHash != null) {
-        oprot.writeFieldBegin(PWD_HASH_FIELD_DESC);
-        oprot.writeString(struct.pwdHash);
+      if (struct.phone_number != null) {
+        oprot.writeFieldBegin(PHONE_NUMBER_FIELD_DESC);
+        oprot.writeString(struct.phone_number);
         oprot.writeFieldEnd();
       }
       if (struct.locale != null) {
@@ -1120,6 +1112,13 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
           oprot.writeFieldEnd();
         }
       }
+      if (struct.birthday != null) {
+        if (struct.isSetBirthday()) {
+          oprot.writeFieldBegin(BIRTHDAY_FIELD_DESC);
+          oprot.writeString(struct.birthday);
+          oprot.writeFieldEnd();
+        }
+      }
       oprot.writeFieldStop();
       oprot.writeStructEnd();
     }
@@ -1139,8 +1138,7 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
     public void write(org.apache.thrift.protocol.TProtocol prot, Account struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol oprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       oprot.writeString(struct.name);
-      oprot.writeString(struct.email);
-      oprot.writeString(struct.pwdHash);
+      oprot.writeString(struct.phone_number);
       oprot.writeString(struct.locale);
       oprot.writeString(struct.uuid);
       oprot.writeString(struct.publicKey);
@@ -1150,9 +1148,15 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       if (struct.isSetAvatar()) {
         optionals.set(0);
       }
-      oprot.writeBitSet(optionals, 1);
+      if (struct.isSetBirthday()) {
+        optionals.set(1);
+      }
+      oprot.writeBitSet(optionals, 2);
       if (struct.isSetAvatar()) {
         struct.avatar.write(oprot);
+      }
+      if (struct.isSetBirthday()) {
+        oprot.writeString(struct.birthday);
       }
     }
 
@@ -1161,10 +1165,8 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       struct.name = iprot.readString();
       struct.setNameIsSet(true);
-      struct.email = iprot.readString();
-      struct.setEmailIsSet(true);
-      struct.pwdHash = iprot.readString();
-      struct.setPwdHashIsSet(true);
+      struct.phone_number = iprot.readString();
+      struct.setPhone_numberIsSet(true);
       struct.locale = iprot.readString();
       struct.setLocaleIsSet(true);
       struct.uuid = iprot.readString();
@@ -1175,11 +1177,15 @@ public class Account implements org.apache.thrift.TBase<Account, Account._Fields
       struct.setTimestampIsSet(true);
       struct.admin = iprot.readBool();
       struct.setAdminIsSet(true);
-      java.util.BitSet incoming = iprot.readBitSet(1);
+      java.util.BitSet incoming = iprot.readBitSet(2);
       if (incoming.get(0)) {
         struct.avatar = new AttachmentWithId();
         struct.avatar.read(iprot);
         struct.setAvatarIsSet(true);
+      }
+      if (incoming.get(1)) {
+        struct.birthday = iprot.readString();
+        struct.setBirthdayIsSet(true);
       }
     }
   }

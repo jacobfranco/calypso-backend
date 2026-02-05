@@ -25,14 +25,14 @@ struct Application {
 
 struct Account {
   1: required string name;
-  2: required string email;
-  3: required string pwdHash;
-  4: required string locale;
-  5: required string uuid;
-  6: required string publicKey; 
-  7: required Timestamp timestamp;
-  8: required bool admin;
-  9: optional AttachmentWithId avatar;
+  2: required string phone_number;
+  3: required string locale;
+  4: required string uuid;
+  5: required string publicKey;
+  6: required Timestamp timestamp;
+  7: required bool admin;
+  8: optional AttachmentWithId avatar;
+  9: optional string birthday;
 }
 
 struct AccountWithId {

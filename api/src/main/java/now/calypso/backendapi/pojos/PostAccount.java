@@ -2,18 +2,20 @@ package now.calypso.backendapi.pojos;
 
 public class PostAccount {
     public String name;
-    public String email;
-    public String password;
     public Boolean agreement;
     public String locale;
+    public String phone_number;
+    public String birthday;
+    public String verification_token;
 
     public PostAccount() {
     }
 
-    public PostAccount(String name, String email, String password, Boolean agreement, String locale) {
+    public PostAccount(String name, String phone_number, String birthday, String verification_token, Boolean agreement, String locale) {
         this.name = name;
-        this.email = email;
-        this.password = password;
+        this.phone_number = phone_number;
+        this.birthday = birthday;
+        this.verification_token = verification_token;
         this.agreement = agreement;
         this.locale = locale;
     }

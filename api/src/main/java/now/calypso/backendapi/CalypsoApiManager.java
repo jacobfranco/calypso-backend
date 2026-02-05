@@ -3,8 +3,15 @@ package now.calypso.backendapi;
 import java.io.IOException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
+import java.security.SecureRandom;
 import java.util.*;
 import java.util.concurrent.*;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 
 import com.openai.client.OpenAIClient;
 import com.rpl.rama.*;
@@ -42,7 +49,7 @@ public class CalypsoApiManager {
     private final Depot promptsDepot;
 
     // Core PStates
-    private final PState emailToUser;
+    private final PState phoneToUser;
     private final PState authCodeToAccountId;
 
     // Core Queries
@@ -63,6 +70,12 @@ public class CalypsoApiManager {
     private final QueryTopologyClient<Signals> getSignalsFromAccountId;
     private final QueryTopologyClient<AgentSession> getAgentSessionFromAccountId;
 
+    private final ConcurrentHashMap<String, PhoneVerification> phoneVerificationByNumber = new ConcurrentHashMap<>();
+    private static final long PHONE_CODE_TTL_MS = 10 * 60 * 1000;
+    private static final SecureRandom PHONE_CODE_RANDOM = new SecureRandom();
+    private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+    private static final String SMS_FALLBACK_ENV = "CALYPSO_SMS_FALLBACK";
+
     // Agent Depots
     private final Depot agentSessionDepot;
 
@@ -77,12 +90,12 @@ public class CalypsoApiManager {
         promptsDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*promptsDepot");
 
         // Core PStates
-        emailToUser = cluster.clusterPState(CORE_MODULE_NAME, "$$emailToUser");
+        phoneToUser = cluster.clusterPState(CORE_MODULE_NAME, "$$phoneToUser");
         authCodeToAccountId = cluster.clusterPState(CORE_MODULE_NAME, "$$authCodeToAccountId");
 
         // Core Queries
         getAccountsFromAccountIds = cluster.clusterQuery(CORE_MODULE_NAME, "getAccountsFromAccountIds");
-         getApplicationFromClientId = cluster.clusterQuery(CORE_MODULE_NAME, "getApplicationFromClientId");
+        getApplicationFromClientId = cluster.clusterQuery(CORE_MODULE_NAME, "getApplicationFromClientId");
         getPromptsStateFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getPromptsStateFromAccountId");
 
         // Matches Depots
@@ -122,7 +135,6 @@ public class CalypsoApiManager {
     }
 
     public CompletableFuture<Boolean> postAccount(PostAccount params) {
-        String pwdHash = CalypsoApiHelpers.encodePassword(params.password);
         String uuid = UUID.randomUUID().toString();
         final CalypsoWebHelpers.SigningKeyPair keys;
         try {
@@ -130,15 +142,19 @@ public class CalypsoApiManager {
         } catch (NoSuchProviderException | NoSuchAlgorithmException | IOException e) {
             return CompletableFuture.completedFuture(false);
         }
+        Account account = new Account(params.name, params.phone_number, params.locale, uuid, keys.publicKey,
+                System.currentTimeMillis(), false);
+        if (params.birthday != null) {
+            account.setBirthday(params.birthday);
+        }
         return accountDepot
-                .appendAsync(new Account(params.name, params.email, pwdHash, params.locale, uuid, keys.publicKey,
-                        System.currentTimeMillis(), false))
-                .thenCompose(res -> this.getAccountUUID(params.email))
+                .appendAsync(account)
+                .thenCompose(res -> this.getAccountUUID(params.phone_number))
                 .thenApply(accountUUID -> accountUUID.equals(uuid));
     }
 
-    public CompletableFuture<String> getAccountUUID(String email) {
-        return emailToUser.selectOneAsync(Path.key(email, "uuid"));
+    public CompletableFuture<String> getAccountUUID(String phoneNumber) {
+        return phoneToUser.selectOneAsync(Path.key(phoneNumber, "uuid"));
     }
 
     public CompletableFuture<AccountWithId> getAccountWithId(Long requestAccountIdMaybe, long accountId) {
@@ -154,8 +170,8 @@ public class CalypsoApiManager {
         return this.getAccountWithId(null, accountId);
     }
 
-    public CompletableFuture<Long> getAccountId(String email) {
-        return emailToUser.selectOneAsync(Path.key(email, "accountId"));
+    public CompletableFuture<Long> getAccountId(String phoneNumber) {
+        return phoneToUser.selectOneAsync(Path.key(phoneNumber, "accountId"));
     }
 
     public CompletableFuture<Boolean> postAuthCode(long accountId, String code) {
@@ -170,6 +186,105 @@ public class CalypsoApiManager {
         Filters thrift = p.toThrift(accountId);
         return filtersDepot.appendAsync(thrift)
                 .thenApply(res -> true);
+    }
+
+    public CompletableFuture<String> requestPhoneCode(String phoneNumber) {
+        String code = String.format("%06d", PHONE_CODE_RANDOM.nextInt(1_000_000));
+        long expiresAt = System.currentTimeMillis() + PHONE_CODE_TTL_MS;
+        PhoneVerification verification = new PhoneVerification(code, null, expiresAt);
+        phoneVerificationByNumber.put(phoneNumber, verification);
+        return sendSms(phoneNumber, String.format("Your Calypso code is %s", code))
+                .whenComplete((ignored, err) -> {
+                    if (err != null) {
+                        phoneVerificationByNumber.remove(phoneNumber, verification);
+                    }
+                })
+                .thenApply(ignored -> code);
+    }
+
+    public CompletableFuture<String> verifyPhoneCode(String phoneNumber, String code) {
+        PhoneVerification verification = phoneVerificationByNumber.get(phoneNumber);
+        if (verification == null || verification.isExpired()) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Code expired"));
+        }
+        if (!verification.code.equals(code)) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Invalid code"));
+        }
+        String token = CalypsoHelpers.generateSecureRandomString(32);
+        verification.token = token;
+        phoneVerificationByNumber.put(phoneNumber, verification);
+        return CompletableFuture.completedFuture(token);
+    }
+
+    public CompletableFuture<Boolean> consumePhoneVerification(String phoneNumber, String token) {
+        PhoneVerification verification = phoneVerificationByNumber.get(phoneNumber);
+        if (verification == null || verification.isExpired()) {
+            return CompletableFuture.completedFuture(false);
+        }
+        if (!token.equals(verification.token)) {
+            return CompletableFuture.completedFuture(false);
+        }
+        phoneVerificationByNumber.remove(phoneNumber);
+        return CompletableFuture.completedFuture(true);
+    }
+
+    private static class PhoneVerification {
+        private final String code;
+        private String token;
+        private final long expiresAt;
+
+        private PhoneVerification(String code, String token, long expiresAt) {
+            this.code = code;
+            this.token = token;
+            this.expiresAt = expiresAt;
+        }
+
+        private boolean isExpired() {
+            return System.currentTimeMillis() > expiresAt;
+        }
+    }
+
+    private CompletableFuture<Void> sendSms(String to, String body) {
+        String fallbackValue = System.getenv(SMS_FALLBACK_ENV);
+        boolean fallbackEnabled = fallbackValue != null && fallbackValue.trim().equalsIgnoreCase("true");
+        if (fallbackEnabled) {
+            LOG.warn("SMS fallback enabled ({}): {} -> {}", SMS_FALLBACK_ENV, to, body);
+            return CompletableFuture.completedFuture(null);
+        }
+        String sid = System.getenv("TWILIO_ACCOUNT_SID");
+        String authToken = System.getenv("TWILIO_AUTH_TOKEN");
+        String from = System.getenv("TWILIO_FROM_NUMBER");
+        if (sid == null || sid.isBlank() || authToken == null || authToken.isBlank() || from == null || from.isBlank()) {
+            CompletableFuture<Void> failed = new CompletableFuture<>();
+            failed.completeExceptionally(new IllegalStateException("Twilio credentials not configured"));
+            return failed;
+        }
+
+        String payload = String.format("From=%s&To=%s&Body=%s",
+                urlEncode(from),
+                urlEncode(to),
+                urlEncode(body));
+        String auth = Base64.getEncoder().encodeToString((sid + ":" + authToken).getBytes(StandardCharsets.UTF_8));
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(String.format("https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json", sid)))
+                .header("Authorization", "Basic " + auth)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+
+        return HTTP_CLIENT.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+                .thenAccept(response -> {
+                    int status = response.statusCode();
+                    if (status < 200 || status >= 300) {
+                        throw new CompletionException(new IllegalStateException(
+                                "Failed to send SMS: " + response.body()));
+                    }
+                });
+    }
+
+    private static String urlEncode(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     public CompletableFuture<Filters> getFilters(long requesterId, long accountId) {

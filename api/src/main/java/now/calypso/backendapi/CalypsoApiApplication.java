@@ -87,13 +87,6 @@ public class CalypsoApiApplication {
 
         CalypsoApiController.manager = new CalypsoApiManager(ipc, openAI);
 
-        Depot accountDepot = ipc.clusterDepot(coreModuleName, "*accountDepot");
-        CalypsoWebHelpers.SigningKeyPair jacobKeys = CalypsoWebHelpers.generateKeys();
-        accountDepot.append(
-                                new Account("jacob", "jacob@foo.com", CalypsoApiHelpers.encodePassword("jacob"), "en-US",
-                                                UUID.randomUUID().toString(), jacobKeys.publicKey, ts += 1, false));
-        
-
         return ipc;
     }
 

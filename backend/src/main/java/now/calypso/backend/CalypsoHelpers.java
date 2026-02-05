@@ -38,6 +38,12 @@ public class CalypsoHelpers {
         }
     }
 
+    public static class ExtractPhoneNumber extends ExtractField {
+        public ExtractPhoneNumber() {
+            super("phone_number");
+        }
+    }
+
     public static class ExtractAccountId extends ExtractField {
         public ExtractAccountId() {
             super("accountId");

@@ -24,15 +24,14 @@ public class CoreTest {
                         String coreName = coreModule.getClass().getName();
 
                         Depot accountDepot = ipc.clusterDepot(coreName, "*accountDepot");
-                        PState emailToUser = ipc.clusterPState(coreName, "$$emailToUser");
+                        PState phoneToUser = ipc.clusterPState(coreName, "$$phoneToUser");
                         QueryTopologyClient<List<AccountWithId>> getAccounts = ipc.clusterQuery(coreName,
                                         "getAccountsFromAccountIds");
 
                         long ts = 0;
                         Account alice = new Account();
                         alice.setName("alice");
-                        alice.setEmail("alice@example.com");
-                        alice.setPwdHash("hash1");
+                        alice.setPhone_number("+15555550110");
                         alice.setLocale("en_US");
                         alice.setUuid("uuid-alice");
                         alice.setPublicKey("pubKey1");
@@ -42,8 +41,7 @@ public class CoreTest {
 
                         Account bob = new Account();
                         bob.setName("bob");
-                        bob.setEmail("bob@example.com");
-                        bob.setPwdHash("hash2");
+                        bob.setPhone_number("+15555550111");
                         bob.setLocale("en_US");
                         bob.setUuid("uuid-bob");
                         bob.setPublicKey("pubKey2");
@@ -52,20 +50,20 @@ public class CoreTest {
                         accountDepot.append(bob);
 
                         TestHelpers.attainConditionPred(
-                                        () -> emailToUser.selectOne(Path.key("alice@example.com")),
+                                        () -> phoneToUser.selectOne(Path.key("+15555550110")),
                                         obj -> obj != null);
                         TestHelpers.attainConditionPred(
-                                        () -> emailToUser.selectOne(Path.key("bob@example.com")),
+                                        () -> phoneToUser.selectOne(Path.key("+15555550111")),
                                         obj -> obj != null);
 
                         @SuppressWarnings("unchecked")
-                        Map<String, Object> aliceInfo = (Map<String, Object>) emailToUser
-                                        .selectOne(Path.key("alice@example.com"));
+                        Map<String, Object> aliceInfo = (Map<String, Object>) phoneToUser
+                                        .selectOne(Path.key("+15555550110"));
                         long aliceId = (Long) aliceInfo.get("accountId");
 
                         @SuppressWarnings("unchecked")
-                        Map<String, Object> bobInfo = (Map<String, Object>) emailToUser
-                                        .selectOne(Path.key("bob@example.com"));
+                        Map<String, Object> bobInfo = (Map<String, Object>) phoneToUser
+                                        .selectOne(Path.key("+15555550111"));
                         long bobId = (Long) bobInfo.get("accountId");
 
                         List<Long> queryIds = Arrays.asList(aliceId, bobId);

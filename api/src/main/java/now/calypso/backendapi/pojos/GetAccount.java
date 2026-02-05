@@ -14,6 +14,8 @@ public class GetAccount {
     public String avatar;
     public String avatar_static;
     public String created_at;
+    public String phone_number;
+    public String birthday;
 
     public GetAccount() { }
 
@@ -61,5 +63,7 @@ public class GetAccount {
         // Format creation timestamp as ISO 8601
         this.created_at = DateTimeFormatter.ISO_INSTANT
                 .format(Instant.ofEpochMilli(accountWithId.account.timestamp));
+        this.phone_number = accountWithId.account.phone_number;
+        this.birthday = accountWithId.account.birthday;
     }
 }
