@@ -18,7 +18,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
   private static final org.apache.thrift.protocol.TField RELIGION_FIELD_DESC = new org.apache.thrift.protocol.TField("religion", org.apache.thrift.protocol.TType.STRUCT, (short)6);
   private static final org.apache.thrift.protocol.TField POLITICS_FIELD_DESC = new org.apache.thrift.protocol.TField("politics", org.apache.thrift.protocol.TType.STRUCT, (short)7);
   private static final org.apache.thrift.protocol.TField LIFESTYLE_FIELD_DESC = new org.apache.thrift.protocol.TField("lifestyle", org.apache.thrift.protocol.TType.STRUCT, (short)8);
-  private static final org.apache.thrift.protocol.TField INTERESTS_FIELD_DESC = new org.apache.thrift.protocol.TField("interests", org.apache.thrift.protocol.TType.STRUCT, (short)9);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new FiltersStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new FiltersTupleSchemeFactory();
@@ -31,7 +30,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
   public @org.apache.thrift.annotation.Nullable OneToManyFilter religion; // optional
   public @org.apache.thrift.annotation.Nullable OneToManyFilter politics; // optional
   public @org.apache.thrift.annotation.Nullable ManyToManyFilter lifestyle; // optional
-  public @org.apache.thrift.annotation.Nullable ManyToManyFilter interests; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
@@ -42,8 +40,7 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     LOCATION((short)5, "location"),
     RELIGION((short)6, "religion"),
     POLITICS((short)7, "politics"),
-    LIFESTYLE((short)8, "lifestyle"),
-    INTERESTS((short)9, "interests");
+    LIFESTYLE((short)8, "lifestyle");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -75,8 +72,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
           return POLITICS;
         case 8: // LIFESTYLE
           return LIFESTYLE;
-        case 9: // INTERESTS
-          return INTERESTS;
         default:
           return null;
       }
@@ -122,7 +117,7 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
   // isset id assignments
   private static final int __ACCOUNTID_ISSET_ID = 0;
   private byte __isset_bitfield = 0;
-  private static final _Fields[] optionals = {_Fields.RELIGION,_Fields.POLITICS,_Fields.LIFESTYLE,_Fields.INTERESTS};
+  private static final _Fields[] optionals = {_Fields.RELIGION,_Fields.POLITICS,_Fields.LIFESTYLE};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
@@ -141,8 +136,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     tmpMap.put(_Fields.POLITICS, new org.apache.thrift.meta_data.FieldMetaData("politics", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, OneToManyFilter.class)));
     tmpMap.put(_Fields.LIFESTYLE, new org.apache.thrift.meta_data.FieldMetaData("lifestyle", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
-        new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, ManyToManyFilter.class)));
-    tmpMap.put(_Fields.INTERESTS, new org.apache.thrift.meta_data.FieldMetaData("interests", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, ManyToManyFilter.class)));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(Filters.class, metaDataMap);
@@ -194,9 +187,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     if (other.isSetLifestyle()) {
       this.lifestyle = new ManyToManyFilter(other.lifestyle);
     }
-    if (other.isSetInterests()) {
-      this.interests = new ManyToManyFilter(other.interests);
-    }
   }
 
   @Override
@@ -215,7 +205,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     this.religion = null;
     this.politics = null;
     this.lifestyle = null;
-    this.interests = null;
   }
 
   public long getAccountId() {
@@ -416,31 +405,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     }
   }
 
-  @org.apache.thrift.annotation.Nullable
-  public ManyToManyFilter getInterests() {
-    return this.interests;
-  }
-
-  public Filters setInterests(@org.apache.thrift.annotation.Nullable ManyToManyFilter interests) {
-    this.interests = interests;
-    return this;
-  }
-
-  public void unsetInterests() {
-    this.interests = null;
-  }
-
-  /** Returns true if field interests is set (has been assigned a value) and false otherwise */
-  public boolean isSetInterests() {
-    return this.interests != null;
-  }
-
-  public void setInterestsIsSet(boolean value) {
-    if (!value) {
-      this.interests = null;
-    }
-  }
-
   @Override
   public void setFieldValue(_Fields field, @org.apache.thrift.annotation.Nullable java.lang.Object value) {
     switch (field) {
@@ -508,14 +472,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       }
       break;
 
-    case INTERESTS:
-      if (value == null) {
-        unsetInterests();
-      } else {
-        setInterests((ManyToManyFilter)value);
-      }
-      break;
-
     }
   }
 
@@ -547,9 +503,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     case LIFESTYLE:
       return getLifestyle();
 
-    case INTERESTS:
-      return getInterests();
-
     }
     throw new java.lang.IllegalStateException();
   }
@@ -578,8 +531,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       return isSetPolitics();
     case LIFESTYLE:
       return isSetLifestyle();
-    case INTERESTS:
-      return isSetInterests();
     }
     throw new java.lang.IllegalStateException();
   }
@@ -669,15 +620,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
         return false;
     }
 
-    boolean this_present_interests = true && this.isSetInterests();
-    boolean that_present_interests = true && that.isSetInterests();
-    if (this_present_interests || that_present_interests) {
-      if (!(this_present_interests && that_present_interests))
-        return false;
-      if (!this.interests.equals(that.interests))
-        return false;
-    }
-
     return true;
   }
 
@@ -714,10 +656,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     hashCode = hashCode * 8191 + ((isSetLifestyle()) ? 131071 : 524287);
     if (isSetLifestyle())
       hashCode = hashCode * 8191 + lifestyle.hashCode();
-
-    hashCode = hashCode * 8191 + ((isSetInterests()) ? 131071 : 524287);
-    if (isSetInterests())
-      hashCode = hashCode * 8191 + interests.hashCode();
 
     return hashCode;
   }
@@ -806,16 +744,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     }
     if (isSetLifestyle()) {
       lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.lifestyle, other.lifestyle);
-      if (lastComparison != 0) {
-        return lastComparison;
-      }
-    }
-    lastComparison = java.lang.Boolean.compare(isSetInterests(), other.isSetInterests());
-    if (lastComparison != 0) {
-      return lastComparison;
-    }
-    if (isSetInterests()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.interests, other.interests);
       if (lastComparison != 0) {
         return lastComparison;
       }
@@ -909,16 +837,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       }
       first = false;
     }
-    if (isSetInterests()) {
-      if (!first) sb.append(", ");
-      sb.append("interests:");
-      if (this.interests == null) {
-        sb.append("null");
-      } else {
-        sb.append(this.interests);
-      }
-      first = false;
-    }
     sb.append(")");
     return sb.toString();
   }
@@ -959,9 +877,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     }
     if (lifestyle != null) {
       lifestyle.validate();
-    }
-    if (interests != null) {
-      interests.validate();
     }
   }
 
@@ -1074,15 +989,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 9: // INTERESTS
-            if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
-              struct.interests = new ManyToManyFilter();
-              struct.interests.read(iprot);
-              struct.setInterestsIsSet(true);
-            } else { 
-              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
-            }
-            break;
           default:
             org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
         }
@@ -1146,13 +1052,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
           oprot.writeFieldEnd();
         }
       }
-      if (struct.interests != null) {
-        if (struct.isSetInterests()) {
-          oprot.writeFieldBegin(INTERESTS_FIELD_DESC);
-          struct.interests.write(oprot);
-          oprot.writeFieldEnd();
-        }
-      }
       oprot.writeFieldStop();
       oprot.writeStructEnd();
     }
@@ -1186,10 +1085,7 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       if (struct.isSetLifestyle()) {
         optionals.set(2);
       }
-      if (struct.isSetInterests()) {
-        optionals.set(3);
-      }
-      oprot.writeBitSet(optionals, 4);
+      oprot.writeBitSet(optionals, 3);
       if (struct.isSetReligion()) {
         struct.religion.write(oprot);
       }
@@ -1198,9 +1094,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       }
       if (struct.isSetLifestyle()) {
         struct.lifestyle.write(oprot);
-      }
-      if (struct.isSetInterests()) {
-        struct.interests.write(oprot);
       }
     }
 
@@ -1221,7 +1114,7 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       struct.location = new LocationFilter();
       struct.location.read(iprot);
       struct.setLocationIsSet(true);
-      java.util.BitSet incoming = iprot.readBitSet(4);
+      java.util.BitSet incoming = iprot.readBitSet(3);
       if (incoming.get(0)) {
         struct.religion = new OneToManyFilter();
         struct.religion.read(iprot);
@@ -1236,11 +1129,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
         struct.lifestyle = new ManyToManyFilter();
         struct.lifestyle.read(iprot);
         struct.setLifestyleIsSet(true);
-      }
-      if (incoming.get(3)) {
-        struct.interests = new ManyToManyFilter();
-        struct.interests.read(iprot);
-        struct.setInterestsIsSet(true);
       }
     }
   }

@@ -18,10 +18,6 @@ public class TagDictionaryService {
         return TagDictionaryLoader.LIFESTYLE;
     }
 
-    public Map<String, List<String>> interests() {
-        return TagDictionaryLoader.INTEREST;
-    }
-
     public Map<String, List<String>> genders() {
         return TagDictionaryLoader.GENDER;
     }
@@ -37,10 +33,6 @@ public class TagDictionaryService {
     // flattened versions for fast membership checks
     public Set<String> lifestyleFlat() {
         return TagDictionaryLoader.LIFESTYLE_FLAT;
-    }
-
-    public Set<String> interestsFlat() {
-        return TagDictionaryLoader.INTEREST_FLAT;
     }
 
     public Set<String> gendersFlat() {

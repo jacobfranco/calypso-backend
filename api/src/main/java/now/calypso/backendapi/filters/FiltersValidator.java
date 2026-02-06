@@ -63,7 +63,6 @@ public class FiltersValidator {
 
         // --- tag sanity & duplicates ---------------------------------------
         checkMany(p.lifestyle, tags.lifestyleFlat(), "lifestyle");
-        checkMany(p.interests, tags.interestsFlat(), "interests");
         checkOne(p.gender, tags.gendersFlat(), "gender");
         checkOne(p.religion, tags.religionsFlat(), "religion");
         checkOne(p.politics, tags.politicsFlat(), "politics");

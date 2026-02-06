@@ -74,7 +74,6 @@ struct Filters {
   6: optional OneToManyFilter religion;            // self label + importance level
   7: optional OneToManyFilter politics;            // same as above
   8: optional ManyToManyFilter lifestyle;          // tags like "vegan", "non-drinker"
-  9: optional ManyToManyFilter interests;          // tags like "video games", "surfing"
 }
 
 // For filters like gender, religion, politics
@@ -92,7 +91,7 @@ struct RangeFilter {
   4: optional Importance importance;        // optional: how strict this is
 }
 
-// For tag-based filters (lifestyle, interests)
+// For tag-based filters (lifestyle)
 struct ManyToManyFilter {
   1: optional list<string> self;        // e.g. ["vegan", "night owl"]
   2: optional list<TagPreference> preferences; // per-tag importance

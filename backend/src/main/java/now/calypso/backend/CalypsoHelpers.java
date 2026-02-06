@@ -154,11 +154,6 @@ public class CalypsoHelpers {
                 if (t != null)
                     s.add(t);
             });
-        if (f != null && f.isSetInterests() && f.getInterests().isSetSelf())
-            f.getInterests().getSelf().forEach(t -> {
-                if (t != null)
-                    s.add(t);
-            });
         return new ArrayList<>(s);
     }
 
@@ -168,10 +163,6 @@ public class CalypsoHelpers {
             for (TagPreference p : f.getLifestyle().getPreferences())
                 if (p != null && p.isSetTag() && p.isSetImportance() && p.getImportance() == Importance.DEALBREAKER)
                     out.add(p.getTag());
-        if (f != null && f.isSetInterests() && f.getInterests().isSetPreferences())
-            for (TagPreference p : f.getInterests().getPreferences())
-                if (p != null && p.isSetTag() && p.isSetImportance() && p.getImportance() == Importance.DEALBREAKER)
-                    out.add(p.getTag());
         return out;
     }
 
@@ -179,10 +170,6 @@ public class CalypsoHelpers {
         List<String> out = new ArrayList<>();
         if (f != null && f.isSetLifestyle() && f.getLifestyle().isSetPreferences())
             for (TagPreference p : f.getLifestyle().getPreferences())
-                if (p != null && p.isSetTag() && p.isSetImportance() && p.getImportance() == Importance.PREFERENCE)
-                    out.add(p.getTag());
-        if (f != null && f.isSetInterests() && f.getInterests().isSetPreferences())
-            for (TagPreference p : f.getInterests().getPreferences())
                 if (p != null && p.isSetTag() && p.isSetImportance() && p.getImportance() == Importance.PREFERENCE)
                     out.add(p.getTag());
         return out;
@@ -355,10 +342,6 @@ public class CalypsoHelpers {
         return (f != null && f.isSetLifestyle()) ? f.getLifestyle() : null;
     }
 
-    private static ManyToManyFilter getInterestsFilter(Filters f) {
-        return (f != null && f.isSetInterests()) ? f.getInterests() : null;
-    }
-
     private static Set<String> getManySelfTags(ManyToManyFilter filter) {
         if (filter == null || !filter.isSetSelf())
             return Collections.emptySet();
@@ -500,32 +483,6 @@ public class CalypsoHelpers {
         return bonus;
     }
 
-    public static boolean interestsCompatible(Filters viewer, Filters target) {
-        ManyToManyFilter vi = getInterestsFilter(viewer);
-        ManyToManyFilter ti = getInterestsFilter(target);
-
-        Set<String> viewerTags = getManySelfTags(vi);
-        Set<String> targetTags = getManySelfTags(ti);
-
-        if (!manyDealbreakersSatisfied(vi, targetTags))
-            return false;
-        if (!manyDealbreakersSatisfied(ti, viewerTags))
-            return false;
-        return true;
-    }
-
-    public static double computeInterestsBonus(Filters viewer, Filters target) {
-        ManyToManyFilter vi = getInterestsFilter(viewer);
-        ManyToManyFilter ti = getInterestsFilter(target);
-
-        Set<String> viewerTags = getManySelfTags(vi);
-        Set<String> targetTags = getManySelfTags(ti);
-
-        double bonus = 0.0;
-        bonus += preferenceBonusFrom(vi, targetTags, 4.0);
-        bonus += preferenceBonusFrom(ti, viewerTags, 2.0);
-        return bonus;
-    }
 
     public static double computePoliticsBonus(Filters viewer, Filters target) {
         OneToManyFilter vp = getPolitics(viewer);
@@ -610,8 +567,6 @@ public class CalypsoHelpers {
         if (!religionCompatible(viewer, target))
             return -1.0;
         if (!lifestyleCompatible(viewer, target))
-            return -1.0;
-        if (!interestsCompatible(viewer, target))
             return -1.0;
         return 100.0;
     }

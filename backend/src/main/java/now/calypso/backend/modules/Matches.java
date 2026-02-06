@@ -272,15 +272,10 @@ public class Matches implements RamaModule {
 
                                                                                                         // Soft bonuses:
                                                                                                         // lifestyle +
-                                                                                                        // interests +
                                                                                                         // politics +
                                                                                                         // religion
                                                                                                         double lifestyleBonus = CalypsoHelpers
                                                                                                                         .computeLifestyleBonus(
-                                                                                                                                        viewer,
-                                                                                                                                        target);
-                                                                                                        double interestsBonus = CalypsoHelpers
-                                                                                                                        .computeInterestsBonus(
                                                                                                                                         viewer,
                                                                                                                                         target);
                                                                                                         double politicsBonus = CalypsoHelpers
@@ -293,7 +288,6 @@ public class Matches implements RamaModule {
                                                                                                                                         target);
                                                                                                         double finalScore = baseScore
                                                                                                                         + lifestyleBonus
-                                                                                                                        + interestsBonus
                                                                                                                         + politicsBonus
                                                                                                                         + religionBonus;
 

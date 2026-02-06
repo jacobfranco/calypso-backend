@@ -1,34 +1,18 @@
 {
-  "fitness": [
-    "weightlifting",
-    "running",
-    "yoga",
-    "crossfit",
-    "pilates",
-    "cycling",
-    "hiking",
-    "rock_climbing",
-    "swimming",
-    "martial_arts",
-    "dance",
-    "team_sports"
+  "kids": [
+    "has_kids",
+    "wants_kids",
+    "doesnt_want_kids",
+    "open_to_kids",
+    "expecting"
   ],
 
-  "dietary": [
-    "vegan",
-    "vegetarian",
-    "pescatarian",
-    "keto",
-    "paleo",
-    "gluten_free",
-    "dairy_free",
-    "halal",
-    "kosher",
-    "low_carb",
-    "carnivore"
+  "relationship_structure": [
+    "monogamous",
+    "open_relationship",
+    "polyamorous",
+    "ethical_non_monogamy"
   ],
-
-  "sleep_habits": ["early_bird", "night_owl", "light_sleeper", "heavy_sleeper"],
 
   "alcohol_use": [
     "non_drinker",
@@ -45,64 +29,5 @@
     "cannabis_user"
   ],
 
-  "drug_use": ["no_drugs", "recreational_drugs", "psychedelics_user", "sober"],
-
-  "pets": [
-    "dog_owner",
-    "cat_owner",
-    "dog_person",
-    "cat_person",
-    "exotic_pet_owner",
-    "allergic_to_pets",
-    "prefers_no_pets"
-  ],
-
-  "kids": [
-    "has_kids",
-    "wants_kids",
-    "doesnt_want_kids",
-    "open_to_kids",
-    "expecting"
-  ],
-
-  "travel_frequency": [
-    "homebody",
-    "occasional_traveler",
-    "frequent_traveler",
-    "digital_nomad",
-    "travel_junkie"
-  ],
-
-  "living_situation": [
-    "lives_alone",
-    "roommates",
-    "lives_with_family",
-    "cohabitating",
-    "homeowner",
-    "renting",
-    "moving_soon"
-  ],
-
-  "social_style": [
-    "introvert",
-    "extrovert",
-    "ambivert",
-    "social_butterfly",
-    "low_key"
-  ],
-
-  "relationship_structure": [
-    "monogamous",
-    "open_relationship",
-    "polyamorous",
-    "ethical_non_monogamy"
-  ],
-
-  "work_schedule": [
-    "nine_to_five",
-    "shift_worker",
-    "freelancer",
-    "entrepreneur",
-    "student"
-  ]
+  "drug_use": ["no_drugs", "recreational_drugs", "psychedelics_user", "sober"]
 }

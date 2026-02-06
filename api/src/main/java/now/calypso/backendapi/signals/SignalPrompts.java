@@ -130,8 +130,8 @@ public final class SignalPrompts {
              - 0.45–0.69: helpful context but flexible
              - 0.00–0.44: trivia (usually omit)
 
-             HOBBY WEIGHTING (important):
-             - Most hobbies/interests default to importance 0.55–0.70.
+            HOBBY WEIGHTING (important):
+            - Most hobbies default to importance 0.55–0.70.
              - Increase importance ONLY if framed as:
                * central identity ("my life revolves around X")
                * a requirement ("I only date people who X")

@@ -41,8 +41,6 @@ public class MatchesTest {
                         int ageSelf, int ageMin, int ageMax,
                         List<String> lifestyleSelf,
                         List<TagPreference> lifestylePrefs,
-                        List<String> interestsSelf,
-                        List<TagPreference> interestsPrefs,
                         OneToManyFilter religion,
                         OneToManyFilter politics) {
 
@@ -82,14 +80,6 @@ public class MatchesTest {
                         if (lifestylePrefs != null)
                                 life.setPreferences(lifestylePrefs);
                         f.setLifestyle(life);
-                }
-                if (interestsSelf != null || interestsPrefs != null) {
-                        ManyToManyFilter ints = new ManyToManyFilter();
-                        if (interestsSelf != null)
-                                ints.setSelf(interestsSelf);
-                        if (interestsPrefs != null)
-                                ints.setPreferences(interestsPrefs);
-                        f.setInterests(ints);
                 }
                 return f;
         }
@@ -166,22 +156,8 @@ public class MatchesTest {
 
                         // Two people near Charlotte; mutual gender/age; casual
                         double[] CLT = CITY_LL.get("Charlotte, NC, USA");
-                        Filters viewer = mkFilters(
-                                        1L, CLT[0], CLT[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        26, 22, 32,
-                                        List.of("weightlifting"), List.of(pref("hiking", Importance.PREFERENCE)),
-                                        null, null,
-                                        null, null);
-                        Filters target = mkFilters(
-                                        2L, CLT[0], CLT[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "woman", List.of("man"),
-                                        25, 23, 35,
-                                        List.of("hiking"), null,
-                                        null, null,
-                                        null, null);
+                        Filters viewer = mkFilters(1L, CLT[0], CLT[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 26, 22, 32, List.of("non_drinker"), List.of(pref("no_drugs", Importance.PREFERENCE)), null, null);
+                        Filters target = mkFilters(2L, CLT[0], CLT[1], radiusKmFromToken("my_city"), "casual", "woman", List.of("man"), 25, 23, 35, List.of("no_drugs"), null, null, null);
 
                         filtersDepot.append(viewer);
                         filtersDepot.append(target);
@@ -229,18 +205,8 @@ public class MatchesTest {
                         PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
 
                         double[] AUS = CITY_LL.get("Austin, TX, USA");
-                        Filters a = mkFilters(
-                                        1L, AUS[0], AUS[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        30, 25, 35,
-                                        null, null, null, null, null, null);
-                        Filters b = mkFilters(
-                                        2L, AUS[0], AUS[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        29, 25, 35,
-                                        null, null, null, null, null, null);
+                        Filters a = mkFilters(1L, AUS[0], AUS[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 30, 25, 35, null, null, null, null);
+                        Filters b = mkFilters(2L, AUS[0], AUS[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 29, 25, 35, null, null, null, null);
 
                         append(ipc, filtersDepot, a);
                         append(ipc, filtersDepot, b);
@@ -272,30 +238,9 @@ public class MatchesTest {
                         PState proj = ipc.clusterPState(matchesName, "$$accountIdToFiltersProjection");
                         PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
                         double[] DEN = CITY_LL.get("Denver, CO, USA");
-                        Filters viewer = mkFilters(
-                                        1L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "woman", List.of("man"),
-                                        27, 22, 35,
-                                        List.of("yoga"), List.of(pref("vegan", Importance.DEALBREAKER)),
-                                        null, null,
-                                        null, null);
-                        Filters blocked = mkFilters(
-                                        2L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        29, 24, 36,
-                                        List.of("hiking"), null,
-                                        null, null,
-                                        null, null);
-                        Filters allowed = mkFilters(
-                                        3L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        29, 24, 36,
-                                        List.of("vegan", "hiking"), null,
-                                        null, null,
-                                        null, null);
+                        Filters viewer = mkFilters(1L, DEN[0], DEN[1], radiusKmFromToken("my_city"), "casual", "woman", List.of("man"), 27, 22, 35, List.of("non_smoker"), List.of(pref("no_drugs", Importance.DEALBREAKER)), null, null);
+                        Filters blocked = mkFilters(2L, DEN[0], DEN[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 29, 24, 36, List.of("social_drinker"), null, null, null);
+                        Filters allowed = mkFilters(3L, DEN[0], DEN[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 29, 24, 36, List.of("no_drugs"), null, null, null);
 
                         append(ipc, filtersDepot, viewer);
                         append(ipc, filtersDepot, blocked);
@@ -312,7 +257,7 @@ public class MatchesTest {
                                         heap -> heap != null && !heap.isEmpty());
 
                         List<MatchCandidate> heap = (List<MatchCandidate>) heapP.selectOne(Path.key(1L));
-                        assertEquals(1, heap.size(), "Only vegan-compatible targets should remain");
+                        assertEquals(1, heap.size(), "Only no-drugs-compatible targets should remain");
                         assertEquals(3L, heap.get(0).getTargetAccountId());
                 }
         }
@@ -334,219 +279,12 @@ public class MatchesTest {
                         PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
 
                         double[] MIA = CITY_LL.get("Miami, FL, USA");
-                        Filters viewer = mkFilters(
-                                        1L, MIA[0], MIA[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "woman", List.of("man"),
-                                        28, 23, 35,
-                                        List.of("reading"), List.of(pref("hiking", Importance.PREFERENCE)),
-                                        null, null,
-                                        null, null);
-                        Filters hikingMatch = mkFilters(
-                                        2L, MIA[0], MIA[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        29, 24, 36,
-                                        List.of("hiking"), null,
-                                        null, null,
-                                        null, null);
-                        Filters neutral = mkFilters(
-                                        3L, MIA[0], MIA[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        29, 24, 36,
-                                        List.of("tennis"), null,
-                                        null, null,
-                                        null, null);
+                        Filters viewer = mkFilters(1L, MIA[0], MIA[1], radiusKmFromToken("my_city"), "casual", "woman", List.of("man"), 28, 23, 35, List.of("non_smoker"), List.of(pref("no_drugs", Importance.PREFERENCE)), null, null);
+                        Filters preferredMatch = mkFilters(2L, MIA[0], MIA[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 29, 24, 36, List.of("no_drugs"), null, null, null);
+                        Filters neutral = mkFilters(3L, MIA[0], MIA[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 29, 24, 36, List.of("social_drinker"), null, null, null);
 
                         append(ipc, filtersDepot, viewer);
-                        append(ipc, filtersDepot, hikingMatch);
-                        append(ipc, filtersDepot, neutral);
-
-                        awaitPStateNonNull(proj, Path.key(1L));
-                        awaitPStateNonNull(proj, Path.key(2L));
-                        awaitPStateNonNull(proj, Path.key(3L));
-
-                        requestRefill(refillDepot, 1L, 10);
-
-                        TestHelpers.attainConditionPred(
-                                        () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
-                                        heap -> heap != null && heap.size() >= 2);
-
-                        List<MatchCandidate> heap = (List<MatchCandidate>) heapP.selectOne(Path.key(1L));
-                        MatchCandidate hikingCand = heap.stream()
-                                        .filter(c -> c.getTargetAccountId() == 2L)
-                                        .findFirst()
-                                        .orElseThrow();
-                        MatchCandidate neutralCand = heap.stream()
-                                        .filter(c -> c.getTargetAccountId() == 3L)
-                                        .findFirst()
-                                        .orElseThrow();
-
-                        double expectedHikingScore = CalypsoHelpers.computeMatchesBaseScore(viewer, hikingMatch)
-                                        + CalypsoHelpers.computeLifestyleBonus(viewer, hikingMatch)
-                                        + CalypsoHelpers.computePoliticsBonus(viewer, hikingMatch)
-                                        + CalypsoHelpers.computeReligionBonus(viewer, hikingMatch);
-                        double expectedNeutralScore = CalypsoHelpers.computeMatchesBaseScore(viewer, neutral)
-                                        + CalypsoHelpers.computeLifestyleBonus(viewer, neutral)
-                                        + CalypsoHelpers.computePoliticsBonus(viewer, neutral)
-                                        + CalypsoHelpers.computeReligionBonus(viewer, neutral);
-
-                        assertEquals(expectedHikingScore, hikingCand.getStage0Score(), 1e-6);
-                        assertEquals(expectedNeutralScore, neutralCand.getStage0Score(), 1e-6);
-                        assertTrue(hikingCand.getStage0Score() > neutralCand.getStage0Score(),
-                                        "Preference-aligned targets should outrank neutral ones");
-                }
-        }
-
-        @Test
-        public void refillPreservesExistingHeapEntries(TestInfo ti) throws Exception {
-                List<Class> ser = List.of(CalypsoSerialization.class);
-                try (InProcessCluster ipc = InProcessCluster.create(ser)) {
-                        Core core = new Core();
-                        Matches matches = new Matches();
-                        launchModuleDeterministic(ipc, core, ti);
-                        launchModuleDeterministic(ipc, matches, ti);
-
-                        String matchesName = matches.getClass().getName();
-                        Depot filtersDepot = ipc.clusterDepot(matchesName, "*filtersDepot");
-                        Depot refillDepot = ipc.clusterDepot(matchesName, "*matchRefillDepot");
-                        PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
-
-                        double[] CLT = CITY_LL.get("Charlotte, NC, USA");
-                        Filters viewer = mkFilters(1L, CLT[0], CLT[1], radiusKmFromToken("my_city"), "casual",
-                                        "man", List.of("woman"), 26, 22, 35, null, null, null, null, null, null);
-                        Filters targetA = mkFilters(2L, CLT[0], CLT[1], radiusKmFromToken("my_city"), "casual",
-                                        "woman", List.of("man"), 25, 23, 36, null, null, null, null, null, null);
-                        Filters targetB = mkFilters(3L, CLT[0], CLT[1], radiusKmFromToken("my_city"), "casual",
-                                        "woman", List.of("man"), 24, 22, 34, null, null, null, null, null, null);
-
-                        append(ipc, filtersDepot, viewer);
-                        append(ipc, filtersDepot, targetA);
-                        requestRefill(refillDepot, 1L, 50);
-
-                        TestHelpers.attainConditionPred(
-                                        () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
-                                        heap -> heap != null
-                                                        && heap.stream().anyMatch(c -> c.getTargetAccountId() == 2L));
-
-                        append(ipc, filtersDepot, targetB);
-                        requestRefill(refillDepot, 1L, 50);
-
-                        TestHelpers.attainConditionPred(
-                                        () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
-                                        heap -> heap != null
-                                                        && heap.stream().anyMatch(c -> c.getTargetAccountId() == 2L)
-                                                        && heap.stream().anyMatch(c -> c.getTargetAccountId() == 3L));
-                }
-        }
-
-        @Test
-        public void interestsDealbreaker_filtersOutNonMatchingTargets(TestInfo ti) throws Exception {
-                List<Class> ser = List.of(CalypsoSerialization.class);
-                try (InProcessCluster ipc = InProcessCluster.create(ser)) {
-                        Core core = new Core();
-                        Matches matches = new Matches();
-                        launchModuleDeterministic(ipc, core, ti);
-                        launchModuleDeterministic(ipc, matches, ti);
-
-                        String matchesName = matches.getClass().getName();
-
-                        Depot filtersDepot = ipc.clusterDepot(matchesName, "*filtersDepot");
-                        Depot refillDepot = ipc.clusterDepot(matchesName, "*matchRefillDepot");
-                        PState proj = ipc.clusterPState(matchesName, "$$accountIdToFiltersProjection");
-                        PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
-
-                        double[] BOS = CITY_LL.get("Boston, MA, USA");
-                        Filters viewer = mkFilters(
-                                        1L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "woman", List.of("man"),
-                                        28, 23, 35,
-                                        null, null,
-                                        List.of("board_games"), List.of(pref("rock_climbing", Importance.DEALBREAKER)),
-                                        null, null);
-                        Filters blocked = mkFilters(
-                                        2L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        29, 24, 36,
-                                        null, null,
-                                        List.of("cooking"), null,
-                                        null, null);
-                        Filters allowed = mkFilters(
-                                        3L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        29, 24, 36,
-                                        null, null,
-                                        List.of("rock_climbing", "cooking"), null,
-                                        null, null);
-
-                        append(ipc, filtersDepot, viewer);
-                        append(ipc, filtersDepot, blocked);
-                        append(ipc, filtersDepot, allowed);
-
-                        awaitPStateNonNull(proj, Path.key(1L));
-                        awaitPStateNonNull(proj, Path.key(2L));
-                        awaitPStateNonNull(proj, Path.key(3L));
-
-                        requestRefill(refillDepot, 1L, 10);
-
-                        TestHelpers.attainConditionPred(
-                                        () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
-                                        heap -> heap != null && !heap.isEmpty());
-
-                        List<MatchCandidate> heap = (List<MatchCandidate>) heapP.selectOne(Path.key(1L));
-                        assertEquals(1, heap.size(), "Only rock_climbing-compatible targets should remain");
-                        assertEquals(3L, heap.get(0).getTargetAccountId());
-                }
-        }
-
-        @Test
-        public void interestsPreference_grantsScoreBonus(TestInfo ti) throws Exception {
-                List<Class> ser = List.of(CalypsoSerialization.class);
-                try (InProcessCluster ipc = InProcessCluster.create(ser)) {
-                        Core core = new Core();
-                        Matches matches = new Matches();
-                        launchModuleDeterministic(ipc, core, ti);
-                        launchModuleDeterministic(ipc, matches, ti);
-
-                        String matchesName = matches.getClass().getName();
-
-                        Depot filtersDepot = ipc.clusterDepot(matchesName, "*filtersDepot");
-                        Depot refillDepot = ipc.clusterDepot(matchesName, "*matchRefillDepot");
-                        PState proj = ipc.clusterPState(matchesName, "$$accountIdToFiltersProjection");
-                        PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
-
-                        double[] SFO = CITY_LL.get("San Francisco, CA, USA");
-                        Filters viewer = mkFilters(
-                                        1L, SFO[0], SFO[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "woman", List.of("man"),
-                                        30, 25, 38,
-                                        null, null,
-                                        List.of("running"), List.of(pref("photography", Importance.PREFERENCE)),
-                                        null, null);
-                        Filters preferred = mkFilters(
-                                        2L, SFO[0], SFO[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        31, 26, 39,
-                                        null, null,
-                                        List.of("photography", "running"), null,
-                                        null, null);
-                        Filters neutral = mkFilters(
-                                        3L, SFO[0], SFO[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        31, 26, 39,
-                                        null, null,
-                                        List.of("cooking"), null,
-                                        null, null);
-
-                        append(ipc, filtersDepot, viewer);
-                        append(ipc, filtersDepot, preferred);
+                        append(ipc, filtersDepot, preferredMatch);
                         append(ipc, filtersDepot, neutral);
 
                         awaitPStateNonNull(proj, Path.key(1L));
@@ -569,21 +307,58 @@ public class MatchesTest {
                                         .findFirst()
                                         .orElseThrow();
 
-                        double expectedPreferredScore = CalypsoHelpers.computeMatchesBaseScore(viewer, preferred)
-                                        + CalypsoHelpers.computeLifestyleBonus(viewer, preferred)
-                                        + CalypsoHelpers.computeInterestsBonus(viewer, preferred)
-                                        + CalypsoHelpers.computePoliticsBonus(viewer, preferred)
-                                        + CalypsoHelpers.computeReligionBonus(viewer, preferred);
+                        double expectedPreferredScore = CalypsoHelpers.computeMatchesBaseScore(viewer, preferredMatch)
+                                        + CalypsoHelpers.computeLifestyleBonus(viewer, preferredMatch)
+                                        + CalypsoHelpers.computePoliticsBonus(viewer, preferredMatch)
+                                        + CalypsoHelpers.computeReligionBonus(viewer, preferredMatch);
                         double expectedNeutralScore = CalypsoHelpers.computeMatchesBaseScore(viewer, neutral)
                                         + CalypsoHelpers.computeLifestyleBonus(viewer, neutral)
-                                        + CalypsoHelpers.computeInterestsBonus(viewer, neutral)
                                         + CalypsoHelpers.computePoliticsBonus(viewer, neutral)
                                         + CalypsoHelpers.computeReligionBonus(viewer, neutral);
 
                         assertEquals(expectedPreferredScore, preferredCand.getStage0Score(), 1e-6);
                         assertEquals(expectedNeutralScore, neutralCand.getStage0Score(), 1e-6);
                         assertTrue(preferredCand.getStage0Score() > neutralCand.getStage0Score(),
-                                        "Interest preference matches should outrank neutral ones");
+                                        "Preference-aligned targets should outrank neutral ones");
+                }
+        }
+
+        @Test
+        public void refillPreservesExistingHeapEntries(TestInfo ti) throws Exception {
+                List<Class> ser = List.of(CalypsoSerialization.class);
+                try (InProcessCluster ipc = InProcessCluster.create(ser)) {
+                        Core core = new Core();
+                        Matches matches = new Matches();
+                        launchModuleDeterministic(ipc, core, ti);
+                        launchModuleDeterministic(ipc, matches, ti);
+
+                        String matchesName = matches.getClass().getName();
+                        Depot filtersDepot = ipc.clusterDepot(matchesName, "*filtersDepot");
+                        Depot refillDepot = ipc.clusterDepot(matchesName, "*matchRefillDepot");
+                        PState heapP = ipc.clusterPState(matchesName, "$$accountIdToCandidateHeap");
+
+                        double[] CLT = CITY_LL.get("Charlotte, NC, USA");
+                        Filters viewer = mkFilters(1L, CLT[0], CLT[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 26, 22, 35, null, null, null, null);
+                        Filters targetA = mkFilters(2L, CLT[0], CLT[1], radiusKmFromToken("my_city"), "casual", "woman", List.of("man"), 25, 23, 36, null, null, null, null);
+                        Filters targetB = mkFilters(3L, CLT[0], CLT[1], radiusKmFromToken("my_city"), "casual", "woman", List.of("man"), 24, 22, 34, null, null, null, null);
+
+                        append(ipc, filtersDepot, viewer);
+                        append(ipc, filtersDepot, targetA);
+                        requestRefill(refillDepot, 1L, 50);
+
+                        TestHelpers.attainConditionPred(
+                                        () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
+                                        heap -> heap != null
+                                                        && heap.stream().anyMatch(c -> c.getTargetAccountId() == 2L));
+
+                        append(ipc, filtersDepot, targetB);
+                        requestRefill(refillDepot, 1L, 50);
+
+                        TestHelpers.attainConditionPred(
+                                        () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
+                                        heap -> heap != null
+                                                        && heap.stream().anyMatch(c -> c.getTargetAccountId() == 2L)
+                                                        && heap.stream().anyMatch(c -> c.getTargetAccountId() == 3L));
                 }
         }
 
@@ -609,15 +384,9 @@ public class MatchesTest {
 
                         double[] SEA = CITY_LL.get("Seattle, WA, USA");
                         // viewer + 2 compatible targets within radius
-                        append(ipc, filtersDepot, mkFilters(1L, SEA[0], SEA[1], radiusKmFromToken("my_city"),
-                                        "casual", "woman", List.of("man"), 27, 22, 34, null, null, null, null, null,
-                                        null));
-                        append(ipc, filtersDepot, mkFilters(2L, SEA[0], SEA[1], radiusKmFromToken("my_city"),
-                                        "casual", "man", List.of("woman"), 28, 22, 34, null, null, null, null, null,
-                                        null));
-                        append(ipc, filtersDepot, mkFilters(3L, SEA[0], SEA[1], radiusKmFromToken("my_city"),
-                                        "casual", "man", List.of("woman"), 29, 22, 34, null, null, null, null, null,
-                                        null));
+                        append(ipc, filtersDepot, mkFilters(1L, SEA[0], SEA[1], radiusKmFromToken("my_city"), "casual", "woman", List.of("man"), 27, 22, 34, null, null, null, null));
+                        append(ipc, filtersDepot, mkFilters(2L, SEA[0], SEA[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 28, 22, 34, null, null, null, null));
+                        append(ipc, filtersDepot, mkFilters(3L, SEA[0], SEA[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 29, 22, 34, null, null, null, null));
 
                         // initial refill
                         requestRefill(refillDepot, 1L, 10);
@@ -668,15 +437,9 @@ public class MatchesTest {
 
                         double[] MIA = CITY_LL.get("Miami, FL, USA");
                         // serious vs casual candidates → serious floor should exclude some
-                        append(ipc, filtersDepot, mkFilters(1L, MIA[0], MIA[1], radiusKmFromToken("my_city"),
-                                        "serious", "woman", List.of("man"), 29, 24, 36, null, null, null, null, null,
-                                        null));
-                        append(ipc, filtersDepot, mkFilters(2L, MIA[0], MIA[1], radiusKmFromToken("my_city"),
-                                        "casual", "man", List.of("woman"), 30, 24, 36, null, null, null, null, null,
-                                        null));
-                        append(ipc, filtersDepot, mkFilters(3L, MIA[0], MIA[1], radiusKmFromToken("my_city"),
-                                        "serious", "man", List.of("woman"), 31, 24, 36, null, null, null, null, null,
-                                        null));
+                        append(ipc, filtersDepot, mkFilters(1L, MIA[0], MIA[1], radiusKmFromToken("my_city"), "serious", "woman", List.of("man"), 29, 24, 36, null, null, null, null));
+                        append(ipc, filtersDepot, mkFilters(2L, MIA[0], MIA[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 30, 24, 36, null, null, null, null));
+                        append(ipc, filtersDepot, mkFilters(3L, MIA[0], MIA[1], radiusKmFromToken("my_city"), "serious", "man", List.of("woman"), 31, 24, 36, null, null, null, null));
 
                         requestRefill(refillDepot, 1L, 10);
                         TestHelpers.attainConditionPred(
@@ -710,16 +473,10 @@ public class MatchesTest {
                         double[] SFO = CITY_LL.get("San Francisco, CA, USA");
 
                         // 1) Viewer radius ~35km: SF (~121km) should be excluded
-                        filtersDepot.append(mkFilters(1L, SAC[0], SAC[1], radiusKmFromToken("my_city"),
-                                        "casual", "woman", List.of("man"), 28, 24, 36, null, null, null, null, null,
-                                        null));
+                        filtersDepot.append(mkFilters(1L, SAC[0], SAC[1], radiusKmFromToken("my_city"), "casual", "woman", List.of("man"), 28, 24, 36, null, null, null, null));
                         // Targets: one colocated in Sacramento; one in SF
-                        filtersDepot.append(mkFilters(2L, SAC[0], SAC[1], radiusKmFromToken("my_state"),
-                                        "casual", "man", List.of("woman"), 29, 24, 36, null, null, null, null, null,
-                                        null));
-                        filtersDepot.append(mkFilters(3L, SFO[0], SFO[1], radiusKmFromToken("my_state"),
-                                        "casual", "man", List.of("woman"), 29, 24, 36, null, null, null, null, null,
-                                        null));
+                        filtersDepot.append(mkFilters(2L, SAC[0], SAC[1], radiusKmFromToken("my_state"), "casual", "man", List.of("woman"), 29, 24, 36, null, null, null, null));
+                        filtersDepot.append(mkFilters(3L, SFO[0], SFO[1], radiusKmFromToken("my_state"), "casual", "man", List.of("woman"), 29, 24, 36, null, null, null, null));
 
                         requestRefill(refillDepot, 1L, 50);
                         TestHelpers.attainConditionPred(
@@ -734,9 +491,7 @@ public class MatchesTest {
                         assertFalse(ids1.contains(3L), "Farther city should be excluded at city radius");
 
                         // 2) Increase viewer radius to ~250km: SF should be included now
-                        filtersDepot.append(mkFilters(1L, SAC[0], SAC[1], radiusKmFromToken("my_state"),
-                                        "casual", "woman", List.of("man"), 28, 24, 36, null, null, null, null, null,
-                                        null));
+                        filtersDepot.append(mkFilters(1L, SAC[0], SAC[1], radiusKmFromToken("my_state"), "casual", "woman", List.of("man"), 28, 24, 36, null, null, null, null));
 
                         requestRefill(refillDepot, 1L, 50);
                         TestHelpers.attainConditionPred(
@@ -773,18 +528,10 @@ public class MatchesTest {
 
                         double[] BOS = CITY_LL.get("Boston, MA, USA");
                         // viewer + 3 candidates compatible
-                        append(ipc, filtersDepot, mkFilters(1L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
-                                        "casual", "woman", List.of("man"), 27, 22, 34, null, null, null, null, null,
-                                        null));
-                        append(ipc, filtersDepot, mkFilters(2L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
-                                        "casual", "man", List.of("woman"), 28, 22, 34, null, null, null, null, null,
-                                        null));
-                        append(ipc, filtersDepot, mkFilters(3L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
-                                        "casual", "man", List.of("woman"), 29, 22, 34, null, null, null, null, null,
-                                        null));
-                        append(ipc, filtersDepot, mkFilters(4L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
-                                        "casual", "man", List.of("woman"), 30, 22, 34, null, null, null, null, null,
-                                        null));
+                        append(ipc, filtersDepot, mkFilters(1L, BOS[0], BOS[1], radiusKmFromToken("my_city"), "casual", "woman", List.of("man"), 27, 22, 34, null, null, null, null));
+                        append(ipc, filtersDepot, mkFilters(2L, BOS[0], BOS[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 28, 22, 34, null, null, null, null));
+                        append(ipc, filtersDepot, mkFilters(3L, BOS[0], BOS[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 29, 22, 34, null, null, null, null));
+                        append(ipc, filtersDepot, mkFilters(4L, BOS[0], BOS[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 30, 22, 34, null, null, null, null));
 
                         requestRefill(refillDepot, 1L, 2);
 
@@ -838,34 +585,13 @@ public class MatchesTest {
                         double[] BOS = CITY_LL.get("Boston, MA, USA");
 
                         // Viewer: politics DEALBREAKER, only wants "left" or "center_left"
-                        Filters viewer = mkFilters(
-                                        1L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "woman", List.of("man"),
-                                        27, 22, 34,
-                                        null, null, null, null,
-                                        null,
-                                        oneToMany("left", List.of("left", "center_left"), Importance.DEALBREAKER));
+                        Filters viewer = mkFilters(1L, BOS[0], BOS[1], radiusKmFromToken("my_city"), "casual", "woman", List.of("man"), 27, 22, 34, null, null, null, oneToMany("left", List.of("left", "center_left"), Importance.DEALBREAKER));
 
                         // Target 2: compatible politics ("left")
-                        Filters targetOk = mkFilters(
-                                        2L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        28, 22, 34,
-                                        null, null, null, null,
-                                        null,
-                                        oneToMany("left", null, Importance.NOT_IMPORTANT));
+                        Filters targetOk = mkFilters(2L, BOS[0], BOS[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 28, 22, 34, null, null, null, oneToMany("left", null, Importance.NOT_IMPORTANT));
 
                         // Target 3: incompatible politics ("right")
-                        Filters targetBad = mkFilters(
-                                        3L, BOS[0], BOS[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        29, 22, 34,
-                                        null, null, null, null,
-                                        null,
-                                        oneToMany("right", null, Importance.NOT_IMPORTANT));
+                        Filters targetBad = mkFilters(3L, BOS[0], BOS[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 29, 22, 34, null, null, null, oneToMany("right", null, Importance.NOT_IMPORTANT));
 
                         append(ipc, filtersDepot, viewer);
                         append(ipc, filtersDepot, targetOk);
@@ -906,34 +632,13 @@ public class MatchesTest {
                         double[] DEN = CITY_LL.get("Denver, CO, USA");
 
                         // Viewer: politically "center", prefers "left"
-                        Filters viewer = mkFilters(
-                                        1L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "woman", List.of("man"),
-                                        27, 22, 34,
-                                        null, null, null, null,
-                                        null,
-                                        oneToMany("center", List.of("left"), Importance.PREFERENCE));
+                        Filters viewer = mkFilters(1L, DEN[0], DEN[1], radiusKmFromToken("my_city"), "casual", "woman", List.of("man"), 27, 22, 34, null, null, null, oneToMany("center", List.of("left"), Importance.PREFERENCE));
 
                         // Target 2: "left" -> should get politics bonus
-                        Filters targetPreferred = mkFilters(
-                                        2L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        28, 22, 34,
-                                        null, null, null, null,
-                                        null,
-                                        oneToMany("left", null, Importance.NOT_IMPORTANT));
+                        Filters targetPreferred = mkFilters(2L, DEN[0], DEN[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 28, 22, 34, null, null, null, oneToMany("left", null, Importance.NOT_IMPORTANT));
 
                         // Target 3: "center" -> no politics bonus
-                        Filters targetNeutral = mkFilters(
-                                        3L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        29, 22, 34,
-                                        null, null, null, null,
-                                        null,
-                                        oneToMany("center", null, Importance.NOT_IMPORTANT));
+                        Filters targetNeutral = mkFilters(3L, DEN[0], DEN[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 29, 22, 34, null, null, null, oneToMany("center", null, Importance.NOT_IMPORTANT));
 
                         append(ipc, filtersDepot, viewer);
                         append(ipc, filtersDepot, targetPreferred);
@@ -981,35 +686,13 @@ public class MatchesTest {
                         double[] DEN = CITY_LL.get("Denver, CO, USA");
 
                         // Viewer: christian, DEALBREAKER: only wants christian
-                        Filters viewer = mkFilters(
-                                        1L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "woman", List.of("man"),
-                                        27, 22, 34,
-                                        null, null, null, null,
-                                        oneToMany("christian", List.of("christian"), Importance.DEALBREAKER),
-                                        null // politics
-                        );
+                        Filters viewer = mkFilters(1L, DEN[0], DEN[1], radiusKmFromToken("my_city"), "casual", "woman", List.of("man"), 27, 22, 34, null, null, oneToMany("christian", List.of("christian"), Importance.DEALBREAKER), null);
 
                         // Target 2: christian → should be allowed
-                        Filters targetOk = mkFilters(
-                                        2L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        28, 22, 34,
-                                        null, null, null, null,
-                                        oneToMany("christian", null, Importance.NOT_IMPORTANT),
-                                        null);
+                        Filters targetOk = mkFilters(2L, DEN[0], DEN[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 28, 22, 34, null, null, oneToMany("christian", null, Importance.NOT_IMPORTANT), null);
 
                         // Target 3: muslim → should be blocked by religion dealbreaker
-                        Filters targetBad = mkFilters(
-                                        3L, DEN[0], DEN[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        29, 22, 34,
-                                        null, null, null, null,
-                                        oneToMany("muslim", null, Importance.NOT_IMPORTANT),
-                                        null);
+                        Filters targetBad = mkFilters(3L, DEN[0], DEN[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 29, 22, 34, null, null, oneToMany("muslim", null, Importance.NOT_IMPORTANT), null);
 
                         append(ipc, filtersDepot, viewer);
                         append(ipc, filtersDepot, targetOk);
@@ -1050,34 +733,13 @@ public class MatchesTest {
                         double[] SEA = CITY_LL.get("Seattle, WA, USA");
 
                         // Viewer: agnostic, prefers "spiritual"
-                        Filters viewer = mkFilters(
-                                        1L, SEA[0], SEA[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "woman", List.of("man"),
-                                        27, 22, 34,
-                                        null, null, null, null,
-                                        oneToMany("agnostic", List.of("spiritual"), Importance.PREFERENCE),
-                                        null);
+                        Filters viewer = mkFilters(1L, SEA[0], SEA[1], radiusKmFromToken("my_city"), "casual", "woman", List.of("man"), 27, 22, 34, null, null, oneToMany("agnostic", List.of("spiritual"), Importance.PREFERENCE), null);
 
                         // Target 2: spiritual → should get religion bonus
-                        Filters targetPreferred = mkFilters(
-                                        2L, SEA[0], SEA[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        28, 22, 34,
-                                        null, null, null, null,
-                                        oneToMany("spiritual", null, Importance.NOT_IMPORTANT),
-                                        null);
+                        Filters targetPreferred = mkFilters(2L, SEA[0], SEA[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 28, 22, 34, null, null, oneToMany("spiritual", null, Importance.NOT_IMPORTANT), null);
 
                         // Target 3: atheist → no religion bonus
-                        Filters targetNeutral = mkFilters(
-                                        3L, SEA[0], SEA[1], radiusKmFromToken("my_city"),
-                                        "casual",
-                                        "man", List.of("woman"),
-                                        29, 22, 34,
-                                        null, null, null, null,
-                                        oneToMany("atheist", null, Importance.NOT_IMPORTANT),
-                                        null);
+                        Filters targetNeutral = mkFilters(3L, SEA[0], SEA[1], radiusKmFromToken("my_city"), "casual", "man", List.of("woman"), 29, 22, 34, null, null, oneToMany("atheist", null, Importance.NOT_IMPORTANT), null);
 
                         append(ipc, filtersDepot, viewer);
                         append(ipc, filtersDepot, targetPreferred);

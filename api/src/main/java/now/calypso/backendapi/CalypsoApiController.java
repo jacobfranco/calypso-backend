@@ -486,11 +486,6 @@ public class CalypsoApiController {
         return tagService.lifestyle();
     }
 
-    @GetMapping("/api/meta/tags/interests")
-    public Map<String, List<String>> interestTags() {
-        return tagService.interests();
-    }
-
     @GetMapping("/api/meta/tags/gender")
     public Map<String, List<String>> genderTags() {
         return tagService.genders();

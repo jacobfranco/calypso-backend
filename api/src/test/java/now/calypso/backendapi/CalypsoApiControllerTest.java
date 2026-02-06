@@ -253,11 +253,11 @@ class CalypsoApiControllerTest {
                 pf.age = age;
 
                 TagPreference wlPref = new TagPreference()
-                                .setTag("weightlifting")
+                                .setTag("non_drinker")
                                 .setImportance(Importance.PREFERENCE);
 
                 ManyToManyFilter life = new ManyToManyFilter()
-                                .setSelf(new ArrayList<>(List.of("weightlifting"))) // ← modifiable
+                                .setSelf(new ArrayList<>(List.of("non_drinker"))) // ← modifiable
                                 .setPreferences(List.of(wlPref));
                 pf.lifestyle = life;
 
@@ -700,9 +700,9 @@ class CalypsoApiControllerTest {
                                 {
                                   "age": { "self": 25, "min": 22, "max": 30 },
                                   "lifestyle": {
-                                    "self": ["weightlifting"],
+                                    "self": ["non_drinker"],
                                     "preferences": [
-                                      { "tag": "weightlifting", "importance": "PREFERENCE" }
+                                      { "tag": "non_drinker", "importance": "PREFERENCE" }
                                     ]
                                   },
                                   "location": { "radiusKm": 35.0 }
@@ -739,62 +739,6 @@ class CalypsoApiControllerTest {
         }
 
         // ---------------------------------------------------------------------------
-        // H) ManyToManyFilter (interests) duplicates & unknown‐tag
-        // ---------------------------------------------------------------------------
-        @Test
-        void postFilters_interestsUnknownTag_returns400() {
-                PostFilters pf = baseFilters();
-                pf.interests = new ManyToManyFilter()
-                                .setSelf(List.of("underwater_basket_weaving"))
-                                .setPreferences(List.of());
-
-                client.post()
-                                .uri("/api/accounts/" + serializedId + "/filters")
-                                .header("Authorization", "Bearer " + sessionToken)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(pf)
-                                .exchange()
-                                .expectStatus().isBadRequest();
-
-                verify(mockManager, never()).postFilters(any(), anyLong());
-        }
-
-        @Test
-        void postFilters_duplicateInterestsSelf_returns400() {
-                PostFilters pf = baseFilters();
-                pf.interests = new ManyToManyFilter().setSelf(List.of("anime", "anime"));
-                client.post()
-                                .uri("/api/accounts/" + serializedId + "/filters")
-                                .header("Authorization", "Bearer " + sessionToken)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(pf)
-                                .exchange()
-                                .expectStatus().isBadRequest();
-                verify(mockManager, never()).postFilters(any(), anyLong());
-        }
-
-        @Test
-        void postFilters_duplicateInterestsPreferences_returns400() {
-                TagPreference t1 = new TagPreference().setTag("board_games").setImportance(Importance.PREFERENCE);
-                TagPreference t2 = new TagPreference().setTag("board_games").setImportance(Importance.DEALBREAKER);
-
-                PostFilters pf = baseFilters();
-                // initialize the interests filter before mutating it:
-                pf.interests = new ManyToManyFilter()
-                                .setPreferences(List.of(t1, t2));
-
-                client.post()
-                                .uri("/api/accounts/" + serializedId + "/filters")
-                                .header("Authorization", "Bearer " + sessionToken)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(pf)
-                                .exchange()
-                                .expectStatus().isBadRequest();
-
-                verify(mockManager, never()).postFilters(any(), anyLong());
-        }
-
-        // ---------------------------------------------------------------------------
         // I) Full‐payload happy‐path
         // ---------------------------------------------------------------------------
         @Test
@@ -807,12 +751,9 @@ class CalypsoApiControllerTest {
                 pf.location = new LocationFilter().setLat(25.7617).setLon(-80.1918).setRadiusKm(250.0);
                 pf.religion = new OneToManyFilter().setSeeking(List.of("agnostic"));
                 pf.politics = new OneToManyFilter().setSelf("liberal");
-                pf.lifestyle = new ManyToManyFilter().setSelf(List.of("yoga"))
-                                .setPreferences(List.of(new TagPreference().setTag("yoga")
+                pf.lifestyle = new ManyToManyFilter().setSelf(List.of("non_drinker"))
+                                .setPreferences(List.of(new TagPreference().setTag("non_drinker")
                                                 .setImportance(Importance.PREFERENCE)));
-                pf.interests = new ManyToManyFilter().setSelf(List.of("hiking"))
-                                .setPreferences(List.of(new TagPreference().setTag("hiking")
-                                                .setImportance(Importance.DEALBREAKER)));
 
                 when(mockManager.postFilters(any(), eq(7L)))
                                 .thenReturn(CompletableFuture.completedFuture(true));
@@ -851,19 +792,8 @@ class CalypsoApiControllerTest {
                                 .exchange()
                                 .expectStatus().isOk()
                                 .expectBody()
-                                .jsonPath("$.fitness").isArray()
-                                .jsonPath("$.dietary").isArray();
-        }
-
-        @Test
-        void getMetaTags_interests_returns200() {
-                client.get()
-                                .uri("/api/meta/tags/interests")
-                                .exchange()
-                                .expectStatus().isOk()
-                                .expectBody()
-                                .jsonPath("$.sports_fan").isArray()
-                                .jsonPath("$.arts_crafts").isArray();
+                                .jsonPath("$.kids").isArray()
+                                .jsonPath("$.relationship_structure").isArray();
         }
 
         @Test

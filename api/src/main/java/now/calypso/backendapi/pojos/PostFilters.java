@@ -15,7 +15,6 @@ public class PostFilters {
     public OneToManyFilter religion;
     public OneToManyFilter politics;
     public ManyToManyFilter lifestyle;
-    public ManyToManyFilter interests;
 
     public PostFilters() {
     }
@@ -34,7 +33,6 @@ public class PostFilters {
         f.setReligion(religion);
         f.setPolitics(politics);
         f.setLifestyle(lifestyle);
-        f.setInterests(interests);
         return f;
     }
 }
