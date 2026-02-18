@@ -150,6 +150,51 @@ class CalypsoApiControllerTest {
                                 .exchange().expectStatus().isOk();
         }
 
+        @Test
+        void requestPhoneCode_existingAccount_returnsExistingTrue() {
+                when(mockManager.getAccountId("+15555550123"))
+                                .thenReturn(CompletableFuture.completedFuture(7L));
+                when(mockManager.requestPhoneCode("+15555550123"))
+                                .thenReturn(CompletableFuture.completedFuture("123456"));
+
+                client.post().uri("/api/accounts/phone/request")
+                                .bodyValue(new PostPhoneRequest("+15555550123"))
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.existing").isEqualTo(true);
+        }
+
+        @Test
+        void verifyPhoneCode_existingAccount_returnsToken() {
+                when(mockManager.verifyPhoneCode("+15555550124", "123456"))
+                                .thenReturn(CompletableFuture.completedFuture("verify-token"));
+                when(mockManager.getAccountId("+15555550124"))
+                                .thenReturn(CompletableFuture.completedFuture(7L));
+
+                client.post().uri("/api/accounts/phone/verify")
+                                .bodyValue(new PostPhoneVerify("+15555550124", "123456"))
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.access_token").isNotEmpty();
+        }
+
+        @Test
+        void verifyPhoneCode_newAccount_returnsVerificationToken() {
+                when(mockManager.verifyPhoneCode("+15555550125", "123456"))
+                                .thenReturn(CompletableFuture.completedFuture("verify-token"));
+                when(mockManager.getAccountId("+15555550125"))
+                                .thenReturn(CompletableFuture.completedFuture(null));
+
+                client.post().uri("/api/accounts/phone/verify")
+                                .bodyValue(new PostPhoneVerify("+15555550125", "123456"))
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.verification_token").isEqualTo("verify-token");
+        }
+
         // GET /api/accounts/{id}
         @Test
         void getAccount_invalidIdFormat_returns400() {

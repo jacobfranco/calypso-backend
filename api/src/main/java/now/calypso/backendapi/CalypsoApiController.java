@@ -341,14 +341,20 @@ public class CalypsoApiController {
                         }
                     }));
         }
+        Mono<Boolean> existingAccount = Mono.fromFuture(manager.getAccountId(phoneNumber))
+                .map(Objects::nonNull)
+                .onErrorReturn(false)
+                .defaultIfEmpty(false);
         return Mono.fromFuture(manager.requestPhoneCode(phoneNumber))
-                .map(code -> {
+                .zipWith(existingAccount)
+                .map(result -> {
                     HashMap<String, Object> payload = new HashMap<>();
                     String fallbackValue = System.getenv("CALYPSO_SMS_FALLBACK");
                     if (fallbackValue != null && fallbackValue.trim().equalsIgnoreCase("true")) {
-                        payload.put("code", code);
+                        payload.put("code", result.getT1());
                         payload.put("fallback", true);
                     }
+                    payload.put("existing", result.getT2());
                     return (Object) payload;
                 })
                 .onErrorResume(IllegalStateException.class, err -> {
@@ -366,7 +372,8 @@ public class CalypsoApiController {
     }
 
     @PostMapping("/api/accounts/phone/verify")
-    public Mono<Object> verifyPhoneCode(ServerHttpResponse response, @RequestBody PostPhoneVerify params) {
+    public Mono<Object> verifyPhoneCode(WebSession session, ServerHttpResponse response,
+            @RequestBody PostPhoneVerify params) {
         if (params.phone_number == null || params.phone_number.trim().isEmpty()) {
             response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
             return Mono.just(new GetErrorDetails(
@@ -406,7 +413,14 @@ public class CalypsoApiController {
         }
         String code = params.code.trim();
         return Mono.fromFuture(manager.verifyPhoneCode(phoneNumber, code))
-                .map(result -> (Object) new GetPhoneVerification(result))
+                .flatMap(result -> Mono.fromFuture(manager.getAccountId(phoneNumber))
+                        .filter(Objects::nonNull)
+                        .flatMap(accountId -> Mono.fromFuture(manager.getAccountWithId(accountId)))
+                        .flatMap(accountWithId -> Mono.fromFuture(manager.consumePhoneVerification(phoneNumber, result))
+                                .onErrorReturn(false)
+                                .then(this.loginWithAccount(session, "read write follow push", accountWithId)))
+                        .cast(Object.class)
+                        .switchIfEmpty(Mono.just((Object) new GetPhoneVerification(result))))
                 .onErrorResume(IllegalArgumentException.class, err -> {
                     response.setStatusCode(HttpStatus.UNPROCESSABLE_ENTITY);
                     return Mono.just(new GetErrorDetails(
