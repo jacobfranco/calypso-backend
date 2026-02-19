@@ -645,24 +645,7 @@ class CalypsoApiControllerTest {
         }
 
         @Test
-        void postFilters_religionValidSeeking_returns200() {
-                PostFilters pf = baseFilters();
-                pf.religion = new OneToManyFilter().setSeeking(List.of("buddhist"));
-                when(mockManager.postFilters(any(), eq(7L)))
-                                .thenReturn(CompletableFuture.completedFuture(true));
-
-                client.post()
-                                .uri("/api/accounts/" + serializedId + "/filters")
-                                .header("Authorization", "Bearer " + sessionToken)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(pf)
-                                .exchange()
-                                .expectStatus().isOk();
-                verify(mockManager).postFilters(any(), eq(7L));
-        }
-
-        @Test
-        void postFilters_religionUnknownSeeking_returns400() {
+        void postFilters_religionSeeking_returns400() {
                 PostFilters pf = baseFilters();
                 pf.religion = new OneToManyFilter().setSeeking(List.of("pastafarian"));
                 client.post()
@@ -794,7 +777,7 @@ class CalypsoApiControllerTest {
                 pf.age = new RangeFilter().setSelf(27).setMin(23).setMax(32).setImportance(Importance.NOT_IMPORTANT);
                 // Miami approx, state-ish radius
                 pf.location = new LocationFilter().setLat(25.7617).setLon(-80.1918).setRadiusKm(250.0);
-                pf.religion = new OneToManyFilter().setSeeking(List.of("agnostic"));
+                pf.religion = new OneToManyFilter().setSelf("agnostic").setImportance(Importance.PREFERENCE);
                 pf.politics = new OneToManyFilter().setSelf("liberal");
                 pf.lifestyle = new ManyToManyFilter().setSelf(List.of("non_drinker"))
                                 .setPreferences(List.of(new TagPreference().setTag("non_drinker")

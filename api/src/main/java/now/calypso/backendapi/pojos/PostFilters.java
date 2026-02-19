@@ -26,6 +26,12 @@ public class PostFilters {
         Filters f = new Filters();
         // Thrift struct defines accountId as a string
         f.setAccountId(accountId);
+        if (religion != null) {
+            religion.unsetSeeking();
+        }
+        if (politics != null) {
+            politics.unsetSeeking();
+        }
         f.setRelationshipMode(relationshipMode);
         f.setGender(gender);
         f.setAge(age);

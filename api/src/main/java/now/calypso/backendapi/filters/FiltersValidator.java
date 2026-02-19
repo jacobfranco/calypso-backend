@@ -64,8 +64,8 @@ public class FiltersValidator {
         // --- tag sanity & duplicates ---------------------------------------
         checkMany(p.lifestyle, tags.lifestyleFlat(), "lifestyle");
         checkOne(p.gender, tags.gendersFlat(), "gender");
-        checkOne(p.religion, tags.religionsFlat(), "religion");
-        checkOne(p.politics, tags.politicsFlat(), "politics");
+        checkOneSelfOnly(p.religion, tags.religionsFlat(), "religion");
+        checkOneSelfOnly(p.politics, tags.politicsFlat(), "politics");
     }
 
     private void checkMany(ManyToManyFilter m, Set<String> allowed, String field) {
@@ -100,6 +100,17 @@ public class FiltersValidator {
                     throw new IllegalArgumentException("Unknown tag '" + tag + "' in " + field + ".seeking");
                 }
             }
+        }
+    }
+
+    private void checkOneSelfOnly(OneToManyFilter m, Set<String> allowed, String field) {
+        if (m == null)
+            return;
+        if (m.getSelf() != null && !allowed.contains(m.getSelf())) {
+            throw new IllegalArgumentException("Unknown tag '" + m.getSelf() + "' in " + field + ".self");
+        }
+        if (m.getSeeking() != null && !m.getSeeking().isEmpty()) {
+            throw new IllegalArgumentException(field + ".seeking is not supported");
         }
     }
 

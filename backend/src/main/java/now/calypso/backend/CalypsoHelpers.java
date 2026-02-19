@@ -386,73 +386,10 @@ public class CalypsoHelpers {
     }
 
     public static boolean politicsCompatible(Filters viewer, Filters target) {
-        OneToManyFilter vp = getPolitics(viewer);
-        OneToManyFilter tp = getPolitics(target);
-
-        Importance vImp = getOneToManyImportance(vp);
-        Importance tImp = getOneToManyImportance(tp);
-
-        // If nobody cares, allow
-        boolean vCares = (vp != null && vImp == Importance.DEALBREAKER);
-        boolean tCares = (tp != null && tImp == Importance.DEALBREAKER);
-        if (!vCares && !tCares) {
-            return true;
-        }
-
-        // Viewer dealbreaker: target.self must be in viewer.seeking
-        if (vCares) {
-            String tSelf = getOneToManySelf(tp);
-            List<String> vSeek = getOneToManySeeking(vp);
-            if (tSelf == null || vSeek == null || vSeek.isEmpty() || !vSeek.contains(tSelf)) {
-                return false;
-            }
-        }
-
-        // Target dealbreaker: viewer.self must be in target.seeking
-        if (tCares) {
-            String vSelf = getOneToManySelf(vp);
-            List<String> tSeek = getOneToManySeeking(tp);
-            if (vSelf == null || tSeek == null || tSeek.isEmpty() || !tSeek.contains(vSelf)) {
-                return false;
-            }
-        }
-
         return true;
     }
 
     public static boolean religionCompatible(Filters viewer, Filters target) {
-        OneToManyFilter vr = getReligion(viewer);
-        OneToManyFilter tr = getReligion(target);
-
-        Importance vImp = getOneToManyImportance(vr);
-        Importance tImp = getOneToManyImportance(tr);
-
-        boolean vCares = (vr != null && vImp == Importance.DEALBREAKER);
-        boolean tCares = (tr != null && tImp == Importance.DEALBREAKER);
-
-        // Nobody marked religion as a dealbreaker → allow
-        if (!vCares && !tCares) {
-            return true;
-        }
-
-        // Viewer dealbreaker: target.self must be in viewer.seeking
-        if (vCares) {
-            String tSelf = getOneToManySelf(tr);
-            List<String> vSeek = getOneToManySeeking(vr);
-            if (tSelf == null || vSeek == null || vSeek.isEmpty() || !vSeek.contains(tSelf)) {
-                return false;
-            }
-        }
-
-        // Target dealbreaker: viewer.self must be in target.seeking
-        if (tCares) {
-            String vSelf = getOneToManySelf(vr);
-            List<String> tSeek = getOneToManySeeking(tr);
-            if (vSelf == null || tSeek == null || tSeek.isEmpty() || !tSeek.contains(vSelf)) {
-                return false;
-            }
-        }
-
         return true;
     }
 
@@ -489,26 +426,18 @@ public class CalypsoHelpers {
         OneToManyFilter tp = getPolitics(target);
 
         double bonus = 0.0;
+        String vSelf = getOneToManySelf(vp);
+        String tSelf = getOneToManySelf(tp);
 
-        if (vp != null) {
-            Importance vImp = getOneToManyImportance(vp);
-            if (vImp == Importance.PREFERENCE) {
-                String tSelf = getOneToManySelf(tp);
-                List<String> vSeek = getOneToManySeeking(vp);
-                if (tSelf != null && vSeek != null && vSeek.contains(tSelf)) {
-                    bonus += 10.0;
-                }
+        if (vSelf != null && tSelf != null) {
+            boolean match = vSelf.equals(tSelf);
+            if (vp != null) {
+                Importance vImp = getOneToManyImportance(vp);
+                bonus += alignmentDelta(vImp, match, 10.0, 20.0, 15.0, 30.0);
             }
-        }
-
-        if (tp != null) {
-            Importance tImp = getOneToManyImportance(tp);
-            if (tImp == Importance.PREFERENCE) {
-                String vSelf = getOneToManySelf(vp);
-                List<String> tSeek = getOneToManySeeking(tp);
-                if (vSelf != null && tSeek != null && tSeek.contains(vSelf)) {
-                    bonus += 5.0;
-                }
+            if (tp != null) {
+                Importance tImp = getOneToManyImportance(tp);
+                bonus += alignmentDelta(tImp, match, 5.0, 10.0, 8.0, 16.0);
             }
         }
 
@@ -520,30 +449,40 @@ public class CalypsoHelpers {
         OneToManyFilter tr = getReligion(target);
 
         double bonus = 0.0;
+        String vSelf = getOneToManySelf(vr);
+        String tSelf = getOneToManySelf(tr);
 
-        if (vr != null) {
-            Importance vImp = getOneToManyImportance(vr);
-            if (vImp == Importance.PREFERENCE) {
-                String tSelf = getOneToManySelf(tr);
-                List<String> vSeek = getOneToManySeeking(vr);
-                if (tSelf != null && vSeek != null && vSeek.contains(tSelf)) {
-                    bonus += 10.0;
-                }
+        if (vSelf != null && tSelf != null) {
+            boolean match = vSelf.equals(tSelf);
+            if (vr != null) {
+                Importance vImp = getOneToManyImportance(vr);
+                bonus += alignmentDelta(vImp, match, 10.0, 20.0, 15.0, 30.0);
             }
-        }
-
-        if (tr != null) {
-            Importance tImp = getOneToManyImportance(tr);
-            if (tImp == Importance.PREFERENCE) {
-                String vSelf = getOneToManySelf(vr);
-                List<String> tSeek = getOneToManySeeking(tr);
-                if (vSelf != null && tSeek != null && tSeek.contains(vSelf)) {
-                    bonus += 5.0;
-                }
+            if (tr != null) {
+                Importance tImp = getOneToManyImportance(tr);
+                bonus += alignmentDelta(tImp, match, 5.0, 10.0, 8.0, 16.0);
             }
         }
 
         return bonus;
+    }
+
+    private static double alignmentDelta(
+            Importance importance,
+            boolean match,
+            double preferenceMatch,
+            double dealbreakerMatch,
+            double preferenceMismatch,
+            double dealbreakerMismatch) {
+        if (importance == null)
+            return 0.0;
+        if (importance == Importance.DEALBREAKER) {
+            return match ? dealbreakerMatch : -dealbreakerMismatch;
+        }
+        if (importance == Importance.PREFERENCE) {
+            return match ? preferenceMatch : -preferenceMismatch;
+        }
+        return 0.0;
     }
 
     /**
