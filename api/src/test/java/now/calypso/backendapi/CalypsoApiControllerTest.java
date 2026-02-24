@@ -692,7 +692,7 @@ class CalypsoApiControllerTest {
         @Test
         void postFilters_validRelationshipMode_returns200() {
                 PostFilters pf = baseFilters();
-                pf.relationshipMode = new ModeFilter().setSelf("serious");
+                pf.relationshipMode = new ModeFilter().setSelf("focused");
                 when(mockManager.postFilters(any(), eq(7L)))
                                 .thenReturn(CompletableFuture.completedFuture(true));
 
@@ -772,7 +772,7 @@ class CalypsoApiControllerTest {
         @Test
         void postFilters_fullPayload_returns200() {
                 PostFilters pf = new PostFilters();
-                pf.relationshipMode = new ModeFilter().setSelf("casual");
+                pf.relationshipMode = new ModeFilter().setSelf("balanced");
                 pf.gender = new OneToManyFilter().setSelf("nonbinary").setImportance(Importance.PREFERENCE);
                 pf.age = new RangeFilter().setSelf(27).setMin(23).setMax(32).setImportance(Importance.NOT_IMPORTANT);
                 // Miami approx, state-ish radius

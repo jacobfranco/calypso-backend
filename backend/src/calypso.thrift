@@ -78,7 +78,7 @@ struct AttachmentWithId {
 
 struct Filters {
   1: required AccountId accountId;
-  2: required ModeFilter relationshipMode;         // casual, serious
+  2: required ModeFilter relationshipMode;         // focused, balanced, exploratory
   3: required OneToManyFilter gender;              // self + seeking genders
   4: required RangeFilter age;                     // self + desired age range
   5: required LocationFilter location;             // self location + scope (e.g. city, state)
@@ -124,7 +124,7 @@ struct LocationFilter {
 }
 
 struct ModeFilter {
-  1: required string self;              // "casual", "serious"
+  1: required string self;              // "focused", "balanced", "exploratory"
 }
 
 enum SignalIntent {

@@ -16,8 +16,9 @@ public class Matches implements RamaModule {
         // ------- Tunables -------
         private static final int HEAP_K = 400;
         private static final long EXPOSURE_TTL_MS = 14L * 24 * 60 * 60 * 1000L; // 14 days
-        private static final double MIN_SCORE_CASUAL = 60.0;
-        private static final double MIN_SCORE_SERIOUS = 75.0;
+        private static final double MIN_SCORE_EXPLORATORY = 50.0;
+        private static final double MIN_SCORE_BALANCED = 60.0;
+        private static final double MIN_SCORE_FOCUSED = 75.0;
 
         // ---------------------------
         // Low-level helpers
@@ -291,18 +292,21 @@ public class Matches implements RamaModule {
                                                                                                                         + politicsBonus
                                                                                                                         + religionBonus;
 
-                                                                                                        // Serious vs
-                                                                                                        // casual floor
+                                                                                                        // Relationship
+                                                                                                        // mode floor
                                                                                                         // applies to
                                                                                                         // final score
                                                                                                         String viewerMode = CalypsoHelpers
                                                                                                                         .getModeSelfOrNull(
                                                                                                                                         viewer);
-                                                                                                        double floor = ("serious"
-                                                                                                                        .equalsIgnoreCase(
-                                                                                                                                        viewerMode))
-                                                                                                                                                        ? MIN_SCORE_SERIOUS
-                                                                                                                                                        : MIN_SCORE_CASUAL;
+                                                                                                        double floor;
+                                                                                                        if ("focused".equalsIgnoreCase(viewerMode)) {
+                                                                                                                floor = MIN_SCORE_FOCUSED;
+                                                                                                        } else if ("exploratory".equalsIgnoreCase(viewerMode)) {
+                                                                                                                floor = MIN_SCORE_EXPLORATORY;
+                                                                                                        } else {
+                                                                                                                floor = MIN_SCORE_BALANCED;
+                                                                                                        }
                                                                                                         if (finalScore < floor) {
                                                                                                                 return null;
                                                                                                         }

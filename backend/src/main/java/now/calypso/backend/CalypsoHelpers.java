@@ -346,19 +346,10 @@ public class CalypsoHelpers {
 
     /**
      * Mode rules:
-     * - If viewer is "serious", only match serious.
-     * - If viewer is "casual", accept casual or serious.
+     * - Relationship mode only affects score floors (focused/balanced/exploratory).
+     * - Do not block matches by mode.
      */
     public static boolean modesCompatible(Filters viewer, Filters target) {
-        String vm = getModeSelfOrNull(viewer);
-        String tm = getModeSelfOrNull(target);
-        if (vm == null || tm == null)
-            return true;
-
-        if ("serious".equals(vm)) {
-            return "serious".equals(tm);
-        }
-        // viewer casual: allow both
         return true;
     }
 

@@ -11,7 +11,8 @@ public class FiltersValidator {
 
     private final TagDictionaryService tags;
 
-    private static final Set<String> ALLOWED_RELATIONSHIP_MODES = Set.of("casual", "serious");
+    private static final Set<String> ALLOWED_RELATIONSHIP_MODES =
+            Set.of("focused", "balanced", "exploratory");
 
     public FiltersValidator(TagDictionaryService tags) {
         this.tags = tags;
