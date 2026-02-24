@@ -59,6 +59,17 @@ public class FiltersValidator {
             if (Double.isNaN(rkm) || Double.isInfinite(rkm) || rkm <= 0.0 || rkm > 30000.0) {
                 throw new IllegalArgumentException("location.radiusKm must be in (0, 30000]");
             }
+
+            if (loc.isSetScope() && loc.getScope() == LocationScope.COUNTRY) {
+                String code = loc.getCountryCode();
+                if (code == null || code.isBlank()) {
+                    throw new IllegalArgumentException("location.countryCode is required for country scope");
+                }
+                String trimmed = code.trim();
+                if (trimmed.length() != 2) {
+                    throw new IllegalArgumentException("location.countryCode must be an ISO-3166 alpha-2 code");
+                }
+            }
         }
 
         // --- tag sanity & duplicates ---------------------------------------

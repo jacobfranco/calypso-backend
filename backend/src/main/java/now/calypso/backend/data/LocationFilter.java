@@ -14,6 +14,9 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
   private static final org.apache.thrift.protocol.TField LON_FIELD_DESC = new org.apache.thrift.protocol.TField("lon", org.apache.thrift.protocol.TType.DOUBLE, (short)2);
   private static final org.apache.thrift.protocol.TField RADIUS_KM_FIELD_DESC = new org.apache.thrift.protocol.TField("radiusKm", org.apache.thrift.protocol.TType.DOUBLE, (short)3);
   private static final org.apache.thrift.protocol.TField IMPORTANCE_FIELD_DESC = new org.apache.thrift.protocol.TField("importance", org.apache.thrift.protocol.TType.I32, (short)4);
+  private static final org.apache.thrift.protocol.TField SCOPE_FIELD_DESC = new org.apache.thrift.protocol.TField("scope", org.apache.thrift.protocol.TType.I32, (short)5);
+  private static final org.apache.thrift.protocol.TField COUNTRY_CODE_FIELD_DESC = new org.apache.thrift.protocol.TField("countryCode", org.apache.thrift.protocol.TType.STRING, (short)6);
+  private static final org.apache.thrift.protocol.TField DISTANCE_UNIT_FIELD_DESC = new org.apache.thrift.protocol.TField("distanceUnit", org.apache.thrift.protocol.TType.I32, (short)7);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new LocationFilterStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new LocationFilterTupleSchemeFactory();
@@ -26,6 +29,17 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
    * @see Importance
    */
   public @org.apache.thrift.annotation.Nullable Importance importance; // optional
+  /**
+   * 
+   * @see LocationScope
+   */
+  public @org.apache.thrift.annotation.Nullable LocationScope scope; // optional
+  public @org.apache.thrift.annotation.Nullable java.lang.String countryCode; // optional
+  /**
+   * 
+   * @see DistanceUnit
+   */
+  public @org.apache.thrift.annotation.Nullable DistanceUnit distanceUnit; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
@@ -36,7 +50,18 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
      * 
      * @see Importance
      */
-    IMPORTANCE((short)4, "importance");
+    IMPORTANCE((short)4, "importance"),
+    /**
+     * 
+     * @see LocationScope
+     */
+    SCOPE((short)5, "scope"),
+    COUNTRY_CODE((short)6, "countryCode"),
+    /**
+     * 
+     * @see DistanceUnit
+     */
+    DISTANCE_UNIT((short)7, "distanceUnit");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -60,6 +85,12 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
           return RADIUS_KM;
         case 4: // IMPORTANCE
           return IMPORTANCE;
+        case 5: // SCOPE
+          return SCOPE;
+        case 6: // COUNTRY_CODE
+          return COUNTRY_CODE;
+        case 7: // DISTANCE_UNIT
+          return DISTANCE_UNIT;
         default:
           return null;
       }
@@ -107,7 +138,7 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
   private static final int __LON_ISSET_ID = 1;
   private static final int __RADIUSKM_ISSET_ID = 2;
   private byte __isset_bitfield = 0;
-  private static final _Fields[] optionals = {_Fields.IMPORTANCE};
+  private static final _Fields[] optionals = {_Fields.IMPORTANCE,_Fields.SCOPE,_Fields.COUNTRY_CODE,_Fields.DISTANCE_UNIT};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
@@ -119,6 +150,12 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.DOUBLE)));
     tmpMap.put(_Fields.IMPORTANCE, new org.apache.thrift.meta_data.FieldMetaData("importance", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.EnumMetaData(org.apache.thrift.protocol.TType.ENUM, Importance.class)));
+    tmpMap.put(_Fields.SCOPE, new org.apache.thrift.meta_data.FieldMetaData("scope", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+        new org.apache.thrift.meta_data.EnumMetaData(org.apache.thrift.protocol.TType.ENUM, LocationScope.class)));
+    tmpMap.put(_Fields.COUNTRY_CODE, new org.apache.thrift.meta_data.FieldMetaData("countryCode", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
+    tmpMap.put(_Fields.DISTANCE_UNIT, new org.apache.thrift.meta_data.FieldMetaData("distanceUnit", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+        new org.apache.thrift.meta_data.EnumMetaData(org.apache.thrift.protocol.TType.ENUM, DistanceUnit.class)));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(LocationFilter.class, metaDataMap);
   }
@@ -151,6 +188,15 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
     if (other.isSetImportance()) {
       this.importance = other.importance;
     }
+    if (other.isSetScope()) {
+      this.scope = other.scope;
+    }
+    if (other.isSetCountryCode()) {
+      this.countryCode = other.countryCode;
+    }
+    if (other.isSetDistanceUnit()) {
+      this.distanceUnit = other.distanceUnit;
+    }
   }
 
   @Override
@@ -167,6 +213,9 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
     setRadiusKmIsSet(false);
     this.radiusKm = 0.0;
     this.importance = null;
+    this.scope = null;
+    this.countryCode = null;
+    this.distanceUnit = null;
   }
 
   public double getLat() {
@@ -271,6 +320,97 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
     }
   }
 
+  /**
+   * 
+   * @see LocationScope
+   */
+  @org.apache.thrift.annotation.Nullable
+  public LocationScope getScope() {
+    return this.scope;
+  }
+
+  /**
+   * 
+   * @see LocationScope
+   */
+  public LocationFilter setScope(@org.apache.thrift.annotation.Nullable LocationScope scope) {
+    this.scope = scope;
+    return this;
+  }
+
+  public void unsetScope() {
+    this.scope = null;
+  }
+
+  /** Returns true if field scope is set (has been assigned a value) and false otherwise */
+  public boolean isSetScope() {
+    return this.scope != null;
+  }
+
+  public void setScopeIsSet(boolean value) {
+    if (!value) {
+      this.scope = null;
+    }
+  }
+
+  @org.apache.thrift.annotation.Nullable
+  public java.lang.String getCountryCode() {
+    return this.countryCode;
+  }
+
+  public LocationFilter setCountryCode(@org.apache.thrift.annotation.Nullable java.lang.String countryCode) {
+    this.countryCode = countryCode;
+    return this;
+  }
+
+  public void unsetCountryCode() {
+    this.countryCode = null;
+  }
+
+  /** Returns true if field countryCode is set (has been assigned a value) and false otherwise */
+  public boolean isSetCountryCode() {
+    return this.countryCode != null;
+  }
+
+  public void setCountryCodeIsSet(boolean value) {
+    if (!value) {
+      this.countryCode = null;
+    }
+  }
+
+  /**
+   * 
+   * @see DistanceUnit
+   */
+  @org.apache.thrift.annotation.Nullable
+  public DistanceUnit getDistanceUnit() {
+    return this.distanceUnit;
+  }
+
+  /**
+   * 
+   * @see DistanceUnit
+   */
+  public LocationFilter setDistanceUnit(@org.apache.thrift.annotation.Nullable DistanceUnit distanceUnit) {
+    this.distanceUnit = distanceUnit;
+    return this;
+  }
+
+  public void unsetDistanceUnit() {
+    this.distanceUnit = null;
+  }
+
+  /** Returns true if field distanceUnit is set (has been assigned a value) and false otherwise */
+  public boolean isSetDistanceUnit() {
+    return this.distanceUnit != null;
+  }
+
+  public void setDistanceUnitIsSet(boolean value) {
+    if (!value) {
+      this.distanceUnit = null;
+    }
+  }
+
   @Override
   public void setFieldValue(_Fields field, @org.apache.thrift.annotation.Nullable java.lang.Object value) {
     switch (field) {
@@ -306,6 +446,30 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
       }
       break;
 
+    case SCOPE:
+      if (value == null) {
+        unsetScope();
+      } else {
+        setScope((LocationScope)value);
+      }
+      break;
+
+    case COUNTRY_CODE:
+      if (value == null) {
+        unsetCountryCode();
+      } else {
+        setCountryCode((java.lang.String)value);
+      }
+      break;
+
+    case DISTANCE_UNIT:
+      if (value == null) {
+        unsetDistanceUnit();
+      } else {
+        setDistanceUnit((DistanceUnit)value);
+      }
+      break;
+
     }
   }
 
@@ -324,6 +488,15 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
 
     case IMPORTANCE:
       return getImportance();
+
+    case SCOPE:
+      return getScope();
+
+    case COUNTRY_CODE:
+      return getCountryCode();
+
+    case DISTANCE_UNIT:
+      return getDistanceUnit();
 
     }
     throw new java.lang.IllegalStateException();
@@ -345,6 +518,12 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
       return isSetRadiusKm();
     case IMPORTANCE:
       return isSetImportance();
+    case SCOPE:
+      return isSetScope();
+    case COUNTRY_CODE:
+      return isSetCountryCode();
+    case DISTANCE_UNIT:
+      return isSetDistanceUnit();
     }
     throw new java.lang.IllegalStateException();
   }
@@ -398,6 +577,33 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
         return false;
     }
 
+    boolean this_present_scope = true && this.isSetScope();
+    boolean that_present_scope = true && that.isSetScope();
+    if (this_present_scope || that_present_scope) {
+      if (!(this_present_scope && that_present_scope))
+        return false;
+      if (!this.scope.equals(that.scope))
+        return false;
+    }
+
+    boolean this_present_countryCode = true && this.isSetCountryCode();
+    boolean that_present_countryCode = true && that.isSetCountryCode();
+    if (this_present_countryCode || that_present_countryCode) {
+      if (!(this_present_countryCode && that_present_countryCode))
+        return false;
+      if (!this.countryCode.equals(that.countryCode))
+        return false;
+    }
+
+    boolean this_present_distanceUnit = true && this.isSetDistanceUnit();
+    boolean that_present_distanceUnit = true && that.isSetDistanceUnit();
+    if (this_present_distanceUnit || that_present_distanceUnit) {
+      if (!(this_present_distanceUnit && that_present_distanceUnit))
+        return false;
+      if (!this.distanceUnit.equals(that.distanceUnit))
+        return false;
+    }
+
     return true;
   }
 
@@ -414,6 +620,18 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
     hashCode = hashCode * 8191 + ((isSetImportance()) ? 131071 : 524287);
     if (isSetImportance())
       hashCode = hashCode * 8191 + importance.getValue();
+
+    hashCode = hashCode * 8191 + ((isSetScope()) ? 131071 : 524287);
+    if (isSetScope())
+      hashCode = hashCode * 8191 + scope.getValue();
+
+    hashCode = hashCode * 8191 + ((isSetCountryCode()) ? 131071 : 524287);
+    if (isSetCountryCode())
+      hashCode = hashCode * 8191 + countryCode.hashCode();
+
+    hashCode = hashCode * 8191 + ((isSetDistanceUnit()) ? 131071 : 524287);
+    if (isSetDistanceUnit())
+      hashCode = hashCode * 8191 + distanceUnit.getValue();
 
     return hashCode;
   }
@@ -466,6 +684,36 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
         return lastComparison;
       }
     }
+    lastComparison = java.lang.Boolean.compare(isSetScope(), other.isSetScope());
+    if (lastComparison != 0) {
+      return lastComparison;
+    }
+    if (isSetScope()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.scope, other.scope);
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+    }
+    lastComparison = java.lang.Boolean.compare(isSetCountryCode(), other.isSetCountryCode());
+    if (lastComparison != 0) {
+      return lastComparison;
+    }
+    if (isSetCountryCode()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.countryCode, other.countryCode);
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+    }
+    lastComparison = java.lang.Boolean.compare(isSetDistanceUnit(), other.isSetDistanceUnit());
+    if (lastComparison != 0) {
+      return lastComparison;
+    }
+    if (isSetDistanceUnit()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.distanceUnit, other.distanceUnit);
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+    }
     return 0;
   }
 
@@ -508,6 +756,36 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
         sb.append("null");
       } else {
         sb.append(this.importance);
+      }
+      first = false;
+    }
+    if (isSetScope()) {
+      if (!first) sb.append(", ");
+      sb.append("scope:");
+      if (this.scope == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.scope);
+      }
+      first = false;
+    }
+    if (isSetCountryCode()) {
+      if (!first) sb.append(", ");
+      sb.append("countryCode:");
+      if (this.countryCode == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.countryCode);
+      }
+      first = false;
+    }
+    if (isSetDistanceUnit()) {
+      if (!first) sb.append(", ");
+      sb.append("distanceUnit:");
+      if (this.distanceUnit == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.distanceUnit);
       }
       first = false;
     }
@@ -593,6 +871,30 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
+          case 5: // SCOPE
+            if (schemeField.type == org.apache.thrift.protocol.TType.I32) {
+              struct.scope = now.calypso.backend.data.LocationScope.findByValue(iprot.readI32());
+              struct.setScopeIsSet(true);
+            } else { 
+              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+            }
+            break;
+          case 6: // COUNTRY_CODE
+            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
+              struct.countryCode = iprot.readString();
+              struct.setCountryCodeIsSet(true);
+            } else { 
+              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+            }
+            break;
+          case 7: // DISTANCE_UNIT
+            if (schemeField.type == org.apache.thrift.protocol.TType.I32) {
+              struct.distanceUnit = now.calypso.backend.data.DistanceUnit.findByValue(iprot.readI32());
+              struct.setDistanceUnitIsSet(true);
+            } else { 
+              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+            }
+            break;
           default:
             org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
         }
@@ -634,6 +936,27 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
           oprot.writeFieldEnd();
         }
       }
+      if (struct.scope != null) {
+        if (struct.isSetScope()) {
+          oprot.writeFieldBegin(SCOPE_FIELD_DESC);
+          oprot.writeI32(struct.scope.getValue());
+          oprot.writeFieldEnd();
+        }
+      }
+      if (struct.countryCode != null) {
+        if (struct.isSetCountryCode()) {
+          oprot.writeFieldBegin(COUNTRY_CODE_FIELD_DESC);
+          oprot.writeString(struct.countryCode);
+          oprot.writeFieldEnd();
+        }
+      }
+      if (struct.distanceUnit != null) {
+        if (struct.isSetDistanceUnit()) {
+          oprot.writeFieldBegin(DISTANCE_UNIT_FIELD_DESC);
+          oprot.writeI32(struct.distanceUnit.getValue());
+          oprot.writeFieldEnd();
+        }
+      }
       oprot.writeFieldStop();
       oprot.writeStructEnd();
     }
@@ -659,9 +982,27 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
       if (struct.isSetImportance()) {
         optionals.set(0);
       }
-      oprot.writeBitSet(optionals, 1);
+      if (struct.isSetScope()) {
+        optionals.set(1);
+      }
+      if (struct.isSetCountryCode()) {
+        optionals.set(2);
+      }
+      if (struct.isSetDistanceUnit()) {
+        optionals.set(3);
+      }
+      oprot.writeBitSet(optionals, 4);
       if (struct.isSetImportance()) {
         oprot.writeI32(struct.importance.getValue());
+      }
+      if (struct.isSetScope()) {
+        oprot.writeI32(struct.scope.getValue());
+      }
+      if (struct.isSetCountryCode()) {
+        oprot.writeString(struct.countryCode);
+      }
+      if (struct.isSetDistanceUnit()) {
+        oprot.writeI32(struct.distanceUnit.getValue());
       }
     }
 
@@ -674,10 +1015,22 @@ public class LocationFilter implements org.apache.thrift.TBase<LocationFilter, L
       struct.setLonIsSet(true);
       struct.radiusKm = iprot.readDouble();
       struct.setRadiusKmIsSet(true);
-      java.util.BitSet incoming = iprot.readBitSet(1);
+      java.util.BitSet incoming = iprot.readBitSet(4);
       if (incoming.get(0)) {
         struct.importance = now.calypso.backend.data.Importance.findByValue(iprot.readI32());
         struct.setImportanceIsSet(true);
+      }
+      if (incoming.get(1)) {
+        struct.scope = now.calypso.backend.data.LocationScope.findByValue(iprot.readI32());
+        struct.setScopeIsSet(true);
+      }
+      if (incoming.get(2)) {
+        struct.countryCode = iprot.readString();
+        struct.setCountryCodeIsSet(true);
+      }
+      if (incoming.get(3)) {
+        struct.distanceUnit = now.calypso.backend.data.DistanceUnit.findByValue(iprot.readI32());
+        struct.setDistanceUnitIsSet(true);
       }
     }
   }

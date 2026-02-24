@@ -15,6 +15,17 @@ enum Importance {
   DEALBREAKER   = 3
 }
 
+enum LocationScope {
+  NEARBY    = 1,
+  COUNTRY   = 2,
+  WORLDWIDE = 3
+}
+
+enum DistanceUnit {
+  KM = 1,
+  MI = 2
+}
+
 struct Application {
   1: required string client_id
   2: required string client_secret
@@ -107,6 +118,9 @@ struct LocationFilter {
   2: required double lon;        // e.g. -80.8431
   3: required double radiusKm;   // numeric radius in kilometers
   4: optional Importance importance; // (keep if you want for later)
+  5: optional LocationScope scope;   // nearby/country/worldwide
+  6: optional string countryCode;    // ISO-3166 alpha-2 (e.g. "US")
+  7: optional DistanceUnit distanceUnit; // display-only unit for nearby
 }
 
 struct ModeFilter {

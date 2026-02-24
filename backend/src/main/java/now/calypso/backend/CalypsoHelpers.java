@@ -244,6 +244,34 @@ public class CalypsoHelpers {
         return R * c;
     }
 
+    private static final double WORLDWIDE_RADIUS_KM = 30000.0;
+    private static final double COUNTRY_RADIUS_KM = 3000.0;
+
+    private static LocationScope resolveLocationScope(LocationFilter loc) {
+        if (loc == null)
+            return null;
+        if (loc.isSetScope())
+            return loc.getScope();
+        double radius = loc.getRadiusKm();
+        if (Math.abs(radius - WORLDWIDE_RADIUS_KM) <= 1e-6)
+            return LocationScope.WORLDWIDE;
+        if (Math.abs(radius - COUNTRY_RADIUS_KM) <= 1e-6)
+            return LocationScope.COUNTRY;
+        return LocationScope.NEARBY;
+    }
+
+    private static String normalizeCountryCode(String value) {
+        if (value == null)
+            return null;
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed.toUpperCase(Locale.ROOT);
+    }
+
+    private static boolean withinRadiusKm(LocationFilter viewer, LocationFilter target) {
+        double distKm = haversineKm(viewer.getLat(), viewer.getLon(), target.getLat(), target.getLon());
+        return distKm <= viewer.getRadiusKm() + 1e-9;
+    }
+
     public static boolean gendersCompatible(Filters viewer, Filters target) {
         OneToManyFilter vg = getGender(viewer);
         OneToManyFilter tg = getGender(target);
@@ -302,14 +330,18 @@ public class CalypsoHelpers {
         if (vl == null || tl == null)
             return true; // fail-open if missing
 
-        double vlat = vl.getLat();
-        double vlon = vl.getLon();
-        double tlat = tl.getLat();
-        double tlon = tl.getLon();
-        double rad = vl.getRadiusKm();
+        LocationScope scope = resolveLocationScope(vl);
+        if (scope == LocationScope.WORLDWIDE)
+            return true;
+        if (scope == LocationScope.COUNTRY) {
+            String viewerCountry = normalizeCountryCode(vl.getCountryCode());
+            String targetCountry = normalizeCountryCode(tl.getCountryCode());
+            if (viewerCountry != null && targetCountry != null)
+                return viewerCountry.equals(targetCountry);
+            return withinRadiusKm(vl, tl);
+        }
 
-        double distKm = haversineKm(vlat, vlon, tlat, tlon);
-        return distKm <= rad + 1e-9;
+        return withinRadiusKm(vl, tl);
     }
 
     /**

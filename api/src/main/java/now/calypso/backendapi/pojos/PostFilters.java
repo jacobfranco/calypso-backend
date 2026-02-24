@@ -8,6 +8,10 @@ import now.calypso.backend.data.OneToManyFilter;
 import now.calypso.backend.data.RangeFilter;
 
 public class PostFilters {
+    private static final double DEFAULT_WORLD_LAT = 0.0;
+    private static final double DEFAULT_WORLD_LON = 0.0;
+    private static final double DEFAULT_WORLD_RADIUS_KM = 30000.0;
+
     public ModeFilter relationshipMode;
     public OneToManyFilter gender;
     public RangeFilter age;
@@ -35,10 +39,18 @@ public class PostFilters {
         f.setRelationshipMode(relationshipMode);
         f.setGender(gender);
         f.setAge(age);
-        f.setLocation(location);
+        f.setLocation(location != null ? location : defaultWorldwideLocation());
         f.setReligion(religion);
         f.setPolitics(politics);
         f.setLifestyle(lifestyle);
         return f;
+    }
+
+    private static LocationFilter defaultWorldwideLocation() {
+        return new LocationFilter()
+                .setLat(DEFAULT_WORLD_LAT)
+                .setLon(DEFAULT_WORLD_LON)
+                .setRadiusKm(DEFAULT_WORLD_RADIUS_KM)
+                .setScope(now.calypso.backend.data.LocationScope.WORLDWIDE);
     }
 }
