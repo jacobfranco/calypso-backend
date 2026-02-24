@@ -820,8 +820,8 @@ class CalypsoApiControllerTest {
                                 .exchange()
                                 .expectStatus().isOk()
                                 .expectBody()
-                                .jsonPath("$.kids").isArray()
-                                .jsonPath("$.relationship_structure").isArray();
+                                .jsonPath("$.kids_current").isArray()
+                                .jsonPath("$.kids_future").isArray();
         }
 
         @Test

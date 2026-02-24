@@ -1,17 +1,13 @@
 {
-  "kids": [
+  "kids_current": [
     "has_kids",
-    "wants_kids",
-    "doesnt_want_kids",
-    "open_to_kids",
-    "expecting"
+    "no_kids"
   ],
 
-  "relationship_structure": [
-    "monogamous",
-    "open_relationship",
-    "polyamorous",
-    "ethical_non_monogamy"
+  "kids_future": [
+    "wants_kids",
+    "doesnt_want_kids",
+    "open_to_kids"
   ],
 
   "alcohol_use": [
@@ -25,9 +21,8 @@
     "non_smoker",
     "social_smoker",
     "regular_smoker",
-    "vaping",
-    "cannabis_user"
+    "vaping"
   ],
 
-  "drug_use": ["no_drugs", "recreational_drugs", "psychedelics_user", "sober"]
+  "drug_use": ["no_drugs", "recreational_drugs", "psychedelics_user", "cannabis_user", "sober"]
 }
