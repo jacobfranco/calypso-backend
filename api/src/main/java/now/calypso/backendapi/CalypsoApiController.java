@@ -19,6 +19,7 @@ import now.calypso.backend.CalypsoHelpers;
 import now.calypso.backend.data.*;
 import now.calypso.backendapi.filters.*;
 import now.calypso.backendapi.pojos.*;
+import now.calypso.backendapi.prompts.PromptLibrary;
 import reactor.core.publisher.Mono;
 
 @RestController
@@ -515,6 +516,11 @@ public class CalypsoApiController {
         return tagService.politics();
     }
 
+    @GetMapping("/api/meta/prompts")
+    public List<PromptQuestion> promptLibrary() {
+        return PromptLibrary.all();
+    }
+
     @GetMapping("/api/accounts/{id}/signals")
     public Mono<GetSignals> getSignals(@PathVariable("id") String idStr,
             WebSession session) {
@@ -529,6 +535,20 @@ public class CalypsoApiController {
                         ? new GetSignals(accountId, List.of())
                         : new GetSignals(thrift))
                 .defaultIfEmpty(new GetSignals(accountId, List.of()));
+    }
+
+    @GetMapping("/api/accounts/{id}/prompts")
+    public Mono<GetPromptsState> getPrompts(@PathVariable("id") String idStr, WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getPrompts(accountId, accountId))
+                .map(state -> state == null
+                        ? new GetPromptsState(accountId, List.of())
+                        : new GetPromptsState(state))
+                .defaultIfEmpty(new GetPromptsState(accountId, List.of()));
     }
 
     @GetMapping("/api/accounts/{id}/prompts/next")

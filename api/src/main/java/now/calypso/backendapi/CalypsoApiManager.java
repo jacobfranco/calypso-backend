@@ -614,6 +614,15 @@ public class CalypsoApiManager {
                         List<PromptResponse> responses = state.getResponses() == null
                                 ? new ArrayList<>()
                                 : new ArrayList<>(state.getResponses());
+                        String promptId = response.getQuestion() == null ? null : response.getQuestion().getPromptId();
+                        if (promptId != null) {
+                            responses.removeIf(existing -> {
+                                if (existing == null || existing.getQuestion() == null)
+                                    return false;
+                                String existingId = existing.getQuestion().getPromptId();
+                                return promptId.equals(existingId);
+                            });
+                        }
                         responses.add(new PromptResponse(response));
                         if (responses.size() > 200) {
                             responses = new ArrayList<>(responses.subList(responses.size() - 200, responses.size()));
