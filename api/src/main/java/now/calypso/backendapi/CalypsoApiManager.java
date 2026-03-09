@@ -34,19 +34,19 @@ public class CalypsoApiManager {
     private final OpenAIClient openAI;
 
     private final ConcurrentHashMap<Long, CompletableFuture<Void>> serialByAccount = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, CompletableFuture<Void>> promptSerialByAccount = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, CompletableFuture<AgentSession>> agentSerialByAccount = new ConcurrentHashMap<>();
 
     // Modules
     public static final String CORE_MODULE_NAME = Core.class.getName();
-    public static final String MATCHES_MODULE_NAME = Matches.class.getName();
     public static final String AGENT_MODULE_NAME = Agent.class.getName();
 
     // Core Depots
     private final Depot accountDepot;
     private final Depot applicationDepot;
     private final Depot authCodeDepot;
-    private final Depot promptsDepot;
+    private final Depot publicPromptAnswerDepot;
+    private final Depot publicPromptReactionDepot;
+    private final Depot publicPromptSelectionDepot;
 
     // Core PStates
     private final PState phoneToUser;
@@ -55,7 +55,10 @@ public class CalypsoApiManager {
     // Core Queries
     private final QueryTopologyClient<List<AccountWithId>> getAccountsFromAccountIds;
     private final QueryTopologyClient<Application> getApplicationFromClientId;
-    private final QueryTopologyClient<PromptState> getPromptsStateFromAccountId;
+    private final QueryTopologyClient<PublicPromptAnswer> getPublicPromptAnswerById;
+    private final QueryTopologyClient<List<PublicPromptAnswer>> getPublicPromptFeed;
+    private final QueryTopologyClient<List<PublicPromptAnswer>> getMyPublicPromptAnswers;
+    private final QueryTopologyClient<PublicPromptSelection> getPublicPromptSelection;
     
 
     // Matches Depots
@@ -87,7 +90,9 @@ public class CalypsoApiManager {
         accountDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*accountDepot");
         applicationDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*applicationDepot");
         authCodeDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*authCodeDepot");
-        promptsDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*promptsDepot");
+        publicPromptAnswerDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*publicPromptAnswerDepot");
+        publicPromptReactionDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*publicPromptReactionDepot");
+        publicPromptSelectionDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*publicPromptSelectionDepot");
 
         // Core PStates
         phoneToUser = cluster.clusterPState(CORE_MODULE_NAME, "$$phoneToUser");
@@ -96,19 +101,22 @@ public class CalypsoApiManager {
         // Core Queries
         getAccountsFromAccountIds = cluster.clusterQuery(CORE_MODULE_NAME, "getAccountsFromAccountIds");
         getApplicationFromClientId = cluster.clusterQuery(CORE_MODULE_NAME, "getApplicationFromClientId");
-        getPromptsStateFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getPromptsStateFromAccountId");
+        getPublicPromptAnswerById = cluster.clusterQuery(CORE_MODULE_NAME, "getPublicPromptAnswerById");
+        getPublicPromptFeed = cluster.clusterQuery(CORE_MODULE_NAME, "getPublicPromptFeed");
+        getMyPublicPromptAnswers = cluster.clusterQuery(CORE_MODULE_NAME, "getMyPublicPromptAnswers");
+        getPublicPromptSelection = cluster.clusterQuery(CORE_MODULE_NAME, "getPublicPromptSelection");
 
         // Matches Depots
-        signalsDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*signalsDepot");
-        filtersDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*filtersDepot");
-        matchRefillDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*matchRefillDepot");
-        matchesServeDepot = cluster.clusterDepot(MATCHES_MODULE_NAME, "*matchesServeDepot");
+        signalsDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*signalsDepot");
+        filtersDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*filtersDepot");
+        matchRefillDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*matchRefillDepot");
+        matchesServeDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*matchesServeDepot");
         agentSessionDepot = cluster.clusterDepot(AGENT_MODULE_NAME, "*agentSessionDepot");
 
         // Matches Queries
-        getFiltersFromAccountId = cluster.clusterQuery(MATCHES_MODULE_NAME, "getFiltersFromAccountId");
-        getMatchesFromAccountId = cluster.clusterQuery(MATCHES_MODULE_NAME, "getMatchesFromAccountId");
-        getSignalsFromAccountId = cluster.clusterQuery(MATCHES_MODULE_NAME, "getSignalsFromAccountId");
+        getFiltersFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getFiltersFromAccountId");
+        getMatchesFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getMatchesFromAccountId");
+        getSignalsFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getSignalsFromAccountId");
         getAgentSessionFromAccountId = cluster.clusterQuery(AGENT_MODULE_NAME, "getAgentSessionFromAccountId");
 
     }
@@ -295,10 +303,6 @@ public class CalypsoApiManager {
         return getSignalsFromAccountId.invokeAsync(requesterId, accountId);
     }
 
-    public CompletableFuture<PromptState> getPrompts(long requesterId, long accountId) {
-        return getPromptsStateFromAccountId.invokeAsync(requesterId, accountId);
-    }
-
     public CompletableFuture<AgentSession> getAgentSessionSnapshot(long accountId) {
         CompletableFuture<AgentSession> inflight = agentSerialByAccount.get(accountId);
         if (inflight != null)
@@ -344,21 +348,6 @@ public class CalypsoApiManager {
             map.put(recordKey(r), r);
         }
         return map;
-    }
-
-    private CompletableFuture<PromptState> readCurrentPromptState(long accountId) {
-        return getPrompts(accountId, accountId).thenApply(state -> {
-            if (state == null) {
-                PromptState empty = new PromptState();
-                empty.setAccountId(accountId);
-                empty.setResponses(new ArrayList<>());
-                return empty;
-            }
-            PromptState copy = new PromptState(state);
-            if (!copy.isSetResponses())
-                copy.setResponses(new ArrayList<>());
-            return copy;
-        });
     }
 
     private CompletableFuture<AgentSession> ensureAgentSession(long accountId) {
@@ -471,20 +460,6 @@ public class CalypsoApiManager {
         return intentPart + "|" + token;
     }
 
-    private static MatchCandidate selectCandidate(List<MatchCandidate> candidates) {
-        if (candidates == null)
-            return null;
-        MatchCandidate best = null;
-        for (MatchCandidate c : candidates) {
-            if (c == null)
-                continue;
-            if (best == null || c.getStage0Score() > best.getStage0Score()) {
-                best = c;
-            }
-        }
-        return best;
-    }
-
     private static String normalizeSource(String source) {
         if (source == null || source.isBlank())
             return "manual";
@@ -516,6 +491,126 @@ public class CalypsoApiManager {
         return trimmed.length() > limit ? trimmed.substring(0, limit) : trimmed;
     }
 
+    public CompletableFuture<PublicPromptAnswer> postPublicPromptAnswer(long accountId, String promptId, String body) {
+        if (!PromptLibrary.isPublicPromptId(promptId))
+            throw new IllegalArgumentException("Unknown public prompt: " + promptId);
+        String promptText = PromptLibrary.publicTextById(promptId);
+        if (promptText == null)
+            throw new IllegalArgumentException("Unknown public prompt: " + promptId);
+        String normalized = clampPromptText(body, 800);
+        if (normalized == null)
+            throw new IllegalArgumentException("Answer body required.");
+        long now = System.currentTimeMillis();
+        PublicPromptAnswer base = new PublicPromptAnswer();
+        base.setAnswerId(UUID.randomUUID().toString());
+        base.setAccountId(accountId);
+        base.setPromptId(promptId);
+        base.setBody(normalized);
+        base.setCreatedAt(now);
+        base.setUpdatedAt(now);
+
+        CompletableFuture<List<String>> signals = extractAndAppendSignalsFromPrompt(accountId, promptText, normalized,
+                "public_prompt", base.getAnswerId())
+                .exceptionally(ex -> {
+                    LOG.warn("Signal extraction failed for public prompt answer {}", base.getAnswerId(), ex);
+                    return List.of();
+                });
+
+        return signals.thenCompose(tokens -> {
+            PublicPromptAnswer stored = new PublicPromptAnswer(base);
+            if (tokens != null && !tokens.isEmpty())
+                stored.setSignalTokens(tokens);
+            return publicPromptAnswerDepot.appendAsync(stored)
+                    .thenApply(res -> new PublicPromptAnswer(stored));
+        });
+    }
+
+    public CompletableFuture<List<PublicPromptFeedCard>> getPublicPromptFeed(long accountId, int limit) {
+        int clamped = Math.max(1, Math.min(50, limit));
+        return getPublicPromptFeed.invokeAsync(accountId, clamped).thenApply(answers -> {
+            if (answers == null || answers.isEmpty())
+                return List.of();
+            List<PublicPromptFeedCard> cards = new ArrayList<>();
+            for (PublicPromptAnswer ans : answers) {
+                if (ans == null)
+                    continue;
+                String promptText = PromptLibrary.publicTextById(ans.getPromptId());
+                if (promptText == null)
+                    continue;
+                PublicPromptFeedCard card = new PublicPromptFeedCard();
+                card.setAnswerId(ans.getAnswerId());
+                card.setPromptId(ans.getPromptId());
+                card.setPromptText(promptText);
+                card.setBody(ans.getBody());
+                card.setCreatedAt(ans.getCreatedAt());
+                cards.add(card);
+            }
+            return cards;
+        });
+    }
+
+    public CompletableFuture<List<PublicPromptAnswer>> getMyPublicPromptAnswers(long accountId) {
+        return getMyPublicPromptAnswers.invokeAsync(accountId, accountId)
+                .thenApply(list -> list == null ? List.of() : list);
+    }
+
+    public CompletableFuture<Boolean> postPublicPromptReaction(long viewerId, String answerId,
+            PromptReaction reaction) {
+        if (reaction == null)
+            throw new IllegalArgumentException("Reaction required.");
+        return getPublicPromptAnswerById.invokeAsync(answerId).thenCompose(answer -> {
+            if (answer == null)
+                throw new IllegalArgumentException("Unknown answer: " + answerId);
+            PublicPromptReactionEvent event = new PublicPromptReactionEvent();
+            event.setViewerAccountId(viewerId);
+            event.setAnswerId(answerId);
+            event.setPromptId(answer.getPromptId());
+            event.setReaction(reaction);
+            event.setReactedAt(System.currentTimeMillis());
+            CompletableFuture<Void> persist = publicPromptReactionDepot.appendAsync(event).thenApply(res -> null);
+            if (reaction == PromptReaction.LIKE || reaction == PromptReaction.DISLIKE) {
+                String promptText = PromptLibrary.publicTextById(answer.getPromptId());
+                if (promptText != null) {
+                    return persist.thenCompose(v -> extractAndAppendSignalsFromPrompt(viewerId, promptText,
+                            answer.getBody(), "public_prompt_reaction", answerId))
+                            .thenApply(tokens -> true);
+                }
+            }
+            return persist.thenApply(v -> true);
+        });
+    }
+
+    public CompletableFuture<PublicPromptSelection> getPublicPromptSelection(long accountId) {
+        return getPublicPromptSelection.invokeAsync(accountId, accountId);
+    }
+
+    public CompletableFuture<PublicPromptSelection> postPublicPromptSelection(long accountId,
+            List<String> selectedPromptIds) {
+        List<String> normalized = new ArrayList<>();
+        if (selectedPromptIds != null) {
+            Set<String> seen = new LinkedHashSet<>();
+            for (String promptId : selectedPromptIds) {
+                if (promptId == null)
+                    continue;
+                String trimmed = promptId.trim();
+                if (trimmed.isEmpty())
+                    continue;
+                if (!PromptLibrary.isPublicPromptId(trimmed))
+                    throw new IllegalArgumentException("Unknown public prompt: " + trimmed);
+                if (seen.add(trimmed))
+                    normalized.add(trimmed);
+            }
+        }
+        if (normalized.size() > 12)
+            throw new IllegalArgumentException("Too many selected prompts.");
+        PublicPromptSelection selection = new PublicPromptSelection();
+        selection.setAccountId(accountId);
+        selection.setSelectedPromptIds(normalized);
+        selection.setUpdatedAt(System.currentTimeMillis());
+        return publicPromptSelectionDepot.appendAsync(selection)
+                .thenApply(res -> new PublicPromptSelection(selection));
+    }
+
     private static List<ExtractedSignal> sanitizeSignals(List<ExtractedSignal> signals) {
         if (signals == null || signals.isEmpty())
             return List.of();
@@ -528,112 +623,6 @@ public class CalypsoApiManager {
             out.add(sig);
         }
         return out;
-    }
-
-    public CompletableFuture<PromptSuggestion> nextPrompt(long accountId) {
-        CompletableFuture<PromptState> stateFuture = getPrompts(accountId, accountId);
-        CompletableFuture<List<MatchCandidate>> matchesFuture = getMatchesFromAccountId.invokeAsync(accountId,
-                accountId, 5);
-        return stateFuture.thenCombine(matchesFuture, (state, matches) -> {
-            List<PromptQuestion> prompts = PromptLibrary.all();
-            if (prompts.isEmpty())
-                throw new IllegalStateException("No prompts available");
-            Set<String> answered = new HashSet<>();
-            if (state != null && state.getResponses() != null) {
-                for (PromptResponse resp : state.getResponses()) {
-                    if (resp == null || resp.getQuestion() == null)
-                        continue;
-                    String pid = resp.getQuestion().getPromptId();
-                    if (pid != null)
-                        answered.add(pid);
-                }
-            }
-            List<PromptQuestion> candidates = new ArrayList<>();
-            for (PromptQuestion q : prompts) {
-                if (q != null && !answered.contains(q.getPromptId()))
-                    candidates.add(q);
-            }
-            if (candidates.isEmpty())
-                candidates = prompts;
-            PromptQuestion choice = candidates.get(ThreadLocalRandom.current().nextInt(candidates.size()));
-            PromptQuestion question = new PromptQuestion(choice);
-            MatchCandidate best = selectCandidate(matches);
-            Long targetId = best == null ? null : best.getTargetAccountId();
-            Double score = best == null ? null : best.getStage0Score();
-            return new PromptSuggestion(question, targetId, score);
-        });
-    }
-
-    public CompletableFuture<PromptResponse> postPromptResponse(long accountId, String promptId,
-            PostPromptResponseRequest request) {
-        PromptQuestion prompt = PromptLibrary.getById(promptId);
-        if (prompt == null)
-            throw new IllegalArgumentException("Unknown prompt: " + promptId);
-        PostPromptResponseRequest payload = request == null
-                ? new PostPromptResponseRequest(null, null, null, null, null)
-                : request;
-        String responseId = UUID.randomUUID().toString();
-        long now = System.currentTimeMillis();
-        PromptResponse response = new PromptResponse();
-        response.setResponseId(responseId);
-        response.setAccountId(accountId);
-        response.setQuestion(new PromptQuestion(prompt));
-        response.setServedAt(now);
-        response.setAnsweredAt(now);
-        if (payload.targetAccountId != null)
-            response.setRelatedTargetAccountId(payload.targetAccountId);
-        PromptReaction reaction = payload.parsedReaction();
-        if (reaction != null)
-            response.setReaction(reaction);
-        String answerText = clampPromptText(payload.answerText, 512);
-        if (answerText != null)
-            response.setAnswerText(answerText);
-        String comment = clampPromptText(payload.comment, 512);
-        if (comment != null)
-            response.setComment(comment);
-        List<AttachmentWithId> attachments = payload.toThriftAttachments();
-        if (!attachments.isEmpty())
-            response.setAttachments(attachments);
-
-        CompletableFuture<Void> persist = persistPromptResponse(accountId, response);
-        String signalText = (answerText == null) ? comment
-                : (comment == null ? answerText : answerText + "\n" + comment);
-        CompletableFuture<List<String>> signals = (signalText == null)
-                ? CompletableFuture.completedFuture(List.of())
-                : extractAndAppendSignalsFromPrompt(accountId, prompt.getQuestion(), signalText, "prompt",
-                        responseId);
-
-        return persist.thenCombine(signals, (v, tokens) -> new PromptResponse(response));
-    }
-
-    private CompletableFuture<Void> persistPromptResponse(long accountId, PromptResponse response) {
-        CompletableFuture<Void> chained = promptSerialByAccount.compute(accountId, (k, prev) -> {
-            CompletableFuture<Void> start = (prev == null) ? CompletableFuture.completedFuture(null) : prev;
-            CompletableFuture<Void> next = start.thenCompose(
-                    v -> readCurrentPromptState(accountId).thenCompose(state -> {
-                        List<PromptResponse> responses = state.getResponses() == null
-                                ? new ArrayList<>()
-                                : new ArrayList<>(state.getResponses());
-                        String promptId = response.getQuestion() == null ? null : response.getQuestion().getPromptId();
-                        if (promptId != null) {
-                            responses.removeIf(existing -> {
-                                if (existing == null || existing.getQuestion() == null)
-                                    return false;
-                                String existingId = existing.getQuestion().getPromptId();
-                                return promptId.equals(existingId);
-                            });
-                        }
-                        responses.add(new PromptResponse(response));
-                        if (responses.size() > 200) {
-                            responses = new ArrayList<>(responses.subList(responses.size() - 200, responses.size()));
-                        }
-                        state.setResponses(responses);
-                        return promptsDepot.appendAsync(state).thenApply(res -> null);
-                    }));
-            next.whenComplete((r, e) -> promptSerialByAccount.remove(k, next));
-            return next;
-        });
-        return chained;
     }
 
     /**

@@ -516,9 +516,14 @@ public class CalypsoApiController {
         return tagService.politics();
     }
 
-    @GetMapping("/api/meta/prompts")
-    public List<PromptQuestion> promptLibrary() {
-        return PromptLibrary.all();
+    @GetMapping("/api/meta/prompts/public")
+    public List<PromptDefinition> publicPromptLibrary() {
+        return PromptLibrary.publicBank();
+    }
+
+    @GetMapping("/api/meta/prompts/private")
+    public List<PromptDefinition> privatePromptLibrary() {
+        return PromptLibrary.privateBank();
     }
 
     @GetMapping("/api/accounts/{id}/signals")
@@ -537,47 +542,92 @@ public class CalypsoApiController {
                 .defaultIfEmpty(new GetSignals(accountId, List.of()));
     }
 
-    @GetMapping("/api/accounts/{id}/prompts")
-    public Mono<GetPromptsState> getPrompts(@PathVariable("id") String idStr, WebSession session) {
-        long accountId = CalypsoHelpers.parseAccountId(idStr);
-        Long me = session.getAttribute("accountId");
-        if (me == null || !me.equals(accountId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
-        }
-        return Mono.fromFuture(manager.getPrompts(accountId, accountId))
-                .map(state -> state == null
-                        ? new GetPromptsState(accountId, List.of())
-                        : new GetPromptsState(state))
-                .defaultIfEmpty(new GetPromptsState(accountId, List.of()));
-    }
-
-    @GetMapping("/api/accounts/{id}/prompts/next")
-    public Mono<GetPromptSuggestion> nextPrompt(@PathVariable("id") String idStr, WebSession session) {
-        long accountId = CalypsoHelpers.parseAccountId(idStr);
-        Long me = session.getAttribute("accountId");
-        if (me == null || !me.equals(accountId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
-        }
-        return Mono.fromFuture(manager.nextPrompt(accountId))
-                .map(suggestion -> new GetPromptSuggestion(suggestion.question(), suggestion.targetAccountId(),
-                        suggestion.targetScore()))
-                .onErrorMap(IllegalStateException.class,
-                        ex -> new ResponseStatusException(HttpStatus.NOT_FOUND, ex.getMessage(), ex));
-    }
-
-    @PostMapping("/api/accounts/{id}/prompts/{promptId}/response")
-    public Mono<GetPromptResponse> respondToPrompt(
+    @GetMapping("/api/accounts/{id}/public-prompt-feed")
+    public Mono<List<PublicPromptFeedCard>> getPublicPromptFeed(
             @PathVariable("id") String idStr,
-            @PathVariable("promptId") String promptId,
-            @RequestBody(required = false) PostPromptResponseRequest params,
+            @RequestParam(value = "limit", required = false, defaultValue = "1") int limit,
             WebSession session) {
         long accountId = CalypsoHelpers.parseAccountId(idStr);
         Long me = session.getAttribute("accountId");
         if (me == null || !me.equals(accountId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         }
-        return Mono.fromFuture(manager.postPromptResponse(accountId, promptId, params))
-                .map(GetPromptResponse::new)
+        return Mono.fromFuture(manager.getPublicPromptFeed(accountId, limit));
+    }
+
+    @GetMapping("/api/accounts/{id}/public-prompts/answers")
+    public Mono<List<PublicPromptAnswer>> getMyPublicPromptAnswers(
+            @PathVariable("id") String idStr,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getMyPublicPromptAnswers(accountId));
+    }
+
+    @PostMapping("/api/accounts/{id}/public-prompts/{promptId}/answer")
+    public Mono<PublicPromptAnswer> postPublicPromptAnswer(
+            @PathVariable("id") String idStr,
+            @PathVariable("promptId") String promptId,
+            @RequestBody(required = false) PostPublicPromptAnswerRequest payload,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        String body = payload == null ? null : payload.body;
+        return Mono.fromFuture(manager.postPublicPromptAnswer(accountId, promptId, body))
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
+    @GetMapping("/api/accounts/{id}/public-prompts/selection")
+    public Mono<ResponseEntity<PublicPromptSelection>> getPublicPromptSelection(
+            @PathVariable("id") String idStr,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getPublicPromptSelection(accountId))
+                .map(ResponseEntity::ok)
+                .defaultIfEmpty(ResponseEntity.noContent().build());
+    }
+
+    @PostMapping("/api/accounts/{id}/public-prompts/selection")
+    public Mono<PublicPromptSelection> postPublicPromptSelection(
+            @PathVariable("id") String idStr,
+            @RequestBody(required = false) PostPublicPromptSelectionRequest payload,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        List<String> selected = payload == null ? null : payload.selectedPromptIds;
+        return Mono.fromFuture(manager.postPublicPromptSelection(accountId, selected))
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
+    @PostMapping("/api/accounts/{id}/public-prompt-feed/{answerId}/reaction")
+    public Mono<Map<String, Object>> postPublicPromptReaction(
+            @PathVariable("id") String idStr,
+            @PathVariable("answerId") String answerId,
+            @RequestBody(required = false) PostPublicPromptReactionRequest payload,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        PromptReaction reaction = payload == null ? null : payload.parsedReaction();
+        return Mono.fromFuture(manager.postPublicPromptReaction(accountId, answerId, reaction))
+                .map(ok -> Collections.<String, Object>emptyMap())
                 .onErrorMap(IllegalArgumentException.class,
                         ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
     }

@@ -856,6 +856,190 @@ class CalypsoApiControllerTest {
                                 .jsonPath("$.spectrum").isArray();
         }
 
+        // --------- Public prompts endpoint tests ---------
+
+        @Test
+        void getPublicPromptFeed_unauthenticated_returns403() {
+                client.get()
+                                .uri("/api/accounts/" + serializedId + "/public-prompt-feed?limit=2")
+                                .exchange()
+                                .expectStatus().isEqualTo(HttpStatus.FORBIDDEN);
+
+                verify(mockManager, never()).getPublicPromptFeed(anyLong(), anyInt());
+        }
+
+        @Test
+        void getPublicPromptFeed_wrongUser_returns403() {
+                String otherId = CalypsoHelpers.serializeAccountId(8L);
+                client.get()
+                                .uri("/api/accounts/" + otherId + "/public-prompt-feed?limit=2")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .exchange()
+                                .expectStatus().isEqualTo(HttpStatus.FORBIDDEN);
+
+                verify(mockManager, never()).getPublicPromptFeed(anyLong(), anyInt());
+        }
+
+        @Test
+        void getPublicPromptFeed_returns200AndBody() {
+                PublicPromptFeedCard card = new PublicPromptFeedCard()
+                                .setAnswerId("answer-1")
+                                .setPromptId("prompt.talk.hours")
+                                .setPromptText("How do you spend your evenings?")
+                                .setBody("Reading and long walks.")
+                                .setCreatedAt(System.currentTimeMillis());
+                when(mockManager.getPublicPromptFeed(eq(7L), eq(2)))
+                                .thenReturn(CompletableFuture.completedFuture(List.of(card)));
+
+                client.get()
+                                .uri("/api/accounts/" + serializedId + "/public-prompt-feed?limit=2")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$[0].answerId").isEqualTo("answer-1")
+                                .jsonPath("$[0].promptId").isEqualTo("prompt.talk.hours")
+                                .jsonPath("$[0].body").isEqualTo("Reading and long walks.");
+        }
+
+        @Test
+        void postPublicPromptAnswer_invalidPayload_returns400() {
+                when(mockManager.postPublicPromptAnswer(eq(7L), eq("prompt.talk.hours"), any()))
+                                .thenReturn(CompletableFuture.failedFuture(
+                                                new IllegalArgumentException("Answer body required.")));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/public-prompts/prompt.talk.hours/answer")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(new PostPublicPromptAnswerRequest("   "))
+                                .exchange()
+                                .expectStatus().isBadRequest();
+        }
+
+        @Test
+        void postPublicPromptAnswer_valid_returns200() {
+                PublicPromptAnswer answer = new PublicPromptAnswer()
+                                .setAnswerId("answer-2")
+                                .setAccountId(7L)
+                                .setPromptId("prompt.talk.hours")
+                                .setBody("Coffee and coding.")
+                                .setCreatedAt(System.currentTimeMillis())
+                                .setUpdatedAt(System.currentTimeMillis());
+                when(mockManager.postPublicPromptAnswer(eq(7L), eq("prompt.talk.hours"), eq("Coffee and coding.")))
+                                .thenReturn(CompletableFuture.completedFuture(answer));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/public-prompts/prompt.talk.hours/answer")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(new PostPublicPromptAnswerRequest("Coffee and coding."))
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.answerId").isEqualTo("answer-2")
+                                .jsonPath("$.body").isEqualTo("Coffee and coding.");
+        }
+
+        @Test
+        void getPublicPromptSelection_none_returns204() {
+                when(mockManager.getPublicPromptSelection(eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(null));
+
+                client.get()
+                                .uri("/api/accounts/" + serializedId + "/public-prompts/selection")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .exchange()
+                                .expectStatus().isNoContent()
+                                .expectBody().isEmpty();
+        }
+
+        @Test
+        void getPublicPromptSelection_found_returns200() {
+                PublicPromptSelection selection = new PublicPromptSelection()
+                                .setAccountId(7L)
+                                .setSelectedPromptIds(List.of("prompt.talk.hours", "prompt.life.goal"))
+                                .setUpdatedAt(System.currentTimeMillis());
+                when(mockManager.getPublicPromptSelection(eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(selection));
+
+                client.get()
+                                .uri("/api/accounts/" + serializedId + "/public-prompts/selection")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.accountId").isEqualTo(7)
+                                .jsonPath("$.selectedPromptIds.length()").isEqualTo(2);
+        }
+
+        @Test
+        void postPublicPromptSelection_invalidPayload_returns400() {
+                when(mockManager.postPublicPromptSelection(eq(7L), any()))
+                                .thenReturn(CompletableFuture.failedFuture(
+                                                new IllegalArgumentException("Unknown public prompt: bogus.prompt")));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/public-prompts/selection")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(new PostPublicPromptSelectionRequest(List.of("bogus.prompt")))
+                                .exchange()
+                                .expectStatus().isBadRequest();
+        }
+
+        @Test
+        void postPublicPromptSelection_valid_returns200() {
+                PublicPromptSelection selection = new PublicPromptSelection()
+                                .setAccountId(7L)
+                                .setSelectedPromptIds(List.of("prompt.talk.hours"))
+                                .setUpdatedAt(System.currentTimeMillis());
+                when(mockManager.postPublicPromptSelection(eq(7L), eq(List.of("prompt.talk.hours"))))
+                                .thenReturn(CompletableFuture.completedFuture(selection));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/public-prompts/selection")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(new PostPublicPromptSelectionRequest(List.of("prompt.talk.hours")))
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.accountId").isEqualTo(7)
+                                .jsonPath("$.selectedPromptIds[0]").isEqualTo("prompt.talk.hours");
+        }
+
+        @Test
+        void postPublicPromptReaction_invalidReaction_returns400() {
+                when(mockManager.postPublicPromptReaction(eq(7L), eq("answer-1"), isNull()))
+                                .thenReturn(CompletableFuture.failedFuture(
+                                                new IllegalArgumentException("Reaction required.")));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/public-prompt-feed/answer-1/reaction")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(new PostPublicPromptReactionRequest("not_real"))
+                                .exchange()
+                                .expectStatus().isBadRequest();
+        }
+
+        @Test
+        void postPublicPromptReaction_valid_returns200() {
+                when(mockManager.postPublicPromptReaction(eq(7L), eq("answer-1"), eq(PromptReaction.LIKE)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/public-prompt-feed/answer-1/reaction")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(new PostPublicPromptReactionRequest("LIKE"))
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .json("{}");
+        }
+
         // --------- Matches endpoint tests (new) ---------
 
         @Test

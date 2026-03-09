@@ -7,28 +7,42 @@
 package now.calypso.backend.data;
 
 @SuppressWarnings({"cast", "rawtypes", "serial", "unchecked", "unused"})
-public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, PromptQuestion._Fields>, java.io.Serializable, Cloneable, Comparable<PromptQuestion> {
-  private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("PromptQuestion");
+public class PromptDefinition implements org.apache.thrift.TBase<PromptDefinition, PromptDefinition._Fields>, java.io.Serializable, Cloneable, Comparable<PromptDefinition> {
+  private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("PromptDefinition");
 
   private static final org.apache.thrift.protocol.TField PROMPT_ID_FIELD_DESC = new org.apache.thrift.protocol.TField("promptId", org.apache.thrift.protocol.TType.STRING, (short)1);
-  private static final org.apache.thrift.protocol.TField QUESTION_FIELD_DESC = new org.apache.thrift.protocol.TField("question", org.apache.thrift.protocol.TType.STRING, (short)2);
-  private static final org.apache.thrift.protocol.TField TOPIC_FIELD_DESC = new org.apache.thrift.protocol.TField("topic", org.apache.thrift.protocol.TType.STRING, (short)3);
-  private static final org.apache.thrift.protocol.TField TAGS_FIELD_DESC = new org.apache.thrift.protocol.TField("tags", org.apache.thrift.protocol.TType.LIST, (short)4);
+  private static final org.apache.thrift.protocol.TField BANK_FIELD_DESC = new org.apache.thrift.protocol.TField("bank", org.apache.thrift.protocol.TType.I32, (short)2);
+  private static final org.apache.thrift.protocol.TField TEXT_FIELD_DESC = new org.apache.thrift.protocol.TField("text", org.apache.thrift.protocol.TType.STRING, (short)3);
+  private static final org.apache.thrift.protocol.TField TOPIC_FIELD_DESC = new org.apache.thrift.protocol.TField("topic", org.apache.thrift.protocol.TType.STRING, (short)4);
+  private static final org.apache.thrift.protocol.TField TAGS_FIELD_DESC = new org.apache.thrift.protocol.TField("tags", org.apache.thrift.protocol.TType.LIST, (short)5);
+  private static final org.apache.thrift.protocol.TField VERSION_FIELD_DESC = new org.apache.thrift.protocol.TField("version", org.apache.thrift.protocol.TType.I32, (short)6);
 
-  private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new PromptQuestionStandardSchemeFactory();
-  private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new PromptQuestionTupleSchemeFactory();
+  private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new PromptDefinitionStandardSchemeFactory();
+  private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new PromptDefinitionTupleSchemeFactory();
 
   public @org.apache.thrift.annotation.Nullable java.lang.String promptId; // required
-  public @org.apache.thrift.annotation.Nullable java.lang.String question; // required
+  /**
+   * 
+   * @see PromptBankKind
+   */
+  public @org.apache.thrift.annotation.Nullable PromptBankKind bank; // required
+  public @org.apache.thrift.annotation.Nullable java.lang.String text; // required
   public @org.apache.thrift.annotation.Nullable java.lang.String topic; // optional
   public @org.apache.thrift.annotation.Nullable java.util.List<java.lang.String> tags; // optional
+  public int version; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
     PROMPT_ID((short)1, "promptId"),
-    QUESTION((short)2, "question"),
-    TOPIC((short)3, "topic"),
-    TAGS((short)4, "tags");
+    /**
+     * 
+     * @see PromptBankKind
+     */
+    BANK((short)2, "bank"),
+    TEXT((short)3, "text"),
+    TOPIC((short)4, "topic"),
+    TAGS((short)5, "tags"),
+    VERSION((short)6, "version");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -46,12 +60,16 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
       switch(fieldId) {
         case 1: // PROMPT_ID
           return PROMPT_ID;
-        case 2: // QUESTION
-          return QUESTION;
-        case 3: // TOPIC
+        case 2: // BANK
+          return BANK;
+        case 3: // TEXT
+          return TEXT;
+        case 4: // TOPIC
           return TOPIC;
-        case 4: // TAGS
+        case 5: // TAGS
           return TAGS;
+        case 6: // VERSION
+          return VERSION;
         default:
           return null;
       }
@@ -95,44 +113,56 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
   }
 
   // isset id assignments
-  private static final _Fields[] optionals = {_Fields.TOPIC,_Fields.TAGS};
+  private static final int __VERSION_ISSET_ID = 0;
+  private byte __isset_bitfield = 0;
+  private static final _Fields[] optionals = {_Fields.TOPIC,_Fields.TAGS,_Fields.VERSION};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
     tmpMap.put(_Fields.PROMPT_ID, new org.apache.thrift.meta_data.FieldMetaData("promptId", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
-    tmpMap.put(_Fields.QUESTION, new org.apache.thrift.meta_data.FieldMetaData("question", org.apache.thrift.TFieldRequirementType.REQUIRED, 
+    tmpMap.put(_Fields.BANK, new org.apache.thrift.meta_data.FieldMetaData("bank", org.apache.thrift.TFieldRequirementType.REQUIRED, 
+        new org.apache.thrift.meta_data.EnumMetaData(org.apache.thrift.protocol.TType.ENUM, PromptBankKind.class)));
+    tmpMap.put(_Fields.TEXT, new org.apache.thrift.meta_data.FieldMetaData("text", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
     tmpMap.put(_Fields.TOPIC, new org.apache.thrift.meta_data.FieldMetaData("topic", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
     tmpMap.put(_Fields.TAGS, new org.apache.thrift.meta_data.FieldMetaData("tags", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.ListMetaData(org.apache.thrift.protocol.TType.LIST, 
             new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING))));
+    tmpMap.put(_Fields.VERSION, new org.apache.thrift.meta_data.FieldMetaData("version", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I32)));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
-    org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(PromptQuestion.class, metaDataMap);
+    org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(PromptDefinition.class, metaDataMap);
   }
 
-  public PromptQuestion() {
+  public PromptDefinition() {
   }
 
-  public PromptQuestion(
+  public PromptDefinition(
     java.lang.String promptId,
-    java.lang.String question)
+    PromptBankKind bank,
+    java.lang.String text)
   {
     this();
     this.promptId = promptId;
-    this.question = question;
+    this.bank = bank;
+    this.text = text;
   }
 
   /**
    * Performs a deep copy on <i>other</i>.
    */
-  public PromptQuestion(PromptQuestion other) {
+  public PromptDefinition(PromptDefinition other) {
+    __isset_bitfield = other.__isset_bitfield;
     if (other.isSetPromptId()) {
       this.promptId = other.promptId;
     }
-    if (other.isSetQuestion()) {
-      this.question = other.question;
+    if (other.isSetBank()) {
+      this.bank = other.bank;
+    }
+    if (other.isSetText()) {
+      this.text = other.text;
     }
     if (other.isSetTopic()) {
       this.topic = other.topic;
@@ -141,19 +171,23 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
       java.util.List<java.lang.String> __this__tags = new java.util.ArrayList<java.lang.String>(other.tags);
       this.tags = __this__tags;
     }
+    this.version = other.version;
   }
 
   @Override
-  public PromptQuestion deepCopy() {
-    return new PromptQuestion(this);
+  public PromptDefinition deepCopy() {
+    return new PromptDefinition(this);
   }
 
   @Override
   public void clear() {
     this.promptId = null;
-    this.question = null;
+    this.bank = null;
+    this.text = null;
     this.topic = null;
     this.tags = null;
+    setVersionIsSet(false);
+    this.version = 0;
   }
 
   @org.apache.thrift.annotation.Nullable
@@ -161,7 +195,7 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
     return this.promptId;
   }
 
-  public PromptQuestion setPromptId(@org.apache.thrift.annotation.Nullable java.lang.String promptId) {
+  public PromptDefinition setPromptId(@org.apache.thrift.annotation.Nullable java.lang.String promptId) {
     this.promptId = promptId;
     return this;
   }
@@ -181,28 +215,61 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
     }
   }
 
+  /**
+   * 
+   * @see PromptBankKind
+   */
   @org.apache.thrift.annotation.Nullable
-  public java.lang.String getQuestion() {
-    return this.question;
+  public PromptBankKind getBank() {
+    return this.bank;
   }
 
-  public PromptQuestion setQuestion(@org.apache.thrift.annotation.Nullable java.lang.String question) {
-    this.question = question;
+  /**
+   * 
+   * @see PromptBankKind
+   */
+  public PromptDefinition setBank(@org.apache.thrift.annotation.Nullable PromptBankKind bank) {
+    this.bank = bank;
     return this;
   }
 
-  public void unsetQuestion() {
-    this.question = null;
+  public void unsetBank() {
+    this.bank = null;
   }
 
-  /** Returns true if field question is set (has been assigned a value) and false otherwise */
-  public boolean isSetQuestion() {
-    return this.question != null;
+  /** Returns true if field bank is set (has been assigned a value) and false otherwise */
+  public boolean isSetBank() {
+    return this.bank != null;
   }
 
-  public void setQuestionIsSet(boolean value) {
+  public void setBankIsSet(boolean value) {
     if (!value) {
-      this.question = null;
+      this.bank = null;
+    }
+  }
+
+  @org.apache.thrift.annotation.Nullable
+  public java.lang.String getText() {
+    return this.text;
+  }
+
+  public PromptDefinition setText(@org.apache.thrift.annotation.Nullable java.lang.String text) {
+    this.text = text;
+    return this;
+  }
+
+  public void unsetText() {
+    this.text = null;
+  }
+
+  /** Returns true if field text is set (has been assigned a value) and false otherwise */
+  public boolean isSetText() {
+    return this.text != null;
+  }
+
+  public void setTextIsSet(boolean value) {
+    if (!value) {
+      this.text = null;
     }
   }
 
@@ -211,7 +278,7 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
     return this.topic;
   }
 
-  public PromptQuestion setTopic(@org.apache.thrift.annotation.Nullable java.lang.String topic) {
+  public PromptDefinition setTopic(@org.apache.thrift.annotation.Nullable java.lang.String topic) {
     this.topic = topic;
     return this;
   }
@@ -252,7 +319,7 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
     return this.tags;
   }
 
-  public PromptQuestion setTags(@org.apache.thrift.annotation.Nullable java.util.List<java.lang.String> tags) {
+  public PromptDefinition setTags(@org.apache.thrift.annotation.Nullable java.util.List<java.lang.String> tags) {
     this.tags = tags;
     return this;
   }
@@ -272,6 +339,29 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
     }
   }
 
+  public int getVersion() {
+    return this.version;
+  }
+
+  public PromptDefinition setVersion(int version) {
+    this.version = version;
+    setVersionIsSet(true);
+    return this;
+  }
+
+  public void unsetVersion() {
+    __isset_bitfield = org.apache.thrift.EncodingUtils.clearBit(__isset_bitfield, __VERSION_ISSET_ID);
+  }
+
+  /** Returns true if field version is set (has been assigned a value) and false otherwise */
+  public boolean isSetVersion() {
+    return org.apache.thrift.EncodingUtils.testBit(__isset_bitfield, __VERSION_ISSET_ID);
+  }
+
+  public void setVersionIsSet(boolean value) {
+    __isset_bitfield = org.apache.thrift.EncodingUtils.setBit(__isset_bitfield, __VERSION_ISSET_ID, value);
+  }
+
   @Override
   public void setFieldValue(_Fields field, @org.apache.thrift.annotation.Nullable java.lang.Object value) {
     switch (field) {
@@ -283,11 +373,19 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
       }
       break;
 
-    case QUESTION:
+    case BANK:
       if (value == null) {
-        unsetQuestion();
+        unsetBank();
       } else {
-        setQuestion((java.lang.String)value);
+        setBank((PromptBankKind)value);
+      }
+      break;
+
+    case TEXT:
+      if (value == null) {
+        unsetText();
+      } else {
+        setText((java.lang.String)value);
       }
       break;
 
@@ -307,6 +405,14 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
       }
       break;
 
+    case VERSION:
+      if (value == null) {
+        unsetVersion();
+      } else {
+        setVersion((java.lang.Integer)value);
+      }
+      break;
+
     }
   }
 
@@ -317,14 +423,20 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
     case PROMPT_ID:
       return getPromptId();
 
-    case QUESTION:
-      return getQuestion();
+    case BANK:
+      return getBank();
+
+    case TEXT:
+      return getText();
 
     case TOPIC:
       return getTopic();
 
     case TAGS:
       return getTags();
+
+    case VERSION:
+      return getVersion();
 
     }
     throw new java.lang.IllegalStateException();
@@ -340,24 +452,28 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
     switch (field) {
     case PROMPT_ID:
       return isSetPromptId();
-    case QUESTION:
-      return isSetQuestion();
+    case BANK:
+      return isSetBank();
+    case TEXT:
+      return isSetText();
     case TOPIC:
       return isSetTopic();
     case TAGS:
       return isSetTags();
+    case VERSION:
+      return isSetVersion();
     }
     throw new java.lang.IllegalStateException();
   }
 
   @Override
   public boolean equals(java.lang.Object that) {
-    if (that instanceof PromptQuestion)
-      return this.equals((PromptQuestion)that);
+    if (that instanceof PromptDefinition)
+      return this.equals((PromptDefinition)that);
     return false;
   }
 
-  public boolean equals(PromptQuestion that) {
+  public boolean equals(PromptDefinition that) {
     if (that == null)
       return false;
     if (this == that)
@@ -372,12 +488,21 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
         return false;
     }
 
-    boolean this_present_question = true && this.isSetQuestion();
-    boolean that_present_question = true && that.isSetQuestion();
-    if (this_present_question || that_present_question) {
-      if (!(this_present_question && that_present_question))
+    boolean this_present_bank = true && this.isSetBank();
+    boolean that_present_bank = true && that.isSetBank();
+    if (this_present_bank || that_present_bank) {
+      if (!(this_present_bank && that_present_bank))
         return false;
-      if (!this.question.equals(that.question))
+      if (!this.bank.equals(that.bank))
+        return false;
+    }
+
+    boolean this_present_text = true && this.isSetText();
+    boolean that_present_text = true && that.isSetText();
+    if (this_present_text || that_present_text) {
+      if (!(this_present_text && that_present_text))
+        return false;
+      if (!this.text.equals(that.text))
         return false;
     }
 
@@ -399,6 +524,15 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
         return false;
     }
 
+    boolean this_present_version = true && this.isSetVersion();
+    boolean that_present_version = true && that.isSetVersion();
+    if (this_present_version || that_present_version) {
+      if (!(this_present_version && that_present_version))
+        return false;
+      if (this.version != that.version)
+        return false;
+    }
+
     return true;
   }
 
@@ -410,9 +544,13 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
     if (isSetPromptId())
       hashCode = hashCode * 8191 + promptId.hashCode();
 
-    hashCode = hashCode * 8191 + ((isSetQuestion()) ? 131071 : 524287);
-    if (isSetQuestion())
-      hashCode = hashCode * 8191 + question.hashCode();
+    hashCode = hashCode * 8191 + ((isSetBank()) ? 131071 : 524287);
+    if (isSetBank())
+      hashCode = hashCode * 8191 + bank.getValue();
+
+    hashCode = hashCode * 8191 + ((isSetText()) ? 131071 : 524287);
+    if (isSetText())
+      hashCode = hashCode * 8191 + text.hashCode();
 
     hashCode = hashCode * 8191 + ((isSetTopic()) ? 131071 : 524287);
     if (isSetTopic())
@@ -422,11 +560,15 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
     if (isSetTags())
       hashCode = hashCode * 8191 + tags.hashCode();
 
+    hashCode = hashCode * 8191 + ((isSetVersion()) ? 131071 : 524287);
+    if (isSetVersion())
+      hashCode = hashCode * 8191 + version;
+
     return hashCode;
   }
 
   @Override
-  public int compareTo(PromptQuestion other) {
+  public int compareTo(PromptDefinition other) {
     if (!getClass().equals(other.getClass())) {
       return getClass().getName().compareTo(other.getClass().getName());
     }
@@ -443,12 +585,22 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
         return lastComparison;
       }
     }
-    lastComparison = java.lang.Boolean.compare(isSetQuestion(), other.isSetQuestion());
+    lastComparison = java.lang.Boolean.compare(isSetBank(), other.isSetBank());
     if (lastComparison != 0) {
       return lastComparison;
     }
-    if (isSetQuestion()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.question, other.question);
+    if (isSetBank()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.bank, other.bank);
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+    }
+    lastComparison = java.lang.Boolean.compare(isSetText(), other.isSetText());
+    if (lastComparison != 0) {
+      return lastComparison;
+    }
+    if (isSetText()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.text, other.text);
       if (lastComparison != 0) {
         return lastComparison;
       }
@@ -469,6 +621,16 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
     }
     if (isSetTags()) {
       lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.tags, other.tags);
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+    }
+    lastComparison = java.lang.Boolean.compare(isSetVersion(), other.isSetVersion());
+    if (lastComparison != 0) {
+      return lastComparison;
+    }
+    if (isSetVersion()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.version, other.version);
       if (lastComparison != 0) {
         return lastComparison;
       }
@@ -494,7 +656,7 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
 
   @Override
   public java.lang.String toString() {
-    java.lang.StringBuilder sb = new java.lang.StringBuilder("PromptQuestion(");
+    java.lang.StringBuilder sb = new java.lang.StringBuilder("PromptDefinition(");
     boolean first = true;
 
     sb.append("promptId:");
@@ -505,11 +667,19 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
     }
     first = false;
     if (!first) sb.append(", ");
-    sb.append("question:");
-    if (this.question == null) {
+    sb.append("bank:");
+    if (this.bank == null) {
       sb.append("null");
     } else {
-      sb.append(this.question);
+      sb.append(this.bank);
+    }
+    first = false;
+    if (!first) sb.append(", ");
+    sb.append("text:");
+    if (this.text == null) {
+      sb.append("null");
+    } else {
+      sb.append(this.text);
     }
     first = false;
     if (isSetTopic()) {
@@ -532,6 +702,12 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
       }
       first = false;
     }
+    if (isSetVersion()) {
+      if (!first) sb.append(", ");
+      sb.append("version:");
+      sb.append(this.version);
+      first = false;
+    }
     sb.append(")");
     return sb.toString();
   }
@@ -541,8 +717,11 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
     if (promptId == null) {
       throw new org.apache.thrift.protocol.TProtocolException("Required field 'promptId' was not present! Struct: " + toString());
     }
-    if (question == null) {
-      throw new org.apache.thrift.protocol.TProtocolException("Required field 'question' was not present! Struct: " + toString());
+    if (bank == null) {
+      throw new org.apache.thrift.protocol.TProtocolException("Required field 'bank' was not present! Struct: " + toString());
+    }
+    if (text == null) {
+      throw new org.apache.thrift.protocol.TProtocolException("Required field 'text' was not present! Struct: " + toString());
     }
     // check for sub-struct validity
   }
@@ -557,23 +736,25 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
 
   private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, java.lang.ClassNotFoundException {
     try {
+      // it doesn't seem like you should have to do this, but java serialization is wacky, and doesn't call the default constructor.
+      __isset_bitfield = 0;
       read(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(in)));
     } catch (org.apache.thrift.TException te) {
       throw new java.io.IOException(te);
     }
   }
 
-  private static class PromptQuestionStandardSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
+  private static class PromptDefinitionStandardSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
     @Override
-    public PromptQuestionStandardScheme getScheme() {
-      return new PromptQuestionStandardScheme();
+    public PromptDefinitionStandardScheme getScheme() {
+      return new PromptDefinitionStandardScheme();
     }
   }
 
-  private static class PromptQuestionStandardScheme extends org.apache.thrift.scheme.StandardScheme<PromptQuestion> {
+  private static class PromptDefinitionStandardScheme extends org.apache.thrift.scheme.StandardScheme<PromptDefinition> {
 
     @Override
-    public void read(org.apache.thrift.protocol.TProtocol iprot, PromptQuestion struct) throws org.apache.thrift.TException {
+    public void read(org.apache.thrift.protocol.TProtocol iprot, PromptDefinition struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TField schemeField;
       iprot.readStructBegin();
       while (true)
@@ -591,15 +772,23 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 2: // QUESTION
-            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
-              struct.question = iprot.readString();
-              struct.setQuestionIsSet(true);
+          case 2: // BANK
+            if (schemeField.type == org.apache.thrift.protocol.TType.I32) {
+              struct.bank = now.calypso.backend.data.PromptBankKind.findByValue(iprot.readI32());
+              struct.setBankIsSet(true);
             } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 3: // TOPIC
+          case 3: // TEXT
+            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
+              struct.text = iprot.readString();
+              struct.setTextIsSet(true);
+            } else { 
+              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+            }
+            break;
+          case 4: // TOPIC
             if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
               struct.topic = iprot.readString();
               struct.setTopicIsSet(true);
@@ -607,7 +796,7 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 4: // TAGS
+          case 5: // TAGS
             if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
               {
                 org.apache.thrift.protocol.TList _list32 = iprot.readListBegin();
@@ -625,6 +814,14 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
+          case 6: // VERSION
+            if (schemeField.type == org.apache.thrift.protocol.TType.I32) {
+              struct.version = iprot.readI32();
+              struct.setVersionIsSet(true);
+            } else { 
+              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+            }
+            break;
           default:
             org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
         }
@@ -637,7 +834,7 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
     }
 
     @Override
-    public void write(org.apache.thrift.protocol.TProtocol oprot, PromptQuestion struct) throws org.apache.thrift.TException {
+    public void write(org.apache.thrift.protocol.TProtocol oprot, PromptDefinition struct) throws org.apache.thrift.TException {
       struct.validate();
 
       oprot.writeStructBegin(STRUCT_DESC);
@@ -646,9 +843,14 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
         oprot.writeString(struct.promptId);
         oprot.writeFieldEnd();
       }
-      if (struct.question != null) {
-        oprot.writeFieldBegin(QUESTION_FIELD_DESC);
-        oprot.writeString(struct.question);
+      if (struct.bank != null) {
+        oprot.writeFieldBegin(BANK_FIELD_DESC);
+        oprot.writeI32(struct.bank.getValue());
+        oprot.writeFieldEnd();
+      }
+      if (struct.text != null) {
+        oprot.writeFieldBegin(TEXT_FIELD_DESC);
+        oprot.writeString(struct.text);
         oprot.writeFieldEnd();
       }
       if (struct.topic != null) {
@@ -672,26 +874,32 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
           oprot.writeFieldEnd();
         }
       }
+      if (struct.isSetVersion()) {
+        oprot.writeFieldBegin(VERSION_FIELD_DESC);
+        oprot.writeI32(struct.version);
+        oprot.writeFieldEnd();
+      }
       oprot.writeFieldStop();
       oprot.writeStructEnd();
     }
 
   }
 
-  private static class PromptQuestionTupleSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
+  private static class PromptDefinitionTupleSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
     @Override
-    public PromptQuestionTupleScheme getScheme() {
-      return new PromptQuestionTupleScheme();
+    public PromptDefinitionTupleScheme getScheme() {
+      return new PromptDefinitionTupleScheme();
     }
   }
 
-  private static class PromptQuestionTupleScheme extends org.apache.thrift.scheme.TupleScheme<PromptQuestion> {
+  private static class PromptDefinitionTupleScheme extends org.apache.thrift.scheme.TupleScheme<PromptDefinition> {
 
     @Override
-    public void write(org.apache.thrift.protocol.TProtocol prot, PromptQuestion struct) throws org.apache.thrift.TException {
+    public void write(org.apache.thrift.protocol.TProtocol prot, PromptDefinition struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol oprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       oprot.writeString(struct.promptId);
-      oprot.writeString(struct.question);
+      oprot.writeI32(struct.bank.getValue());
+      oprot.writeString(struct.text);
       java.util.BitSet optionals = new java.util.BitSet();
       if (struct.isSetTopic()) {
         optionals.set(0);
@@ -699,7 +907,10 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
       if (struct.isSetTags()) {
         optionals.set(1);
       }
-      oprot.writeBitSet(optionals, 2);
+      if (struct.isSetVersion()) {
+        optionals.set(2);
+      }
+      oprot.writeBitSet(optionals, 3);
       if (struct.isSetTopic()) {
         oprot.writeString(struct.topic);
       }
@@ -712,16 +923,21 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
           }
         }
       }
+      if (struct.isSetVersion()) {
+        oprot.writeI32(struct.version);
+      }
     }
 
     @Override
-    public void read(org.apache.thrift.protocol.TProtocol prot, PromptQuestion struct) throws org.apache.thrift.TException {
+    public void read(org.apache.thrift.protocol.TProtocol prot, PromptDefinition struct) throws org.apache.thrift.TException {
       org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       struct.promptId = iprot.readString();
       struct.setPromptIdIsSet(true);
-      struct.question = iprot.readString();
-      struct.setQuestionIsSet(true);
-      java.util.BitSet incoming = iprot.readBitSet(2);
+      struct.bank = now.calypso.backend.data.PromptBankKind.findByValue(iprot.readI32());
+      struct.setBankIsSet(true);
+      struct.text = iprot.readString();
+      struct.setTextIsSet(true);
+      java.util.BitSet incoming = iprot.readBitSet(3);
       if (incoming.get(0)) {
         struct.topic = iprot.readString();
         struct.setTopicIsSet(true);
@@ -738,6 +954,10 @@ public class PromptQuestion implements org.apache.thrift.TBase<PromptQuestion, P
           }
         }
         struct.setTagsIsSet(true);
+      }
+      if (incoming.get(2)) {
+        struct.version = iprot.readI32();
+        struct.setVersionIsSet(true);
       }
     }
   }

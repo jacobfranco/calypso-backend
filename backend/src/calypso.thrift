@@ -158,29 +158,51 @@ enum PromptReaction {
   SKIP = 3
 }
 
-struct PromptQuestion {
-  1: required string promptId;
-  2: required string question;
-  3: optional string topic;
-  4: optional list<string> tags;
+enum PromptBankKind {
+  PUBLIC = 1,
+  PRIVATE = 2
 }
 
-struct PromptResponse {
-  1: required string responseId;
-  2: required AccountId accountId;
-  3: required PromptQuestion question;
-  4: optional PromptReaction reaction;
-  5: optional string answerText;
-  6: optional list<AttachmentWithId> attachments;
-  7: optional Timestamp servedAt;
-  8: optional Timestamp answeredAt;
-  9: optional AccountId relatedTargetAccountId;
- 10: optional string comment;
+struct PromptDefinition {
+  1: required string promptId;      // stable string, e.g. "public_001"
+  2: required PromptBankKind bank;
+  3: required string text;
+  4: optional string topic;
+  5: optional list<string> tags;
+  6: optional i32 version;          // optional: bump when wording changes
 }
 
-struct PromptState {
+struct PublicPromptAnswer {
+  1: required string answerId;    // uuid
+  2: required AccountId accountId; // author (server-only exposure)
+  3: required string promptId;
+  4: required string body;
+  5: required Timestamp createdAt;
+  6: required Timestamp updatedAt;
+  7: optional bool deleted;       // soft delete
+  8: optional list<string> signalTokens;
+}
+
+struct PublicPromptFeedCard {
+  1: required string answerId;
+  2: required string promptId;
+  3: required string promptText;
+  4: required string body;
+  5: required Timestamp createdAt;
+}
+
+struct PublicPromptReactionEvent {
+  1: required AccountId viewerAccountId;
+  2: required string answerId;
+  3: required string promptId;
+  4: required PromptReaction reaction;
+  5: required Timestamp reactedAt;
+}
+
+struct PublicPromptSelection {
   1: required AccountId accountId;
-  2: optional list<PromptResponse> responses;
+  2: required list<string> selectedPromptIds;
+  3: required Timestamp updatedAt;
 }
 
 enum AgentMessageSender {

@@ -69,13 +69,14 @@ public class CalypsoApiApplication {
 
         Core coreModule = new Core();
         String coreModuleName = Core.class.getName();
-        ipc.launchModule(coreModule, new LaunchConfig(2, 1));
-
-        Matches matchesModule = new Matches();
-        ipc.launchModule(matchesModule, new LaunchConfig(2, 1));
+        LaunchConfig coreConfig = new LaunchConfig(2, 2);
+        coreConfig.numWorkers(2);
+        ipc.launchModule(coreModule, coreConfig);
 
         Agent agentModule = new Agent();
-        ipc.launchModule(agentModule, new LaunchConfig(2, 1));
+        LaunchConfig agentConfig = new LaunchConfig(2, 2);
+        agentConfig.numWorkers(2);
+        ipc.launchModule(agentModule, agentConfig);
 
         int weekMillis = 1000 * 60 * 60 * 24 * 7;
         long ts = System.currentTimeMillis() - weekMillis;

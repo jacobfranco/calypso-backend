@@ -1,9 +1,7 @@
 package now.calypso.backendapi;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -26,20 +24,22 @@ import now.calypso.backend.data.Filters;
 import now.calypso.backend.data.AgentMessage;
 import now.calypso.backend.data.AgentMessageSender;
 import now.calypso.backend.data.AgentSession;
-import now.calypso.backend.data.AttachmentWithId;
-import now.calypso.backend.data.PromptResponse;
-import now.calypso.backend.data.PromptState;
 import now.calypso.backend.data.SignalIntent;
 import now.calypso.backend.data.SignalRecord;
 import now.calypso.backend.data.Signals;
+import now.calypso.backend.data.PublicPromptAnswer;
+import now.calypso.backend.data.PublicPromptFeedCard;
+import now.calypso.backend.data.PublicPromptSelection;
+import now.calypso.backend.data.OneToManyFilter;
+import now.calypso.backend.data.ModeFilter;
+import now.calypso.backend.data.PromptReaction;
+import now.calypso.backend.data.RangeFilter;
 import now.calypso.backend.modules.Agent;
 import now.calypso.backend.modules.Core;
-import now.calypso.backend.modules.Matches;
 import now.calypso.backend.serialization.CalypsoSerialization;
 import now.calypso.backendapi.agent.AgentResponder;
 import now.calypso.backendapi.llm.OpenAIJson;
-import now.calypso.backendapi.pojos.PostPromptResponseRequest;
-import now.calypso.backendapi.prompts.PromptSuggestion;
+import now.calypso.backendapi.pojos.PostFilters;
 
 class CalypsoApiIntegrationTest {
 
@@ -163,39 +163,6 @@ class CalypsoApiIntegrationTest {
     }
 
     @Test
-    void promptResponsesPersistAndEmitSignals() throws Exception {
-        try (InProcessCluster ipc = newCluster()) {
-            CalypsoApiManager mgr = newManager(ipc);
-            long accountId = 903L;
-            PromptSuggestion suggestion = mgr.nextPrompt(accountId).get(5, TimeUnit.SECONDS);
-            assertNotNull(suggestion);
-            OpenAIJson.setTestOverride(
-                    (system, user) -> "{\"signals\":[{\"token\":\"prompt_signal\",\"intent\":\"self\"}]}");
-            PromptResponse response;
-            try {
-                PostPromptResponseRequest req = new PostPromptResponseRequest("LIKE", "Sunrise hikes and good coffee",
-                        "HELL YES", null, null);
-                response = mgr.postPromptResponse(accountId, suggestion.question().getPromptId(), req)
-                        .get(5, TimeUnit.SECONDS);
-            } finally {
-                OpenAIJson.clearTestOverride();
-            }
-
-            PromptState state = mgr.getPrompts(accountId, accountId).get(5, TimeUnit.SECONDS);
-            assertNotNull(state);
-            assertTrue(state.isSetResponses());
-            PromptResponse storedResponse = state.getResponses().get(state.getResponses().size() - 1);
-            assertEquals(response.getResponseId(), storedResponse.getResponseId());
-            assertEquals("Sunrise hikes and good coffee", storedResponse.getAnswerText());
-
-            Signals signals = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
-            SignalRecord signal = findRecord(signals, "prompt_signal", SignalIntent.SELF);
-            assertNotNull(signal);
-            assertEquals("prompt", signal.getSource());
-        }
-    }
-
-    @Test
     void agentSessionLifecycle_generatesRepliesAndSignals() throws Exception {
         try (InProcessCluster ipc = newCluster()) {
             CalypsoApiManager mgr = newManager(ipc);
@@ -234,69 +201,271 @@ class CalypsoApiIntegrationTest {
     }
 
     @Test
-    void nextPromptSkipsAnsweredPrompts() throws Exception {
+    void publicPromptAnswerPersistsAndLoadsForOwner() throws Exception {
         try (InProcessCluster ipc = newCluster()) {
             CalypsoApiManager mgr = newManager(ipc);
-            long accountId = 904L;
-            PromptSuggestion first = mgr.nextPrompt(accountId).get(5, TimeUnit.SECONDS);
-            assertNotNull(first);
-            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            long accountId = 910L;
+            OpenAIJson.setTestOverride(
+                    (system, user) -> "{\"signals\":[{\"token\":\"coffee_lover\",\"intent\":\"self\"}]}");
             try {
-                PostPromptResponseRequest req = new PostPromptResponseRequest("LIKE", "Beach days", null, null, null);
-                mgr.postPromptResponse(accountId, first.question().getPromptId(), req).get(5, TimeUnit.SECONDS);
+                PublicPromptAnswer answer = mgr.postPublicPromptAnswer(accountId, "prompt.talk.hours",
+                        "Long walks and espresso").get(5, TimeUnit.SECONDS);
+                assertNotNull(answer);
+                assertEquals("prompt.talk.hours", answer.getPromptId());
+                assertTrue(answer.isSetSignalTokens());
             } finally {
                 OpenAIJson.clearTestOverride();
             }
-            PromptSuggestion second = mgr.nextPrompt(accountId).get(5, TimeUnit.SECONDS);
-            assertNotNull(second);
-            assertNotEquals(first.question().getPromptId(), second.question().getPromptId(),
-                    "Answered prompt should not repeat until rotation");
+
+            List<PublicPromptAnswer> answers = mgr.getMyPublicPromptAnswers(accountId).get(5, TimeUnit.SECONDS);
+            assertEquals(1, answers.size());
+            assertEquals("Long walks and espresso", answers.get(0).getBody());
         }
     }
 
     @Test
-    void promptResponseStoresAttachmentsAndTargetReference() throws Exception {
+    void publicPromptSelectionPersists() throws Exception {
         try (InProcessCluster ipc = newCluster()) {
             CalypsoApiManager mgr = newManager(ipc);
-            long accountId = 905L;
-            PromptSuggestion suggestion = mgr.nextPrompt(accountId).get(5, TimeUnit.SECONDS);
-            assertNotNull(suggestion);
-            List<PostPromptResponseRequest.AttachmentPayload> attPayloads = List.of(
-                    new PostPromptResponseRequest.AttachmentPayload("att-1", "IMAGE", "/tmp/photo.jpg", "sunset view"));
-            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
-            try {
-                PostPromptResponseRequest req = new PostPromptResponseRequest("DISLIKE", null, "Not my vibe", 42L,
-                        attPayloads);
-                mgr.postPromptResponse(accountId, suggestion.question().getPromptId(), req).get(5, TimeUnit.SECONDS);
-            } finally {
-                OpenAIJson.clearTestOverride();
-            }
-            PromptState stored = mgr.getPrompts(accountId, accountId).get(5, TimeUnit.SECONDS);
+            long accountId = 911L;
+            PublicPromptSelection selection = mgr.postPublicPromptSelection(accountId,
+                    List.of("prompt.talk.hours", "prompt.ideal.sunday")).get(5, TimeUnit.SECONDS);
+            assertNotNull(selection);
+            assertEquals(accountId, selection.getAccountId());
+            assertEquals(2, selection.getSelectedPromptIdsSize());
+
+            PublicPromptSelection stored = mgr.getPublicPromptSelection(accountId).get(5, TimeUnit.SECONDS);
             assertNotNull(stored);
-            PromptResponse latest = stored.getResponses().get(stored.getResponses().size() - 1);
-            assertEquals(42L, latest.getRelatedTargetAccountId());
-            assertTrue(latest.isSetAttachments());
-            assertEquals(1, latest.getAttachmentsSize());
-            AttachmentWithId att = latest.getAttachments().get(0);
-            assertEquals("att-1", att.getUuid());
-            assertEquals("sunset view", att.getAttachment().getDescription());
+            assertEquals(2, stored.getSelectedPromptIdsSize());
         }
     }
 
     @Test
-    void postPromptResponseRejectsUnknownPrompt() throws Exception {
+    void publicPromptFeedRespectsFilterGating() throws Exception {
         try (InProcessCluster ipc = newCluster()) {
             CalypsoApiManager mgr = newManager(ipc);
-            long accountId = 906L;
+            long viewerId = 920L;
+            long targetId = 921L;
+            mgr.postFilters(filtersForGender("Woman", List.of("Woman")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetId).get(5, TimeUnit.SECONDS);
+
             OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
             try {
-                PostPromptResponseRequest req = new PostPromptResponseRequest("LIKE", "Sure", null, null, null);
-                assertThrows(IllegalArgumentException.class,
-                        () -> mgr.postPromptResponse(accountId, "nonexistent_prompt", req));
+                mgr.postPublicPromptAnswer(targetId, "prompt.talk.hours", "Long walks").get(5, TimeUnit.SECONDS);
             } finally {
                 OpenAIJson.clearTestOverride();
             }
+
+            List<PublicPromptFeedCard> feed = mgr.getPublicPromptFeed(viewerId, 10).get(5, TimeUnit.SECONDS);
+            assertTrue(feed.isEmpty(), "Incompatible target should not appear in feed");
         }
+    }
+
+    @Test
+    void publicPromptFeedExcludesSelfAuthoredAnswers() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = 922L;
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            try {
+                mgr.postPublicPromptAnswer(viewerId, "prompt.life.goal", "Build a small cabin").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            List<PublicPromptFeedCard> feed = mgr.getPublicPromptFeed(viewerId, 5).get(5, TimeUnit.SECONDS);
+            assertTrue(feed.isEmpty(), "Viewer should not see their own answers");
+        }
+    }
+
+    @Test
+    void publicPromptFeedNeverRepeatsReactedAnswerId() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = 923L;
+            long targetId = 924L;
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetId).get(5, TimeUnit.SECONDS);
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            PublicPromptAnswer answer;
+            try {
+                answer = mgr.postPublicPromptAnswer(targetId, "prompt.ideal.sunday", "Coffee and hiking").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            List<PublicPromptFeedCard> first = mgr.getPublicPromptFeed(viewerId, 1).get(5, TimeUnit.SECONDS);
+            assertEquals(1, first.size());
+            mgr.postPublicPromptReaction(viewerId, answer.getAnswerId(), PromptReaction.LIKE).get(5,
+                    TimeUnit.SECONDS);
+
+            List<PublicPromptFeedCard> after = mgr.getPublicPromptFeed(viewerId, 5).get(5, TimeUnit.SECONDS);
+            assertTrue(after.stream().noneMatch(card -> answer.getAnswerId().equals(card.getAnswerId())),
+                    "Reacted answerId should never reappear");
+        }
+    }
+
+    @Test
+    void publicPromptFeedSuppressesPromptIdAfterReaction() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = 925L;
+            long targetA = 926L;
+            long targetB = 927L;
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetA).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetB).get(5, TimeUnit.SECONDS);
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            PublicPromptAnswer answerA;
+            PublicPromptAnswer answerB;
+            try {
+                answerA = mgr.postPublicPromptAnswer(targetA, "prompt.talk.hours", "Jazz standards").get(5,
+                        TimeUnit.SECONDS);
+                answerB = mgr.postPublicPromptAnswer(targetB, "prompt.talk.hours", "Morning runs").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            List<PublicPromptFeedCard> first = mgr.getPublicPromptFeed(viewerId, 1).get(5, TimeUnit.SECONDS);
+            assertEquals(1, first.size());
+            mgr.postPublicPromptReaction(viewerId, first.get(0).getAnswerId(), PromptReaction.SKIP).get(5,
+                    TimeUnit.SECONDS);
+
+            List<PublicPromptFeedCard> after = mgr.getPublicPromptFeed(viewerId, 10).get(5, TimeUnit.SECONDS);
+            assertTrue(after.stream().noneMatch(card -> "prompt.talk.hours".equals(card.getPromptId())),
+                    "PromptId should be suppressed after reaction");
+            assertNotNull(answerA);
+            assertNotNull(answerB);
+        }
+    }
+
+    @Test
+    void publicPromptFeedSkipsDeletedAnswers() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = 928L;
+            long targetId = 929L;
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetId).get(5, TimeUnit.SECONDS);
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            PublicPromptAnswer answer;
+            try {
+                answer = mgr.postPublicPromptAnswer(targetId, "prompt.life.goal", "Start a bakery").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Depot answersDepot = ipc.clusterDepot(Core.class.getName(), "*publicPromptAnswerDepot");
+            PublicPromptAnswer deleted = new PublicPromptAnswer(answer);
+            deleted.setDeleted(true);
+            deleted.setUpdatedAt(System.currentTimeMillis());
+            answersDepot.append(deleted);
+
+            List<PublicPromptFeedCard> feed = mgr.getPublicPromptFeed(viewerId, 5).get(5, TimeUnit.SECONDS);
+            assertTrue(feed.stream().noneMatch(card -> answer.getAnswerId().equals(card.getAnswerId())),
+                    "Deleted answers should not be served");
+        }
+    }
+
+    @Test
+    void publicPromptFeedRanksByTasteScore() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = 930L;
+            long seedTarget = 931L;
+            long tasteTarget = 932L;
+            long otherTarget = 933L;
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), seedTarget).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), tasteTarget).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), otherTarget).get(5, TimeUnit.SECONDS);
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[{\"token\":\"loves_coffee\",\"intent\":\"self\"}]}");
+            PublicPromptAnswer seed;
+            try {
+                seed = mgr.postPublicPromptAnswer(seedTarget, "prompt.talk.hours", "Coffee culture").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+            mgr.postPublicPromptReaction(viewerId, seed.getAnswerId(), PromptReaction.LIKE).get(5, TimeUnit.SECONDS);
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[{\"token\":\"loves_coffee\",\"intent\":\"self\"}]}");
+            try {
+                mgr.postPublicPromptAnswer(tasteTarget, "prompt.ideal.sunday", "Cafe crawl").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[{\"token\":\"plays_soccer\",\"intent\":\"self\"}]}");
+            try {
+                mgr.postPublicPromptAnswer(otherTarget, "prompt.life.goal", "Join a rec league").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            List<PublicPromptFeedCard> feed = mgr.getPublicPromptFeed(viewerId, 2).get(5, TimeUnit.SECONDS);
+            assertEquals(2, feed.size());
+            assertEquals("prompt.ideal.sunday", feed.get(0).getPromptId());
+        }
+    }
+
+    @Test
+    void publicPromptFeedEnforcesPromptDiversityPerPage() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = 934L;
+            long targetA = 935L;
+            long targetB = 936L;
+            long targetC = 937L;
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetA).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetB).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetC).get(5, TimeUnit.SECONDS);
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            try {
+                mgr.postPublicPromptAnswer(targetA, "prompt.talk.hours", "Street tacos").get(5, TimeUnit.SECONDS);
+                mgr.postPublicPromptAnswer(targetB, "prompt.talk.hours", "Film photography").get(5,
+                        TimeUnit.SECONDS);
+                mgr.postPublicPromptAnswer(targetC, "prompt.life.goal", "Open a studio").get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            List<PublicPromptFeedCard> feed = mgr.getPublicPromptFeed(viewerId, 10).get(5, TimeUnit.SECONDS);
+            long talkHoursCount = feed.stream()
+                    .filter(card -> "prompt.talk.hours".equals(card.getPromptId()))
+                    .count();
+            assertTrue(talkHoursCount <= 1, "Feed should include at most one card per promptId");
+        }
+    }
+
+    private static PostFilters filtersForGender(String self, List<String> seeking) {
+        PostFilters filters = new PostFilters();
+        ModeFilter relationshipMode = new ModeFilter();
+        relationshipMode.setSelf("balanced");
+        filters.relationshipMode = relationshipMode;
+
+        filters.age = new RangeFilter();
+
+        OneToManyFilter gender = new OneToManyFilter();
+        gender.setSelf(self);
+        if (seeking != null)
+            gender.setSeeking(seeking);
+        filters.gender = gender;
+        return filters;
     }
 
     private SignalRecord findRecord(Signals stored, String token, SignalIntent intent) {
@@ -332,10 +501,13 @@ class CalypsoApiIntegrationTest {
     }
 
     private CalypsoApiManager newManager(InProcessCluster ipc) {
-        LaunchConfig cfg = new LaunchConfig(2, 1);
-        ipc.launchModule(new Core(), cfg);
-        ipc.launchModule(new Matches(), cfg);
-        ipc.launchModule(new Agent(), cfg);
+        LaunchConfig coreConfig = new LaunchConfig(2, 2);
+        coreConfig.numWorkers(2);
+        ipc.launchModule(new Core(), coreConfig);
+
+        LaunchConfig agentConfig = new LaunchConfig(2, 2);
+        agentConfig.numWorkers(2);
+        ipc.launchModule(new Agent(), agentConfig);
         return new CalypsoApiManager(new RoutingCluster(ipc), null);
     }
 
@@ -353,9 +525,6 @@ class CalypsoApiIntegrationTest {
 
         @Override
         public Depot clusterDepot(String module, String name) {
-            if (module.equals(CalypsoApiManager.CORE_MODULE_NAME) && "*filtersDepot".equals(name)) {
-                return delegate.clusterDepot(CalypsoApiManager.MATCHES_MODULE_NAME, name);
-            }
             return delegate.clusterDepot(module, name);
         }
 

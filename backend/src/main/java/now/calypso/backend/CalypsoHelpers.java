@@ -50,6 +50,12 @@ public class CalypsoHelpers {
         }
     }
 
+    public static class ExtractViewerAccountId extends ExtractField {
+        public ExtractViewerAccountId() {
+            super("viewerAccountId");
+        }
+    }
+
     public static class ExtractClientId extends ExtractField {
     public ExtractClientId() {
       super("client_id");
@@ -408,12 +414,46 @@ public class CalypsoHelpers {
         return bonus;
     }
 
+    private static boolean oneToManyMatches(OneToManyFilter prefsHolder, String otherSelf) {
+        if (prefsHolder == null)
+            return false;
+        List<String> seeking = getOneToManySeeking(prefsHolder);
+        if (seeking != null && !seeking.isEmpty()) {
+            return otherSelf != null && seeking.contains(otherSelf);
+        }
+        String self = getOneToManySelf(prefsHolder);
+        return self != null && otherSelf != null && self.equals(otherSelf);
+    }
+
+    private static boolean oneToManyDealbreakerSatisfied(OneToManyFilter prefsHolder, String otherSelf) {
+        if (prefsHolder == null)
+            return true;
+        if (getOneToManyImportance(prefsHolder) != Importance.DEALBREAKER)
+            return true;
+        List<String> seeking = getOneToManySeeking(prefsHolder);
+        if (seeking != null && !seeking.isEmpty()) {
+            return otherSelf != null && seeking.contains(otherSelf);
+        }
+        String self = getOneToManySelf(prefsHolder);
+        return self != null && otherSelf != null && self.equals(otherSelf);
+    }
+
     public static boolean politicsCompatible(Filters viewer, Filters target) {
-        return true;
+        OneToManyFilter vp = getPolitics(viewer);
+        OneToManyFilter tp = getPolitics(target);
+        String vSelf = getOneToManySelf(vp);
+        String tSelf = getOneToManySelf(tp);
+        return oneToManyDealbreakerSatisfied(vp, tSelf)
+                && oneToManyDealbreakerSatisfied(tp, vSelf);
     }
 
     public static boolean religionCompatible(Filters viewer, Filters target) {
-        return true;
+        OneToManyFilter vr = getReligion(viewer);
+        OneToManyFilter tr = getReligion(target);
+        String vSelf = getOneToManySelf(vr);
+        String tSelf = getOneToManySelf(tr);
+        return oneToManyDealbreakerSatisfied(vr, tSelf)
+                && oneToManyDealbreakerSatisfied(tr, vSelf);
     }
 
     public static boolean lifestyleCompatible(Filters viewer, Filters target) {
@@ -449,19 +489,18 @@ public class CalypsoHelpers {
         OneToManyFilter tp = getPolitics(target);
 
         double bonus = 0.0;
-        String vSelf = getOneToManySelf(vp);
         String tSelf = getOneToManySelf(tp);
+        String vSelf = getOneToManySelf(vp);
 
-        if (vSelf != null && tSelf != null) {
-            boolean match = vSelf.equals(tSelf);
-            if (vp != null) {
-                Importance vImp = getOneToManyImportance(vp);
-                bonus += alignmentDelta(vImp, match, 10.0, 20.0, 15.0, 30.0);
-            }
-            if (tp != null) {
-                Importance tImp = getOneToManyImportance(tp);
-                bonus += alignmentDelta(tImp, match, 5.0, 10.0, 8.0, 16.0);
-            }
+        if (vp != null) {
+            boolean match = oneToManyMatches(vp, tSelf);
+            Importance vImp = getOneToManyImportance(vp);
+            bonus += alignmentDelta(vImp, match, 10.0, 20.0, 15.0, 30.0);
+        }
+        if (tp != null) {
+            boolean match = oneToManyMatches(tp, vSelf);
+            Importance tImp = getOneToManyImportance(tp);
+            bonus += alignmentDelta(tImp, match, 5.0, 10.0, 8.0, 16.0);
         }
 
         return bonus;
@@ -472,19 +511,18 @@ public class CalypsoHelpers {
         OneToManyFilter tr = getReligion(target);
 
         double bonus = 0.0;
-        String vSelf = getOneToManySelf(vr);
         String tSelf = getOneToManySelf(tr);
+        String vSelf = getOneToManySelf(vr);
 
-        if (vSelf != null && tSelf != null) {
-            boolean match = vSelf.equals(tSelf);
-            if (vr != null) {
-                Importance vImp = getOneToManyImportance(vr);
-                bonus += alignmentDelta(vImp, match, 10.0, 20.0, 15.0, 30.0);
-            }
-            if (tr != null) {
-                Importance tImp = getOneToManyImportance(tr);
-                bonus += alignmentDelta(tImp, match, 5.0, 10.0, 8.0, 16.0);
-            }
+        if (vr != null) {
+            boolean match = oneToManyMatches(vr, tSelf);
+            Importance vImp = getOneToManyImportance(vr);
+            bonus += alignmentDelta(vImp, match, 10.0, 20.0, 15.0, 30.0);
+        }
+        if (tr != null) {
+            boolean match = oneToManyMatches(tr, vSelf);
+            Importance tImp = getOneToManyImportance(tr);
+            bonus += alignmentDelta(tImp, match, 5.0, 10.0, 8.0, 16.0);
         }
 
         return bonus;
