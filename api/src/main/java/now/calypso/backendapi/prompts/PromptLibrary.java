@@ -183,4 +183,16 @@ public final class PromptLibrary {
         PromptDefinition def = BY_ID.get(id);
         return def != null && def.getBank() == PromptBankKind.PUBLIC;
     }
+
+    public static String privateTextById(String id) {
+        PromptDefinition def = BY_ID.get(id);
+        if (def == null || def.getBank() != PromptBankKind.PRIVATE)
+            return null;
+        return def.getText();
+    }
+
+    public static boolean isPrivatePromptId(String id) {
+        PromptDefinition def = BY_ID.get(id);
+        return def != null && def.getBank() == PromptBankKind.PRIVATE;
+    }
 }

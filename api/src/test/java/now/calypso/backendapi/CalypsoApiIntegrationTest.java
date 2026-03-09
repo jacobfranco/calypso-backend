@@ -1,12 +1,21 @@
 package now.calypso.backendapi;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
@@ -21,15 +30,19 @@ import com.rpl.rama.test.InProcessCluster;
 import com.rpl.rama.test.LaunchConfig;
 
 import now.calypso.backend.data.Filters;
+import now.calypso.backend.data.ActivePrivatePrompt;
 import now.calypso.backend.data.AgentMessage;
 import now.calypso.backend.data.AgentMessageSender;
 import now.calypso.backend.data.AgentSession;
+import now.calypso.backend.data.PrivatePromptAssignment;
+import now.calypso.backend.data.PrivatePromptStatus;
 import now.calypso.backend.data.SignalIntent;
 import now.calypso.backend.data.SignalRecord;
 import now.calypso.backend.data.Signals;
 import now.calypso.backend.data.PublicPromptAnswer;
 import now.calypso.backend.data.PublicPromptFeedCard;
 import now.calypso.backend.data.PublicPromptSelection;
+import now.calypso.backend.data.PromptDefinition;
 import now.calypso.backend.data.OneToManyFilter;
 import now.calypso.backend.data.ModeFilter;
 import now.calypso.backend.data.PromptReaction;
@@ -40,8 +53,10 @@ import now.calypso.backend.serialization.CalypsoSerialization;
 import now.calypso.backendapi.agent.AgentResponder;
 import now.calypso.backendapi.llm.OpenAIJson;
 import now.calypso.backendapi.pojos.PostFilters;
+import now.calypso.backendapi.prompts.PromptLibrary;
 
 class CalypsoApiIntegrationTest {
+    private static final int PRIVATE_PROMPT_DAILY_SPAWN_HOUR = 20;
 
     @AfterEach
     void clearOverride() {
@@ -452,6 +467,218 @@ class CalypsoApiIntegrationTest {
         }
     }
 
+    @Test
+    void privatePromptScheduling_createsOneAndIsIdempotent() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 940L;
+
+            ActivePrivatePrompt first = mgr.getActivePrivatePrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(first);
+            assertEquals(PrivatePromptStatus.ACTIVE, first.getAssignment().getStatus());
+            assertTrue(first.getPrompt().isSetPromptId());
+
+            ActivePrivatePrompt second = mgr.getActivePrivatePrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(second);
+            assertEquals(first.getAssignment().getInstanceId(), second.getAssignment().getInstanceId());
+            assertEquals(first.getPrompt().getPromptId(), second.getPrompt().getPromptId());
+        }
+    }
+
+    @Test
+    void privatePromptAnswering_marksAnsweredAndSchedulesDifferentPromptAfterDayWindow() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 941L;
+
+            ActivePrivatePrompt active = mgr.getActivePrivatePrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(active);
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[{\"token\":\"private_signal\",\"intent\":\"self\"}]}");
+            ActivePrivatePrompt answered;
+            try {
+                answered = mgr.postPrivatePromptAnswer(accountId, active.getAssignment().getInstanceId(), "I value depth.")
+                        .get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            assertNotNull(answered);
+            assertEquals(PrivatePromptStatus.ANSWERED, answered.getAssignment().getStatus());
+            assertNotNull(answered.getAnswer());
+            assertTrue(answered.getAnswer().isSetSignalTokens());
+            assertTrue(answered.getAnswer().getSignalTokens().contains("private_signal"));
+
+            ActivePrivatePrompt sameDay = mgr.getActivePrivatePrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNull(sameDay, "Should not schedule another private prompt immediately after answering.");
+
+            long now = System.currentTimeMillis();
+            long slotStart = currentSpawnSlotStart(now);
+            long previousSlot = previousSpawnSlotStart(now);
+
+            Depot assignmentDepot = ipc.clusterDepot(Agent.class.getName(), "*privatePromptAssignmentDepot");
+            PrivatePromptAssignment answeredAfterSlot = new PrivatePromptAssignment(answered.getAssignment());
+            answeredAfterSlot.setScheduledAt(previousSlot);
+            answeredAfterSlot.setSurfacedAt(previousSlot);
+            answeredAfterSlot.setCompletedAt(slotStart + 1_000L);
+            assignmentDepot.append(answeredAfterSlot);
+
+            ActivePrivatePrompt stillGated = mgr.getActivePrivatePrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNull(stillGated, "Answering after the current slot start should defer scheduling.");
+
+            PrivatePromptAssignment answeredBeforeSlot = new PrivatePromptAssignment(answered.getAssignment());
+            answeredBeforeSlot.setScheduledAt(previousSlot);
+            answeredBeforeSlot.setSurfacedAt(previousSlot);
+            answeredBeforeSlot.setCompletedAt(slotStart - 1_000L);
+            assignmentDepot.append(answeredBeforeSlot);
+
+            ActivePrivatePrompt next = mgr.getActivePrivatePrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(next);
+            assertNotEquals(answered.getAssignment().getInstanceId(), next.getAssignment().getInstanceId());
+            assertNotEquals(answered.getPrompt().getPromptId(), next.getPrompt().getPromptId());
+        }
+    }
+
+    @Test
+    void privatePromptSkipping_marksSkippedAndDoesNotImmediatelyReassignPrompt() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 942L;
+
+            ActivePrivatePrompt active = mgr.getActivePrivatePrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(active);
+            String skippedPromptId = active.getPrompt().getPromptId();
+            String skippedInstanceId = active.getAssignment().getInstanceId();
+
+            assertTrue(mgr.postPrivatePromptSkip(accountId, skippedInstanceId).get(5, TimeUnit.SECONDS));
+
+            QueryTopologyClient<PrivatePromptAssignment> getAssignment = ipc.clusterQuery(Agent.class.getName(),
+                    "getPrivatePromptAssignmentByInstanceId");
+            PrivatePromptAssignment skipped = getAssignment.invoke(skippedInstanceId);
+            assertNotNull(skipped);
+            assertEquals(PrivatePromptStatus.SKIPPED, skipped.getStatus());
+
+            ActivePrivatePrompt immediate = mgr.getActivePrivatePrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNull(immediate, "Skip should not trigger immediate reassignment.");
+
+            // Backdate last prompt activity with a separate answered assignment so scheduling
+            // can proceed while skip cooldown remains in effect for skippedPromptId.
+            List<PromptDefinition> privateBank = PromptLibrary.privateBank();
+            String answeredPromptId = null;
+            for (PromptDefinition def : privateBank) {
+                if (def != null && def.getPromptId() != null && !def.getPromptId().equals(skippedPromptId)) {
+                    answeredPromptId = def.getPromptId();
+                    break;
+                }
+            }
+            assertNotNull(answeredPromptId);
+
+            PrivatePromptAssignment oldAnswered = new PrivatePromptAssignment();
+            oldAnswered.setInstanceId(UUID.randomUUID().toString());
+            oldAnswered.setAccountId(accountId);
+            oldAnswered.setPromptId(answeredPromptId);
+            long yesterday = System.currentTimeMillis() - (25L * 60L * 60L * 1000L);
+            oldAnswered.setScheduledAt(yesterday);
+            oldAnswered.setSurfacedAt(yesterday);
+            oldAnswered.setCompletedAt(yesterday);
+            oldAnswered.setStatus(PrivatePromptStatus.ANSWERED);
+            ipc.clusterDepot(Agent.class.getName(), "*privatePromptAssignmentDepot").append(oldAnswered);
+
+            ActivePrivatePrompt next = mgr.getActivePrivatePrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(next);
+            assertNotEquals(skippedPromptId, next.getPrompt().getPromptId(),
+                    "Skipped prompt must stay excluded during cooldown.");
+        }
+    }
+
+    @Test
+    void privatePromptSnooze_returnsNoActiveUntilExpiryAndThenResumesSameInstance() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 943L;
+
+            ActivePrivatePrompt active = mgr.getActivePrivatePrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(active);
+            String instanceId = active.getAssignment().getInstanceId();
+            String promptId = active.getPrompt().getPromptId();
+
+            long snoozeUntil = System.currentTimeMillis() + (60L * 60L * 1000L);
+            assertTrue(mgr.postPrivatePromptSnooze(accountId, instanceId, snoozeUntil).get(5, TimeUnit.SECONDS));
+
+            ActivePrivatePrompt beforeExpiry = mgr.getActivePrivatePrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNull(beforeExpiry, "Snoozed prompts should not surface before snoozeUntil.");
+
+            QueryTopologyClient<PrivatePromptAssignment> getAssignment = ipc.clusterQuery(Agent.class.getName(),
+                    "getPrivatePromptAssignmentByInstanceId");
+            PrivatePromptAssignment snoozed = getAssignment.invoke(instanceId);
+            assertNotNull(snoozed);
+            assertEquals(PrivatePromptStatus.SNOOZED, snoozed.getStatus());
+
+            PrivatePromptAssignment expired = new PrivatePromptAssignment(snoozed);
+            expired.setSnoozeUntil(System.currentTimeMillis() - 1000L);
+            ipc.clusterDepot(Agent.class.getName(), "*privatePromptAssignmentDepot").append(expired);
+
+            ActivePrivatePrompt resumed = mgr.getActivePrivatePrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(resumed);
+            assertEquals(instanceId, resumed.getAssignment().getInstanceId());
+            assertEquals(promptId, resumed.getPrompt().getPromptId());
+            assertEquals(PrivatePromptStatus.ACTIVE, resumed.getAssignment().getStatus());
+        }
+    }
+
+    @Test
+    void privatePromptSignals_failureDoesNotFailAnswerRequest() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 944L;
+
+            ActivePrivatePrompt active = mgr.getActivePrivatePrompt(accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(active);
+
+            OpenAIJson.setTestOverride((system, user) -> {
+                throw new RuntimeException("signal extraction failure");
+            });
+            try {
+                ActivePrivatePrompt answered = mgr
+                        .postPrivatePromptAnswer(accountId, active.getAssignment().getInstanceId(),
+                                "Still should save answer.")
+                        .get(5, TimeUnit.SECONDS);
+                assertNotNull(answered);
+                assertEquals(PrivatePromptStatus.ANSWERED, answered.getAssignment().getStatus());
+                assertNotNull(answered.getAnswer());
+                assertFalse(answered.getAnswer().isSetSignalTokens(),
+                        "Signal tokens should be optional when extraction fails.");
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+        }
+    }
+
+    @Test
+    void privatePromptOwnership_preventsCrossAccountMutations() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long ownerId = 945L;
+            long otherId = 946L;
+
+            ActivePrivatePrompt active = mgr.getActivePrivatePrompt(ownerId).get(5, TimeUnit.SECONDS);
+            assertNotNull(active);
+            String instanceId = active.getAssignment().getInstanceId();
+
+            ExecutionException answerErr = assertThrows(ExecutionException.class,
+                    () -> mgr.postPrivatePromptAnswer(otherId, instanceId, "nope").get(5, TimeUnit.SECONDS));
+            assertInstanceOf(SecurityException.class, answerErr.getCause());
+
+            ExecutionException skipErr = assertThrows(ExecutionException.class,
+                    () -> mgr.postPrivatePromptSkip(otherId, instanceId).get(5, TimeUnit.SECONDS));
+            assertInstanceOf(SecurityException.class, skipErr.getCause());
+
+            ExecutionException snoozeErr = assertThrows(ExecutionException.class,
+                    () -> mgr.postPrivatePromptSnooze(otherId, instanceId, null).get(5, TimeUnit.SECONDS));
+            assertInstanceOf(SecurityException.class, snoozeErr.getCause());
+        }
+    }
+
     private static PostFilters filtersForGender(String self, List<String> seeking) {
         PostFilters filters = new PostFilters();
         ModeFilter relationshipMode = new ModeFilter();
@@ -494,6 +721,22 @@ class CalypsoApiIntegrationTest {
             Thread.sleep(50);
         }
         return null;
+    }
+
+    private static long currentSpawnSlotStart(long epochMillis) {
+        ZoneId zone = ZoneId.systemDefault();
+        ZonedDateTime now = Instant.ofEpochMilli(epochMillis).atZone(zone);
+        ZonedDateTime spawn = now.toLocalDate().atTime(PRIVATE_PROMPT_DAILY_SPAWN_HOUR, 0).atZone(zone);
+        if (now.isBefore(spawn)) {
+            spawn = spawn.minusDays(1);
+        }
+        return spawn.toInstant().toEpochMilli();
+    }
+
+    private static long previousSpawnSlotStart(long epochMillis) {
+        ZoneId zone = ZoneId.systemDefault();
+        ZonedDateTime slot = Instant.ofEpochMilli(currentSpawnSlotStart(epochMillis)).atZone(zone);
+        return slot.minusDays(1).toInstant().toEpochMilli();
     }
 
     private InProcessCluster newCluster() {

@@ -4,6 +4,9 @@ import java.io.IOException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
 import java.security.SecureRandom;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.*;
 import java.util.concurrent.*;
 import java.net.URI;
@@ -12,6 +15,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.function.Supplier;
 
 import com.openai.client.OpenAIClient;
 import com.rpl.rama.*;
@@ -35,6 +39,7 @@ public class CalypsoApiManager {
 
     private final ConcurrentHashMap<Long, CompletableFuture<Void>> serialByAccount = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, CompletableFuture<AgentSession>> agentSerialByAccount = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, CompletableFuture<?>> privatePromptSerialByAccount = new ConcurrentHashMap<>();
 
     // Modules
     public static final String CORE_MODULE_NAME = Core.class.getName();
@@ -59,7 +64,6 @@ public class CalypsoApiManager {
     private final QueryTopologyClient<List<PublicPromptAnswer>> getPublicPromptFeed;
     private final QueryTopologyClient<List<PublicPromptAnswer>> getMyPublicPromptAnswers;
     private final QueryTopologyClient<PublicPromptSelection> getPublicPromptSelection;
-    
 
     // Matches Depots
     private final Depot signalsDepot;
@@ -72,15 +76,25 @@ public class CalypsoApiManager {
     private final QueryTopologyClient<List<MatchCandidate>> getMatchesFromAccountId;
     private final QueryTopologyClient<Signals> getSignalsFromAccountId;
     private final QueryTopologyClient<AgentSession> getAgentSessionFromAccountId;
+    private final QueryTopologyClient<PrivatePromptAssignment> getPrivatePromptAssignmentByInstanceId;
+    private final QueryTopologyClient<PrivatePromptAnswer> getPrivatePromptAnswerByInstanceId;
+    private final QueryTopologyClient<PrivatePromptAssignment> getActivePrivatePromptAssignment;
+    private final QueryTopologyClient<Map<String, Object>> getPrivatePromptSchedulerState;
 
     private final ConcurrentHashMap<String, PhoneVerification> phoneVerificationByNumber = new ConcurrentHashMap<>();
     private static final long PHONE_CODE_TTL_MS = 10 * 60 * 1000;
+    private static final long PRIVATE_PROMPT_SKIP_COOLDOWN_MS = 24L * 60 * 60 * 1000;
+    private static final long PRIVATE_PROMPT_DEFAULT_SNOOZE_MS = 12L * 60 * 60 * 1000;
+    private static final int PRIVATE_PROMPT_DAILY_SPAWN_HOUR = 20;
+    private static final int PRIVATE_PROMPT_BODY_LIMIT = 1200;
     private static final SecureRandom PHONE_CODE_RANDOM = new SecureRandom();
     private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
     private static final String SMS_FALLBACK_ENV = "CALYPSO_SMS_FALLBACK";
 
     // Agent Depots
     private final Depot agentSessionDepot;
+    private final Depot privatePromptAssignmentDepot;
+    private final Depot privatePromptAnswerDepot;
 
     public CalypsoApiManager(ClusterManagerBase cluster, OpenAIClient openAI) {
 
@@ -112,12 +126,19 @@ public class CalypsoApiManager {
         matchRefillDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*matchRefillDepot");
         matchesServeDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*matchesServeDepot");
         agentSessionDepot = cluster.clusterDepot(AGENT_MODULE_NAME, "*agentSessionDepot");
+        privatePromptAssignmentDepot = cluster.clusterDepot(AGENT_MODULE_NAME, "*privatePromptAssignmentDepot");
+        privatePromptAnswerDepot = cluster.clusterDepot(AGENT_MODULE_NAME, "*privatePromptAnswerDepot");
 
         // Matches Queries
         getFiltersFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getFiltersFromAccountId");
         getMatchesFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getMatchesFromAccountId");
         getSignalsFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getSignalsFromAccountId");
         getAgentSessionFromAccountId = cluster.clusterQuery(AGENT_MODULE_NAME, "getAgentSessionFromAccountId");
+        getPrivatePromptAssignmentByInstanceId = cluster.clusterQuery(AGENT_MODULE_NAME,
+                "getPrivatePromptAssignmentByInstanceId");
+        getPrivatePromptAnswerByInstanceId = cluster.clusterQuery(AGENT_MODULE_NAME, "getPrivatePromptAnswerByInstanceId");
+        getActivePrivatePromptAssignment = cluster.clusterQuery(AGENT_MODULE_NAME, "getActivePrivatePromptAssignment");
+        getPrivatePromptSchedulerState = cluster.clusterQuery(AGENT_MODULE_NAME, "getPrivatePromptSchedulerState");
 
     }
 
@@ -320,6 +341,398 @@ public class CalypsoApiManager {
                     normalized));
             next.whenComplete((r, e) -> agentSerialByAccount.remove(k, next));
             return next;
+        });
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> CompletableFuture<T> serializePrivatePromptOp(long accountId, Supplier<CompletableFuture<T>> op) {
+        return (CompletableFuture<T>) privatePromptSerialByAccount.compute(accountId, (k, prev) -> {
+            CompletableFuture<Void> start = (prev == null)
+                    ? CompletableFuture.completedFuture(null)
+                    : ((CompletableFuture<?>) prev).handle((ignored, err) -> null);
+            CompletableFuture<T> next = start.thenCompose(v -> op.get());
+            next.whenComplete((r, e) -> privatePromptSerialByAccount.remove(k, next));
+            return next;
+        });
+    }
+
+    private static String asTrimmedString(Object raw) {
+        if (raw == null)
+            return null;
+        String s = raw.toString().trim();
+        return s.isEmpty() ? null : s;
+    }
+
+    private static Long asLong(Object raw) {
+        return raw instanceof Number ? ((Number) raw).longValue() : null;
+    }
+
+    private static List<String> asStringList(Object raw) {
+        if (!(raw instanceof Collection<?>))
+            return List.of();
+        ArrayList<String> out = new ArrayList<>();
+        for (Object item : (Collection<?>) raw) {
+            String s = asTrimmedString(item);
+            if (s != null)
+                out.add(s);
+        }
+        return out;
+    }
+
+    private static Map<String, Long> asStringLongMap(Object raw) {
+        if (!(raw instanceof Map<?, ?>))
+            return Map.of();
+        HashMap<String, Long> out = new HashMap<>();
+        for (Map.Entry<?, ?> e : ((Map<?, ?>) raw).entrySet()) {
+            if (e == null)
+                continue;
+            String key = asTrimmedString(e.getKey());
+            Long val = asLong(e.getValue());
+            if (key != null && val != null) {
+                out.put(key, val);
+            }
+        }
+        return out;
+    }
+
+    private static long currentSpawnSlotStart(long epochMillis) {
+        ZoneId zone = ZoneId.systemDefault();
+        ZonedDateTime now = Instant.ofEpochMilli(epochMillis).atZone(zone);
+        ZonedDateTime spawn = now.toLocalDate().atTime(PRIVATE_PROMPT_DAILY_SPAWN_HOUR, 0).atZone(zone);
+        if (now.isBefore(spawn)) {
+            spawn = spawn.minusDays(1);
+        }
+        return spawn.toInstant().toEpochMilli();
+    }
+
+    private static long nextSpawnAfter(long epochMillis) {
+        ZoneId zone = ZoneId.systemDefault();
+        ZonedDateTime at = Instant.ofEpochMilli(epochMillis).atZone(zone);
+        ZonedDateTime spawn = at.toLocalDate().atTime(PRIVATE_PROMPT_DAILY_SPAWN_HOUR, 0).atZone(zone);
+        if (!at.isBefore(spawn)) {
+            spawn = spawn.plusDays(1);
+        }
+        return spawn.toInstant().toEpochMilli();
+    }
+
+    /**
+     * Daily private prompts are slot-based (server time, 8pm default):
+     * - first prompt can be scheduled immediately
+     * - each later prompt requires the previous scheduled prompt to be answered
+     * - answer must happen before the current slot opens, otherwise wait for next slot
+     */
+    private static boolean canScheduleForCurrentSlot(Long lastScheduledAt, Long lastAnsweredAt, long now) {
+        if (lastScheduledAt == null) {
+            return true;
+        }
+        long slotStart = currentSpawnSlotStart(now);
+        if (lastScheduledAt >= slotStart) {
+            return false;
+        }
+        long nextSlotAfterLast = nextSpawnAfter(lastScheduledAt);
+        if (now < nextSlotAfterLast) {
+            return false;
+        }
+        if (lastAnsweredAt == null || lastAnsweredAt.longValue() < lastScheduledAt.longValue()) {
+            return false;
+        }
+        return lastAnsweredAt.longValue() < slotStart;
+    }
+
+    private static String clampPrivatePromptBody(String body) {
+        return clampPromptText(body, PRIVATE_PROMPT_BODY_LIMIT);
+    }
+
+    private static boolean isMutablePrivatePromptStatus(PrivatePromptStatus status) {
+        return status == PrivatePromptStatus.ACTIVE || status == PrivatePromptStatus.SNOOZED;
+    }
+
+    private static long stablePrivatePromptSortKey(long accountId, String promptId) {
+        return Integer.toUnsignedLong(Objects.hash(accountId, promptId));
+    }
+
+    private static Map<String, Object> withAdditionalSkippedPrompt(Map<String, Object> state, String promptId,
+            long skippedAt) {
+        HashMap<String, Object> out = new HashMap<>();
+        if (state != null) {
+            out.putAll(state);
+        }
+        if (promptId != null) {
+            HashMap<String, Long> skippedAtById = new HashMap<>(
+                    asStringLongMap(state == null ? null : state.get("skippedPromptIdToLastSkippedAt")));
+            skippedAtById.put(promptId, skippedAt);
+            out.put("skippedPromptIdToLastSkippedAt", skippedAtById);
+        }
+        return out;
+    }
+
+    private CompletableFuture<Map<String, Object>> readPrivatePromptSchedulerState(long accountId) {
+        return getPrivatePromptSchedulerState.invokeAsync(accountId, accountId)
+                .thenApply(state -> state == null ? new HashMap<>() : new HashMap<>(state));
+    }
+
+    private CompletableFuture<ActivePrivatePrompt> hydrateActivePrivatePrompt(PrivatePromptAssignment assignment) {
+        if (assignment == null)
+            return CompletableFuture.completedFuture(null);
+        String promptId = assignment.getPromptId();
+        PromptDefinition prompt = PromptLibrary.getById(promptId);
+        if (prompt == null || prompt.getBank() != PromptBankKind.PRIVATE) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("Unknown private prompt: " + promptId));
+        }
+        return getPrivatePromptAnswerByInstanceId.invokeAsync(assignment.getInstanceId()).thenApply(answer -> {
+            ActivePrivatePrompt out = new ActivePrivatePrompt();
+            out.setAssignment(new PrivatePromptAssignment(assignment));
+            out.setPrompt(new PromptDefinition(prompt));
+            if (answer != null) {
+                out.setAnswer(new PrivatePromptAnswer(answer));
+            }
+            return out;
+        });
+    }
+
+    private String pickNextPrivatePromptId(long accountId, Set<String> answeredPromptIds,
+            Map<String, Long> skippedAtById, Set<String> temporarilyExcludedPromptIds, long now) {
+        List<PromptDefinition> bank = PromptLibrary.privateBank();
+        if (bank == null || bank.isEmpty())
+            return null;
+        ArrayList<String> eligiblePromptIds = new ArrayList<>();
+        for (PromptDefinition def : bank) {
+            if (def == null || def.getPromptId() == null)
+                continue;
+            String promptId = def.getPromptId();
+            if (answeredPromptIds != null && answeredPromptIds.contains(promptId))
+                continue;
+            if (temporarilyExcludedPromptIds != null && temporarilyExcludedPromptIds.contains(promptId))
+                continue;
+            Long skippedAt = skippedAtById == null ? null : skippedAtById.get(promptId);
+            if (skippedAt != null && (now - skippedAt) < PRIVATE_PROMPT_SKIP_COOLDOWN_MS)
+                continue;
+            eligiblePromptIds.add(promptId);
+        }
+        if (eligiblePromptIds.isEmpty())
+            return null;
+        eligiblePromptIds.sort(Comparator
+                .comparingLong((String promptId) -> stablePrivatePromptSortKey(accountId, promptId))
+                .thenComparing(promptId -> promptId));
+        return eligiblePromptIds.get(0);
+    }
+
+    private CompletableFuture<ActivePrivatePrompt> scheduleNextPrivatePrompt(
+            long accountId,
+            Map<String, Object> state,
+            long now,
+            boolean ignoreServerDayLimit,
+            Set<String> temporarilyExcludedPromptIds) {
+        Long lastScheduledAt = asLong(state == null ? null : state.get("lastScheduledAt"));
+        Long lastAnsweredAt = asLong(state == null ? null : state.get("lastAnsweredAt"));
+        if (!ignoreServerDayLimit && !canScheduleForCurrentSlot(lastScheduledAt, lastAnsweredAt, now)) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        Set<String> answeredPromptIds = new LinkedHashSet<>(asStringList(state == null ? null : state.get("answeredPromptIds")));
+        Map<String, Long> skippedAtById = asStringLongMap(
+                state == null ? null : state.get("skippedPromptIdToLastSkippedAt"));
+        String nextPromptId = pickNextPrivatePromptId(accountId, answeredPromptIds, skippedAtById,
+                temporarilyExcludedPromptIds, now);
+        if (nextPromptId == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        PrivatePromptAssignment assignment = new PrivatePromptAssignment();
+        assignment.setInstanceId(UUID.randomUUID().toString());
+        assignment.setAccountId(accountId);
+        assignment.setPromptId(nextPromptId);
+        assignment.setScheduledAt(now);
+        assignment.setSurfacedAt(now);
+        assignment.setStatus(PrivatePromptStatus.ACTIVE);
+
+        return privatePromptAssignmentDepot.appendAsync(assignment)
+                .thenCompose(v -> hydrateActivePrivatePrompt(assignment));
+    }
+
+    private CompletableFuture<ActivePrivatePrompt> scheduleNextPrivatePrompt(long accountId, Map<String, Object> state,
+            long now) {
+        return scheduleNextPrivatePrompt(accountId, state, now, false, Collections.emptySet());
+    }
+
+    private CompletableFuture<ActivePrivatePrompt> ensureActivePrivatePromptInternal(long accountId) {
+        long now = System.currentTimeMillis();
+        return readPrivatePromptSchedulerState(accountId).thenCompose(state -> {
+            String activeInstanceId = asTrimmedString(state.get("activeInstanceId"));
+            if (activeInstanceId != null) {
+                return getPrivatePromptAssignmentByInstanceId.invokeAsync(activeInstanceId).thenCompose(assignment -> {
+                    if (assignment == null || assignment.getAccountId() != accountId) {
+                        return scheduleNextPrivatePrompt(accountId, state, now);
+                    }
+                    PrivatePromptStatus status = assignment.getStatus();
+                    if (status == PrivatePromptStatus.ACTIVE) {
+                        return hydrateActivePrivatePrompt(assignment);
+                    }
+                    if (status == PrivatePromptStatus.SNOOZED) {
+                        long snoozeUntil = assignment.isSetSnoozeUntil() ? assignment.getSnoozeUntil() : 0L;
+                        if (snoozeUntil > now) {
+                            return CompletableFuture.completedFuture(null);
+                        }
+                        PrivatePromptAssignment resumed = new PrivatePromptAssignment(assignment);
+                        resumed.setStatus(PrivatePromptStatus.ACTIVE);
+                        resumed.setSurfacedAt(now);
+                        if (resumed.isSetSnoozeUntil())
+                            resumed.unsetSnoozeUntil();
+                        return privatePromptAssignmentDepot.appendAsync(resumed)
+                                .thenCompose(v -> hydrateActivePrivatePrompt(resumed));
+                    }
+                    return scheduleNextPrivatePrompt(accountId, state, now);
+                });
+            }
+            return scheduleNextPrivatePrompt(accountId, state, now);
+        });
+    }
+
+    private CompletableFuture<PrivatePromptAssignment> requireMutablePrivatePromptAssignment(long accountId,
+            String instanceId) {
+        String normalizedInstanceId = asTrimmedString(instanceId);
+        if (normalizedInstanceId == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("instanceId required."));
+        }
+        return getPrivatePromptAssignmentByInstanceId.invokeAsync(normalizedInstanceId).thenCompose(assignment -> {
+            if (assignment == null) {
+                return CompletableFuture.failedFuture(new IllegalArgumentException("Unknown private prompt instance."));
+            }
+            if (assignment.getAccountId() != accountId) {
+                return CompletableFuture.failedFuture(new SecurityException("Forbidden"));
+            }
+            if (!PromptLibrary.isPrivatePromptId(assignment.getPromptId())) {
+                return CompletableFuture
+                        .failedFuture(new IllegalArgumentException("Unknown private prompt: " + assignment.getPromptId()));
+            }
+            if (!isMutablePrivatePromptStatus(assignment.getStatus())) {
+                return CompletableFuture.failedFuture(new IllegalStateException("Private prompt is not active."));
+            }
+            return CompletableFuture.completedFuture(assignment);
+        });
+    }
+
+    public CompletableFuture<ActivePrivatePrompt> getActivePrivatePrompt(long accountId) {
+        return serializePrivatePromptOp(accountId, () -> ensureActivePrivatePromptInternal(accountId));
+    }
+
+    public CompletableFuture<ActivePrivatePrompt> ensureActivePrivatePrompt(long accountId) {
+        return serializePrivatePromptOp(accountId, () -> ensureActivePrivatePromptInternal(accountId));
+    }
+
+    public CompletableFuture<ActivePrivatePrompt> postPrivatePromptAnswer(long accountId, String instanceId, String body) {
+        String normalizedBody = clampPrivatePromptBody(body);
+        if (normalizedBody == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Answer body required."));
+        }
+        return serializePrivatePromptOp(accountId, () -> requireMutablePrivatePromptAssignment(accountId, instanceId)
+                .thenCompose(current -> {
+                    long now = System.currentTimeMillis();
+                    PromptDefinition prompt = PromptLibrary.getById(current.getPromptId());
+                    if (prompt == null || prompt.getBank() != PromptBankKind.PRIVATE) {
+                        return CompletableFuture
+                                .failedFuture(new IllegalArgumentException("Unknown private prompt: " + current.getPromptId()));
+                    }
+
+                    PrivatePromptAnswer answer = new PrivatePromptAnswer();
+                    answer.setInstanceId(current.getInstanceId());
+                    answer.setAccountId(accountId);
+                    answer.setPromptId(current.getPromptId());
+                    answer.setBody(normalizedBody);
+                    answer.setAnsweredAt(now);
+
+                    CompletableFuture<List<String>> signalTokensFuture = extractAndAppendSignalsFromPrompt(
+                            accountId,
+                            prompt.getText(),
+                            normalizedBody,
+                            "private_prompt",
+                            current.getInstanceId()).exceptionally(ex -> {
+                                LOG.warn("Signal extraction failed for private prompt answer {}", current.getInstanceId(),
+                                        ex);
+                                return List.of();
+                            });
+
+                    return signalTokensFuture.thenCompose(tokens -> {
+                        if (tokens != null && !tokens.isEmpty()) {
+                            answer.setSignalTokens(tokens);
+                        }
+                        PrivatePromptAssignment updated = new PrivatePromptAssignment(current);
+                        updated.setStatus(PrivatePromptStatus.ANSWERED);
+                        updated.setCompletedAt(now);
+                        if (updated.isSetSnoozeUntil()) {
+                            updated.unsetSnoozeUntil();
+                        }
+                        return privatePromptAnswerDepot.appendAsync(answer)
+                                .thenCompose(v -> privatePromptAssignmentDepot.appendAsync(updated))
+                                .thenCompose(v -> hydrateActivePrivatePrompt(updated));
+                    });
+                }));
+    }
+
+    public CompletableFuture<Boolean> postPrivatePromptSkip(long accountId, String instanceId) {
+        return serializePrivatePromptOp(accountId, () -> requireMutablePrivatePromptAssignment(accountId, instanceId)
+                .thenCompose(current -> {
+                    PrivatePromptAssignment updated = new PrivatePromptAssignment(current);
+                    updated.setStatus(PrivatePromptStatus.SKIPPED);
+                    updated.setCompletedAt(System.currentTimeMillis());
+                    if (updated.isSetSnoozeUntil()) {
+                        updated.unsetSnoozeUntil();
+                    }
+                    return privatePromptAssignmentDepot.appendAsync(updated).thenApply(v -> true);
+                }));
+    }
+
+    public CompletableFuture<Boolean> postPrivatePromptSnooze(long accountId, String instanceId, Long snoozeUntilMaybe) {
+        return serializePrivatePromptOp(accountId, () -> requireMutablePrivatePromptAssignment(accountId, instanceId)
+                .thenCompose(current -> {
+                    long now = System.currentTimeMillis();
+                    long snoozeUntil = (snoozeUntilMaybe != null && snoozeUntilMaybe.longValue() > now)
+                            ? snoozeUntilMaybe.longValue()
+                            : now + PRIVATE_PROMPT_DEFAULT_SNOOZE_MS;
+                    PrivatePromptAssignment updated = new PrivatePromptAssignment(current);
+                    updated.setStatus(PrivatePromptStatus.SNOOZED);
+                    updated.setSnoozeUntil(snoozeUntil);
+                    if (!updated.isSetSurfacedAt()) {
+                        updated.setSurfacedAt(now);
+                    }
+                    return privatePromptAssignmentDepot.appendAsync(updated).thenApply(v -> true);
+                }));
+    }
+
+    /**
+     * Temporary testing helper that retires the current active private prompt (if any)
+     * and schedules a new eligible one immediately.
+     */
+    public CompletableFuture<ActivePrivatePrompt> debugSummonNextPrivatePrompt(long accountId) {
+        return serializePrivatePromptOp(accountId, () -> {
+            long now = System.currentTimeMillis();
+            return readPrivatePromptSchedulerState(accountId).thenCompose(state -> {
+                String activeInstanceId = asTrimmedString(state.get("activeInstanceId"));
+                if (activeInstanceId == null) {
+                    return scheduleNextPrivatePrompt(accountId, state, now, true, Collections.emptySet());
+                }
+                return getPrivatePromptAssignmentByInstanceId.invokeAsync(activeInstanceId).thenCompose(current -> {
+                    if (current == null
+                            || current.getAccountId() != accountId
+                            || !isMutablePrivatePromptStatus(current.getStatus())) {
+                        return scheduleNextPrivatePrompt(accountId, state, now, true, Collections.emptySet());
+                    }
+                    PrivatePromptAssignment retired = new PrivatePromptAssignment(current);
+                    retired.setStatus(PrivatePromptStatus.SKIPPED);
+                    retired.setCompletedAt(now);
+                    if (retired.isSetSnoozeUntil()) {
+                        retired.unsetSnoozeUntil();
+                    }
+                    Map<String, Object> adjustedState = withAdditionalSkippedPrompt(state, current.getPromptId(), now);
+                    Set<String> excludedPromptIds = current.getPromptId() == null
+                            ? Collections.emptySet()
+                            : Collections.singleton(current.getPromptId());
+                    return privatePromptAssignmentDepot.appendAsync(retired)
+                            .thenCompose(v -> scheduleNextPrivatePrompt(accountId, adjustedState, now, true,
+                                    excludedPromptIds));
+                });
+            });
         });
     }
 

@@ -795,14 +795,14 @@ public class AgentSession implements org.apache.thrift.TBase<AgentSession, Agent
           case 6: // MESSAGES
             if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
               {
-                org.apache.thrift.protocol.TList _list56 = iprot.readListBegin();
-                struct.messages = new java.util.ArrayList<AgentMessage>(_list56.size);
-                @org.apache.thrift.annotation.Nullable AgentMessage _elem57;
-                for (int _i58 = 0; _i58 < _list56.size; ++_i58)
+                org.apache.thrift.protocol.TList _list64 = iprot.readListBegin();
+                struct.messages = new java.util.ArrayList<AgentMessage>(_list64.size);
+                @org.apache.thrift.annotation.Nullable AgentMessage _elem65;
+                for (int _i66 = 0; _i66 < _list64.size; ++_i66)
                 {
-                  _elem57 = new AgentMessage();
-                  _elem57.read(iprot);
-                  struct.messages.add(_elem57);
+                  _elem65 = new AgentMessage();
+                  _elem65.read(iprot);
+                  struct.messages.add(_elem65);
                 }
                 iprot.readListEnd();
               }
@@ -860,9 +860,9 @@ public class AgentSession implements org.apache.thrift.TBase<AgentSession, Agent
           oprot.writeFieldBegin(MESSAGES_FIELD_DESC);
           {
             oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRUCT, struct.messages.size()));
-            for (AgentMessage _iter59 : struct.messages)
+            for (AgentMessage _iter67 : struct.messages)
             {
-              _iter59.write(oprot);
+              _iter67.write(oprot);
             }
             oprot.writeListEnd();
           }
@@ -900,9 +900,9 @@ public class AgentSession implements org.apache.thrift.TBase<AgentSession, Agent
       if (struct.isSetMessages()) {
         {
           oprot.writeI32(struct.messages.size());
-          for (AgentMessage _iter60 : struct.messages)
+          for (AgentMessage _iter68 : struct.messages)
           {
-            _iter60.write(oprot);
+            _iter68.write(oprot);
           }
         }
       }
@@ -924,14 +924,14 @@ public class AgentSession implements org.apache.thrift.TBase<AgentSession, Agent
       java.util.BitSet incoming = iprot.readBitSet(1);
       if (incoming.get(0)) {
         {
-          org.apache.thrift.protocol.TList _list61 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRUCT);
-          struct.messages = new java.util.ArrayList<AgentMessage>(_list61.size);
-          @org.apache.thrift.annotation.Nullable AgentMessage _elem62;
-          for (int _i63 = 0; _i63 < _list61.size; ++_i63)
+          org.apache.thrift.protocol.TList _list69 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRUCT);
+          struct.messages = new java.util.ArrayList<AgentMessage>(_list69.size);
+          @org.apache.thrift.annotation.Nullable AgentMessage _elem70;
+          for (int _i71 = 0; _i71 < _list69.size; ++_i71)
           {
-            _elem62 = new AgentMessage();
-            _elem62.read(iprot);
-            struct.messages.add(_elem62);
+            _elem70 = new AgentMessage();
+            _elem70.read(iprot);
+            struct.messages.add(_elem70);
           }
         }
         struct.setMessagesIsSet(true);

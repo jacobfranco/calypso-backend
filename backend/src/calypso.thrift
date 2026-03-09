@@ -205,6 +205,39 @@ struct PublicPromptSelection {
   3: required Timestamp updatedAt;
 }
 
+enum PrivatePromptStatus {
+  ACTIVE = 1,
+  ANSWERED = 2,
+  SKIPPED = 3,
+  SNOOZED = 4
+}
+
+struct PrivatePromptAssignment {
+  1: required string instanceId;
+  2: required AccountId accountId;
+  3: required string promptId;
+  4: required Timestamp scheduledAt;
+  5: optional Timestamp surfacedAt;
+  6: optional Timestamp completedAt;
+  7: required PrivatePromptStatus status;
+  8: optional Timestamp snoozeUntil;
+}
+
+struct PrivatePromptAnswer {
+  1: required string instanceId;
+  2: required AccountId accountId;
+  3: required string promptId;
+  4: required string body;
+  5: required Timestamp answeredAt;
+  6: optional list<string> signalTokens;
+}
+
+struct ActivePrivatePrompt {
+  1: required PrivatePromptAssignment assignment;
+  2: required PromptDefinition prompt;
+  3: optional PrivatePromptAnswer answer;
+}
+
 enum AgentMessageSender {
   USER = 1,
   AGENT = 2

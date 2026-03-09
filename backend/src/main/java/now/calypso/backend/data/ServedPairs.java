@@ -503,13 +503,13 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
           case 2: // TARGET_IDS
             if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
               {
-                org.apache.thrift.protocol.TList _list72 = iprot.readListBegin();
-                struct.targetIds = new java.util.ArrayList<java.lang.Long>(_list72.size);
-                long _elem73;
-                for (int _i74 = 0; _i74 < _list72.size; ++_i74)
+                org.apache.thrift.protocol.TList _list80 = iprot.readListBegin();
+                struct.targetIds = new java.util.ArrayList<java.lang.Long>(_list80.size);
+                long _elem81;
+                for (int _i82 = 0; _i82 < _list80.size; ++_i82)
                 {
-                  _elem73 = iprot.readI64();
-                  struct.targetIds.add(_elem73);
+                  _elem81 = iprot.readI64();
+                  struct.targetIds.add(_elem81);
                 }
                 iprot.readListEnd();
               }
@@ -555,9 +555,9 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
         oprot.writeFieldBegin(TARGET_IDS_FIELD_DESC);
         {
           oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.I64, struct.targetIds.size()));
-          for (long _iter75 : struct.targetIds)
+          for (long _iter83 : struct.targetIds)
           {
-            oprot.writeI64(_iter75);
+            oprot.writeI64(_iter83);
           }
           oprot.writeListEnd();
         }
@@ -587,9 +587,9 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
       oprot.writeI64(struct.accountId);
       {
         oprot.writeI32(struct.targetIds.size());
-        for (long _iter76 : struct.targetIds)
+        for (long _iter84 : struct.targetIds)
         {
-          oprot.writeI64(_iter76);
+          oprot.writeI64(_iter84);
         }
       }
       oprot.writeI64(struct.servedAt);
@@ -601,13 +601,13 @@ public class ServedPairs implements org.apache.thrift.TBase<ServedPairs, ServedP
       struct.accountId = iprot.readI64();
       struct.setAccountIdIsSet(true);
       {
-        org.apache.thrift.protocol.TList _list77 = iprot.readListBegin(org.apache.thrift.protocol.TType.I64);
-        struct.targetIds = new java.util.ArrayList<java.lang.Long>(_list77.size);
-        long _elem78;
-        for (int _i79 = 0; _i79 < _list77.size; ++_i79)
+        org.apache.thrift.protocol.TList _list85 = iprot.readListBegin(org.apache.thrift.protocol.TType.I64);
+        struct.targetIds = new java.util.ArrayList<java.lang.Long>(_list85.size);
+        long _elem86;
+        for (int _i87 = 0; _i87 < _list85.size; ++_i87)
         {
-          _elem78 = iprot.readI64();
-          struct.targetIds.add(_elem78);
+          _elem86 = iprot.readI64();
+          struct.targetIds.add(_elem86);
         }
       }
       struct.setTargetIdsIsSet(true);

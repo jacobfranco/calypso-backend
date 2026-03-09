@@ -663,6 +663,99 @@ public class CalypsoApiController {
                         ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
     }
 
+    @GetMapping("/api/accounts/{id}/agent/private-prompt")
+    public Mono<ResponseEntity<ActivePrivatePrompt>> getActivePrivatePrompt(
+            @PathVariable("id") String idStr,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getActivePrivatePrompt(accountId))
+                .map(ResponseEntity::ok)
+                .defaultIfEmpty(ResponseEntity.noContent().build());
+    }
+
+    @PostMapping("/api/accounts/{id}/agent/private-prompt/{instanceId}/answer")
+    public Mono<ActivePrivatePrompt> postPrivatePromptAnswer(
+            @PathVariable("id") String idStr,
+            @PathVariable("instanceId") String instanceId,
+            @RequestBody(required = false) PostPrivatePromptAnswerRequest payload,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        String body = payload == null ? null : payload.body;
+        return Mono.fromFuture(manager.postPrivatePromptAnswer(accountId, instanceId, body))
+                .onErrorMap(SecurityException.class,
+                        ex -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden", ex))
+                .onErrorMap(IllegalStateException.class,
+                        ex -> new ResponseStatusException(HttpStatus.CONFLICT, ex.getMessage(), ex))
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
+    @PostMapping("/api/accounts/{id}/agent/private-prompt/{instanceId}/skip")
+    public Mono<Map<String, Object>> postPrivatePromptSkip(
+            @PathVariable("id") String idStr,
+            @PathVariable("instanceId") String instanceId,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.postPrivatePromptSkip(accountId, instanceId))
+                .map(ok -> Collections.<String, Object>emptyMap())
+                .onErrorMap(SecurityException.class,
+                        ex -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden", ex))
+                .onErrorMap(IllegalStateException.class,
+                        ex -> new ResponseStatusException(HttpStatus.CONFLICT, ex.getMessage(), ex))
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
+    @PostMapping("/api/accounts/{id}/agent/private-prompt/{instanceId}/snooze")
+    public Mono<Map<String, Object>> postPrivatePromptSnooze(
+            @PathVariable("id") String idStr,
+            @PathVariable("instanceId") String instanceId,
+            @RequestBody(required = false) PostPrivatePromptSnoozeRequest payload,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        Long snoozeUntil = payload == null ? null : payload.snoozeUntil;
+        return Mono.fromFuture(manager.postPrivatePromptSnooze(accountId, instanceId, snoozeUntil))
+                .map(ok -> Collections.<String, Object>emptyMap())
+                .onErrorMap(SecurityException.class,
+                        ex -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden", ex))
+                .onErrorMap(IllegalStateException.class,
+                        ex -> new ResponseStatusException(HttpStatus.CONFLICT, ex.getMessage(), ex))
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
+    @PostMapping("/api/accounts/{id}/agent/private-prompt/debug/next")
+    public Mono<ResponseEntity<ActivePrivatePrompt>> debugSummonNextPrivatePrompt(
+            @PathVariable("id") String idStr,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.debugSummonNextPrivatePrompt(accountId))
+                .map(ResponseEntity::ok)
+                .defaultIfEmpty(ResponseEntity.noContent().build())
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
     @PostMapping("/api/accounts/{id}/signals")
     public Mono<GetSignals> postSignals(@PathVariable("id") String idStr,
             @RequestBody(required = false) PostSignalsRequest params,
