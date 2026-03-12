@@ -178,6 +178,112 @@ class CalypsoApiIntegrationTest {
     }
 
     @Test
+    void extractAndAppendSignalsFromPrompt_usesNegativeQuestionContext() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 904L;
+            String question = "What are some interests or lifestyles that would make you think 'not my person'?";
+            String answer = "Taylor Swift";
+            List<String> conversation = List.of(
+                    "agent: " + question,
+                    "user: " + answer);
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"taylor_swift","intent":"self","confidence":0.91,"importance":0.45}]}
+                    """);
+            try {
+                List<String> tokens = mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        question,
+                        answer,
+                        conversation,
+                        "private_prompt",
+                        "private#904").get(5, TimeUnit.SECONDS);
+                assertEquals(List.of("anti_taylor_swift"), tokens);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord exclusion = findRecord(stored, "anti_taylor_swift", SignalIntent.SEEKING);
+            assertNotNull(exclusion);
+            assertEquals("private_prompt", exclusion.getSource());
+            assertEquals("private#904", exclusion.getSourceId());
+            assertTrue(exclusion.isSetImportance());
+            assertTrue(exclusion.getImportance() >= 0.72);
+        }
+    }
+
+    @Test
+    void extractAndAppendSignalsFromPrompt_lifeGoalAppBuildAddsSpecificSignals() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 905L;
+            String question = "A life goal of mine...";
+            String answer = "Building this app.";
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"ambitious","intent":"self","confidence":0.89,"importance":0.70}]}
+                    """);
+            try {
+                List<String> tokens = mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        question,
+                        answer,
+                        "public_prompt",
+                        "public#905").get(5, TimeUnit.SECONDS);
+                assertTrue(tokens.contains("ambitious"));
+                assertTrue(tokens.contains("app_builder"));
+                assertTrue(tokens.size() >= 2);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord appBuilder = findRecord(stored, "app_builder", SignalIntent.SELF);
+            assertNotNull(appBuilder);
+            assertEquals("public_prompt", appBuilder.getSource());
+            assertEquals("public#905", appBuilder.getSourceId());
+        }
+    }
+
+    @Test
+    void extractAndAppendSignalsFromPrompt_communityContextAddsGymAndGreekLife() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 906L;
+            String question = "What communities or scene have you felt the most at home in?";
+            String answer = "The gym and my frat.";
+            List<String> conversation = List.of(
+                    "agent: " + question,
+                    "user: " + answer,
+                    "user: I like the self improvement and social side.");
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"socially_active","intent":"self","confidence":0.80,"importance":0.65}]}
+                    """);
+            try {
+                List<String> tokens = mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        question,
+                        answer,
+                        conversation,
+                        "private_prompt",
+                        "private#906").get(5, TimeUnit.SECONDS);
+                assertTrue(tokens.contains("socially_active"));
+                assertTrue(tokens.contains("gym_regular"));
+                assertTrue(tokens.contains("greek_life_alumni"));
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(findRecord(stored, "gym_regular", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "greek_life_alumni", SignalIntent.SELF));
+        }
+    }
+
+    @Test
     void agentSessionLifecycle_generatesRepliesAndSignals() throws Exception {
         try (InProcessCluster ipc = newCluster()) {
             CalypsoApiManager mgr = newManager(ipc);

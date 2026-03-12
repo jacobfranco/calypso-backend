@@ -688,8 +688,33 @@ public class CalypsoApiController {
         if (me == null || !me.equals(accountId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         }
-        String body = payload == null ? null : payload.body;
-        return Mono.fromFuture(manager.postPrivatePromptAnswer(accountId, instanceId, body))
+        String body = payload == null ? null : payload.safeBody();
+        List<String> conversation = payload == null ? List.of() : payload.safeConversation();
+        return Mono.fromFuture(manager.postPrivatePromptAnswer(accountId, instanceId, body, conversation))
+                .onErrorMap(SecurityException.class,
+                        ex -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden", ex))
+                .onErrorMap(IllegalStateException.class,
+                        ex -> new ResponseStatusException(HttpStatus.CONFLICT, ex.getMessage(), ex))
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
+    @PostMapping("/api/accounts/{id}/agent/private-prompt/{instanceId}/chat-turn")
+    public Mono<GetPrivatePromptChatTurn> postPrivatePromptChatTurn(
+            @PathVariable("id") String idStr,
+            @PathVariable("instanceId") String instanceId,
+            @RequestBody(required = false) PostPrivatePromptChatTurnRequest payload,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        String questionPart = payload == null ? null : payload.safeQuestionPart();
+        String userMessage = payload == null ? null : payload.safeUserMessage();
+        List<String> conversation = payload == null ? List.of() : payload.safeConversation();
+        return Mono.fromFuture(
+                manager.postPrivatePromptChatTurn(accountId, instanceId, questionPart, userMessage, conversation))
                 .onErrorMap(SecurityException.class,
                         ex -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden", ex))
                 .onErrorMap(IllegalStateException.class,

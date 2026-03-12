@@ -4,14 +4,22 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-public class PostPrivatePromptAnswerRequest {
-    public String body;
+public class PostPrivatePromptChatTurnRequest {
+    public String questionPart;
+    public String userMessage;
     public List<String> conversation;
 
-    public String safeBody() {
-        if (body == null)
+    public String safeQuestionPart() {
+        if (questionPart == null)
             return null;
-        String trimmed = body.trim();
+        String trimmed = questionPart.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    public String safeUserMessage() {
+        if (userMessage == null)
+            return null;
+        String trimmed = userMessage.trim();
         return trimmed.isEmpty() ? null : trimmed;
     }
 
@@ -23,9 +31,8 @@ public class PostPrivatePromptAnswerRequest {
             if (line == null)
                 continue;
             String trimmed = line.trim();
-            if (!trimmed.isEmpty()) {
+            if (!trimmed.isEmpty())
                 out.add(trimmed);
-            }
         }
         return out;
     }

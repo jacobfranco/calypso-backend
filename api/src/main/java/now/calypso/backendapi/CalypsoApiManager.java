@@ -22,6 +22,7 @@ import com.rpl.rama.*;
 import com.rpl.rama.cluster.ClusterManagerBase;
 
 import now.calypso.backendapi.agent.AgentResponder;
+import now.calypso.backendapi.agent.PrivatePromptTurnResponder;
 import now.calypso.backendapi.pojos.*;
 import now.calypso.backendapi.prompts.*;
 import now.calypso.backendapi.signals.*;
@@ -443,12 +444,69 @@ public class CalypsoApiManager {
         return clampPromptText(body, PRIVATE_PROMPT_BODY_LIMIT);
     }
 
-    private static boolean isMutablePrivatePromptStatus(PrivatePromptStatus status) {
-        return status == PrivatePromptStatus.ACTIVE || status == PrivatePromptStatus.SNOOZED;
+    private static List<String> clampConversationLines(Collection<String> lines, int maxLines, int maxLineChars) {
+        if (lines == null || lines.isEmpty())
+            return List.of();
+        ArrayList<String> out = new ArrayList<>();
+        for (String raw : lines) {
+            if (raw == null)
+                continue;
+            String line = raw.trim();
+            if (line.isEmpty())
+                continue;
+            if (line.length() > maxLineChars) {
+                line = line.substring(0, maxLineChars);
+            }
+            out.add(line);
+            if (out.size() >= maxLines)
+                break;
+        }
+        return out;
     }
 
-    private static long stablePrivatePromptSortKey(long accountId, String promptId) {
-        return Integer.toUnsignedLong(Objects.hash(accountId, promptId));
+    private static String stripConversationPrefix(String line) {
+        if (line == null)
+            return null;
+        String trimmed = line.trim();
+        if (trimmed.isEmpty())
+            return null;
+        int colon = trimmed.indexOf(':');
+        if (colon < 0)
+            return trimmed;
+        String prefix = trimmed.substring(0, colon).trim().toLowerCase(Locale.ROOT);
+        if ("user".equals(prefix) || "agent".equals(prefix)) {
+            String remainder = trimmed.substring(colon + 1).trim();
+            return remainder.isEmpty() ? null : remainder;
+        }
+        return trimmed;
+    }
+
+    private static String bodyFromConversation(List<String> conversationLines) {
+        if (conversationLines == null || conversationLines.isEmpty())
+            return null;
+        StringJoiner joiner = new StringJoiner("\n");
+        for (String line : conversationLines) {
+            if (line == null)
+                continue;
+            String trimmed = line.trim();
+            if (trimmed.isEmpty())
+                continue;
+            int colon = trimmed.indexOf(':');
+            if (colon < 0)
+                continue;
+            String prefix = trimmed.substring(0, colon).trim().toLowerCase(Locale.ROOT);
+            if (!"user".equals(prefix))
+                continue;
+            String content = stripConversationPrefix(trimmed);
+            if (content != null)
+                joiner.add(content);
+        }
+        String merged = joiner.toString();
+        return merged.isBlank() ? null : clampPrivatePromptBody(merged);
+    }
+
+    private static boolean isMutablePrivatePromptStatus(PrivatePromptStatus status) {
+        return status == PrivatePromptStatus.ACTIVE || status == PrivatePromptStatus.SNOOZED;
     }
 
     private static Map<String, Object> withAdditionalSkippedPrompt(Map<String, Object> state, String promptId,
@@ -512,9 +570,8 @@ public class CalypsoApiManager {
         }
         if (eligiblePromptIds.isEmpty())
             return null;
-        eligiblePromptIds.sort(Comparator
-                .comparingLong((String promptId) -> stablePrivatePromptSortKey(accountId, promptId))
-                .thenComparing(promptId -> promptId));
+        long seed = System.nanoTime() ^ now ^ accountId ^ eligiblePromptIds.size();
+        Collections.shuffle(eligiblePromptIds, new Random(seed));
         return eligiblePromptIds.get(0);
     }
 
@@ -621,11 +678,53 @@ public class CalypsoApiManager {
         return serializePrivatePromptOp(accountId, () -> ensureActivePrivatePromptInternal(accountId));
     }
 
+    public CompletableFuture<GetPrivatePromptChatTurn> postPrivatePromptChatTurn(
+            long accountId,
+            String instanceId,
+            String questionPart,
+            String userMessage,
+            List<String> conversationLines) {
+        String normalizedQuestionPart = clampPromptText(questionPart, 320);
+        String normalizedUserMessage = clampPromptText(userMessage, 800);
+        if (normalizedUserMessage == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Message text required."));
+        }
+        List<String> normalizedConversation = clampConversationLines(conversationLines, 24, 320);
+        return serializePrivatePromptOp(accountId, () -> requireMutablePrivatePromptAssignment(accountId, instanceId)
+                .thenCompose(current -> {
+                    PromptDefinition prompt = PromptLibrary.getById(current.getPromptId());
+                    if (prompt == null || prompt.getBank() != PromptBankKind.PRIVATE) {
+                        return CompletableFuture
+                                .failedFuture(new IllegalArgumentException("Unknown private prompt: " + current.getPromptId()));
+                    }
+                    String effectivePart = normalizedQuestionPart == null ? prompt.getText() : normalizedQuestionPart;
+                    PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
+                            prompt.getText(),
+                            effectivePart,
+                            normalizedConversation,
+                            normalizedUserMessage);
+                    return CompletableFuture.supplyAsync(() -> PrivatePromptTurnResponder.generate(openAI, input))
+                            .thenApply(result -> new GetPrivatePromptChatTurn(
+                                    result == null ? null : result.agentMessage,
+                                    result != null && result.needsMoreDetail));
+                }));
+    }
+
     public CompletableFuture<ActivePrivatePrompt> postPrivatePromptAnswer(long accountId, String instanceId, String body) {
-        String normalizedBody = clampPrivatePromptBody(body);
-        if (normalizedBody == null) {
+        return postPrivatePromptAnswer(accountId, instanceId, body, List.of());
+    }
+
+    public CompletableFuture<ActivePrivatePrompt> postPrivatePromptAnswer(long accountId, String instanceId, String body,
+            List<String> conversationLines) {
+        List<String> normalizedConversation = clampConversationLines(conversationLines, 40, 320);
+        String bodyCandidate = clampPrivatePromptBody(body);
+        if (bodyCandidate == null) {
+            bodyCandidate = bodyFromConversation(normalizedConversation);
+        }
+        if (bodyCandidate == null) {
             return CompletableFuture.failedFuture(new IllegalArgumentException("Answer body required."));
         }
+        final String normalizedBody = bodyCandidate;
         return serializePrivatePromptOp(accountId, () -> requireMutablePrivatePromptAssignment(accountId, instanceId)
                 .thenCompose(current -> {
                     long now = System.currentTimeMillis();
@@ -646,6 +745,7 @@ public class CalypsoApiManager {
                             accountId,
                             prompt.getText(),
                             normalizedBody,
+                            normalizedConversation,
                             "private_prompt",
                             current.getInstanceId()).exceptionally(ex -> {
                                 LOG.warn("Signal extraction failed for private prompt answer {}", current.getInstanceId(),
@@ -1121,8 +1221,13 @@ public class CalypsoApiManager {
     }
 
     public CompletableFuture<List<ExtractedSignal>> extractSignalsFromPrompt(String question, String answer) {
+        return extractSignalsFromPrompt(question, answer, List.of());
+    }
+
+    public CompletableFuture<List<ExtractedSignal>> extractSignalsFromPrompt(String question, String answer,
+            List<String> conversationLines) {
         return CompletableFuture.supplyAsync(
-                () -> SignalExtractor.extractFromPromptAnswer(openAI, question, answer, Set.of()));
+                () -> SignalExtractor.extractFromPromptAnswer(openAI, question, answer, conversationLines, Set.of()));
     }
 
     /**
@@ -1151,11 +1256,18 @@ public class CalypsoApiManager {
 
     public CompletableFuture<List<String>> extractAndAppendSignalsFromPrompt(long accountId, String question,
             String answer, String source, String sourceId) {
-        return extractSignalsFromPrompt(question, answer).thenCompose(signals -> {
+        return extractAndAppendSignalsFromPrompt(accountId, question, answer, List.of(), source, sourceId);
+    }
+
+    public CompletableFuture<List<String>> extractAndAppendSignalsFromPrompt(long accountId, String question,
+            String answer, List<String> conversationLines, String source, String sourceId) {
+        List<String> normalizedConversation = clampConversationLines(conversationLines, 40, 320);
+        final String context = normalizedConversation.isEmpty() ? answer : String.join(" | ", normalizedConversation);
+        return extractSignalsFromPrompt(question, answer, normalizedConversation).thenCompose(signals -> {
             if (signals.isEmpty())
                 return CompletableFuture.completedFuture(List.of());
             List<String> tokens = tokens(signals);
-            return persistSignals(accountId, signals, source, sourceId, answer).thenApply(ok -> tokens);
+            return persistSignals(accountId, signals, source, sourceId, context).thenApply(ok -> tokens);
         });
     }
 

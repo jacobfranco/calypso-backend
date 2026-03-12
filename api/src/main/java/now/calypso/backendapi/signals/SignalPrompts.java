@@ -91,6 +91,8 @@ public final class SignalPrompts {
              - Use noun or adjective+noun form.
              - Avoid narrative, situational, or overly narrow tokens.
              - If two tokens would match the same people in practice, emit only ONE.
+             - If a statement clearly implies multiple distinct, stable concepts,
+               emit 2-3 complementary signals (not just one broad label).
 
              CANONICAL TOKEN PREFERENCES (use exactly when applicable):
              - "trail runs" / "sunrise trail runs" → trail_runner
@@ -105,6 +107,13 @@ public final class SignalPrompts {
              - "playoff brackets" / "sports yelling" → sports_fan
              - "sci-fi novel" / "sci-fi reader" → sci_fi_reader
              - "film festivals" → film_festival_enthusiast
+             - "building this app" / "shipping an app" → app_builder
+             - "coding my app" / "writing software" → software_builder
+             - "starting a startup/company" → entrepreneurial_mindset
+             - "wake up late" / "sleeping in" → sleeping_in
+             - "watch NFL all day" / "NFL Sundays" → nfl_fan
+             - "the gym community" / "gym scene" → gym_regular
+             - "frat" / "fraternity" / "greek life" → greek_life_alumni
 
              SPECIAL INTERPRETATION RULES:
              - Allergy or physical intolerance:
@@ -173,15 +182,61 @@ public final class SignalPrompts {
             Rules:
             - Return at most %d signals.
             - Extract self traits and seeking preferences from the answer.
+            - Use prompt_question and conversation_context to interpret meaning.
             - Use intent=both ONLY when explicit mirroring cues exist.
             - Never output tokens listed under already_have.
             - Enforce canonical vocabulary; avoid synonyms and duplicates.
             - Do NOT infer requirements not explicitly stated.
+            - If the answer clearly implies multiple stable concepts, emit 2-3
+              complementary signals instead of only one generic token.
+            - If the question is negative framing (e.g., turn-offs, dealbreakers, "not my person",
+              dislikes, avoidances), encode exclusions as seeking constraints.
+            - In negative framing, avoid plain neutral entity tokens.
+              Example: answer "Taylor Swift" under a not-my-person question should become
+              anti_taylor_swift with intent=seeking.
             - meta is optional and rare (same rules as freeform).
             - Every entry must include confidence and importance (0..1).
 
             Apply the same ABSOLUTE TOKEN BANS and rubrics as the freeform extractor.
             If no dating-relevant information exists, return {"signals":[]}.
+            """;
+
+    public static final String PROMPT_SPECIFICITY_SYSTEM_PROMPT = """
+            You refine prompt-level signals by adding missing specificity only when clearly supported.
+
+            Output JSON ONLY:
+            {"signals":[{"token":"...","intent":"...","confidence":0.x,"importance":0.x}]}
+
+            Rules:
+            - Return at most %d signals.
+            - Read prompt_question, prompt_answer, and conversation_context together.
+            - Use current_signals as the baseline; only add NEW signals not already present.
+            - Never output tokens listed in already_have or already present in current_signals.
+            - Do not restate broad labels if a more precise token already exists.
+              Example: if app_builder is present, do not add builder.
+            - Prefer specific stable tokens over generic umbrellas when explicitly grounded.
+              Example: "NFL" supports nfl_fan (and optionally sports_fan), not only sports_fan.
+            - If text can support multiple distinct stable concepts, add 2-3 max.
+            - Do not add niche details that are unlikely to help matching.
+
+            Ambiguity rules (strict):
+            - If the user says "games" without disambiguation, do NOT guess board_games or video_games.
+              Use only a generic token (e.g., likes_games) unless context explicitly clarifies the type.
+            - If a category is under-specified, keep the broader token or emit nothing.
+            - Never infer a negative token from uncertain wording.
+            - Never emit double-negation tokens (anti_not_*, not_not_*).
+
+            Intent rules:
+            - Keep intent aligned with evidence:
+              self for speaker trait/habit, seeking for partner preference, both only with explicit mirroring cues.
+            - Do not flip intent unless evidence in context requires it.
+
+            Quality bar:
+            - High precision over recall.
+            - No duplicates/synonyms for the same concept.
+            - Confidence and importance required (0..1).
+
+            If no high-confidence additions exist, return {"signals":[]}.
             """;
 
     private SignalPrompts() {
@@ -213,13 +268,30 @@ public final class SignalPrompts {
                 """.formatted(joiner.toString(), alreadyHaveJson(alreadyHave));
     }
 
-    public static String promptResponseUserPrompt(String question, String answer, Collection<String> alreadyHave) {
+    public static String promptResponseUserPrompt(String question, String answer, Collection<String> conversationLines,
+            Collection<String> alreadyHave) {
+        String conversationJson = jsonArray(conversationLines);
         return """
                 prompt_question: %s
                 prompt_answer: %s
+                conversation_context: %s
 
                 already_have: %s
-                """.formatted(jsonQuote(question), jsonQuote(answer), alreadyHaveJson(alreadyHave));
+                """.formatted(jsonQuote(question), jsonQuote(answer), conversationJson, alreadyHaveJson(alreadyHave));
+    }
+
+    public static String promptSpecificityUserPrompt(String question, String answer, Collection<String> conversationLines,
+            Collection<String> currentSignals, Collection<String> alreadyHave) {
+        String conversationJson = jsonArray(conversationLines);
+        return """
+                prompt_question: %s
+                prompt_answer: %s
+                conversation_context: %s
+                current_signals: %s
+
+                already_have: %s
+                """.formatted(jsonQuote(question), jsonQuote(answer), conversationJson, jsonArray(currentSignals),
+                alreadyHaveJson(alreadyHave));
     }
 
     private static String baseUserPrompt(String label, String text, Collection<String> alreadyHave) {
@@ -238,6 +310,21 @@ public final class SignalPrompts {
             if (token == null)
                 continue;
             joiner.add(jsonQuote(token));
+        }
+        return joiner.toString();
+    }
+
+    private static String jsonArray(Collection<String> values) {
+        if (values == null || values.isEmpty())
+            return "[]";
+        StringJoiner joiner = new StringJoiner(", ", "[", "]");
+        for (String value : values) {
+            if (value == null)
+                continue;
+            String trimmed = value.trim();
+            if (trimmed.isEmpty())
+                continue;
+            joiner.add(jsonQuote(trimmed));
         }
         return joiner.toString();
     }
