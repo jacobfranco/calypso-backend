@@ -24,7 +24,12 @@ public class Core implements RamaModule {
       private static final double MIN_SCORE_EXPLORATORY = 50.0;
       private static final double MIN_SCORE_BALANCED = 60.0;
       private static final double MIN_SCORE_FOCUSED = 75.0;
+      private static final double FOLLOWUP_MIN_NORMALIZED_SCORE = 0.60;
       private static final String ALL_ACCOUNTS_KEY = "all";
+      private static final String FACECARD_REACTION_ANSWER_PREFIX = "facecard_target:";
+      private static final double FACECARD_PAIR_DELTA_LIKE = 6.0;
+      private static final double FACECARD_PAIR_DELTA_DISLIKE = -14.0;
+      private static final double FACECARD_PAIR_DELTA_SKIP = -1.0;
 
       // ---------------------------
       // Low-level helpers
@@ -79,6 +84,15 @@ public class Core implements RamaModule {
             return list;
       }
 
+      private static List<MatchCandidate> removeFromHeap(List<MatchCandidate> heap, long targetId) {
+            if (heap == null || heap.isEmpty() || targetId <= 0L) {
+                  return (heap == null) ? new ArrayList<MatchCandidate>() : heap;
+            }
+            ArrayList<MatchCandidate> list = new ArrayList<>(heap);
+            list.removeIf(candidate -> candidate != null && candidate.getTargetAccountId() == targetId);
+            return list;
+      }
+
       // Filter a heap against fresh exposures at query time
       private static List<MatchCandidate> filterHeapByExposure(List<MatchCandidate> heap,
                   Map<?, ?> exposureMap,
@@ -95,6 +109,427 @@ public class Core implements RamaModule {
                         out.add(c);
                   }
             }
+            return out;
+      }
+
+      private static double clamp01(double value) {
+            if (Double.isNaN(value))
+                  return 0.0;
+            if (value < 0.0)
+                  return 0.0;
+            if (value > 1.0)
+                  return 1.0;
+            return value;
+      }
+
+      private static double asDouble(Object raw, double fallback) {
+            if (raw instanceof Number)
+                  return ((Number) raw).doubleValue();
+            return fallback;
+      }
+
+      private static double modeFloor(String viewerMode) {
+            if ("focused".equalsIgnoreCase(viewerMode))
+                  return MIN_SCORE_FOCUSED;
+            if ("exploratory".equalsIgnoreCase(viewerMode))
+                  return MIN_SCORE_EXPLORATORY;
+            return MIN_SCORE_BALANCED;
+      }
+
+      private static Map<String, Double> toSignalWeights(Signals signals, boolean desired) {
+            HashMap<String, Double> out = new HashMap<>();
+            if (signals == null || !signals.isSetRecords() || signals.getRecords() == null) {
+                  return out;
+            }
+            for (SignalRecord r : signals.getRecords()) {
+                  if (r == null || !r.isSetToken() || r.getToken() == null || r.getToken().isBlank())
+                        continue;
+                  SignalIntent intent = r.isSetIntent() ? r.getIntent() : null;
+                  boolean keep;
+                  if (desired) {
+                        keep = intent == SignalIntent.SEEKING || intent == SignalIntent.BOTH;
+                  } else {
+                        keep = intent == null || intent == SignalIntent.SELF || intent == SignalIntent.BOTH;
+                  }
+                  if (!keep)
+                        continue;
+                  double count = r.isSetCount() ? Math.max(1.0, r.getCount()) : 1.0;
+                  double confidence = r.isSetConfidence() ? clamp01(r.getConfidence()) : 0.65;
+                  double importance = r.isSetImportance() ? clamp01(r.getImportance()) : 0.5;
+                  double weight = Math.log1p(count) * (0.6 + 0.4 * confidence) * (0.5 + 0.5 * importance);
+                  if (weight <= 0.0)
+                        continue;
+                  String token = r.getToken().trim();
+                  out.put(token, out.getOrDefault(token, 0.0) + weight);
+            }
+            return out;
+      }
+
+      private static double weightedJaccard(Map<String, Double> a, Map<String, Double> b) {
+            if ((a == null || a.isEmpty()) && (b == null || b.isEmpty()))
+                  return 0.6;
+            if (a == null || b == null || a.isEmpty() || b.isEmpty())
+                  return 0.0;
+            HashSet<String> keys = new HashSet<>();
+            keys.addAll(a.keySet());
+            keys.addAll(b.keySet());
+            double inter = 0.0;
+            double union = 0.0;
+            for (String k : keys) {
+                  double av = a.getOrDefault(k, 0.0);
+                  double bv = b.getOrDefault(k, 0.0);
+                  inter += Math.min(av, bv);
+                  union += Math.max(av, bv);
+            }
+            if (union <= 0.0)
+                  return 0.0;
+            return clamp01(inter / union);
+      }
+
+      private static double directionalCompatibility(Map<String, Double> desired, Map<String, Double> otherSelf) {
+            if (desired == null || desired.isEmpty())
+                  return 0.65;
+            Map<String, Double> other = (otherSelf == null) ? Collections.emptyMap() : otherSelf;
+            double total = 0.0;
+            double satisfied = 0.0;
+            for (Map.Entry<String, Double> entry : desired.entrySet()) {
+                  String token = entry.getKey();
+                  double weight = entry.getValue() == null ? 0.0 : entry.getValue();
+                  if (token == null || token.isBlank() || weight <= 0.0)
+                        continue;
+                  total += weight;
+                  if (token.startsWith("anti_")) {
+                        String positive = token.substring("anti_".length());
+                        double otherWeight = other.getOrDefault(positive, 0.0);
+                        if (otherWeight <= 0.0)
+                              satisfied += weight;
+                        continue;
+                  }
+                  double otherWeight = other.getOrDefault(token, 0.0);
+                  if (otherWeight > 0.0) {
+                        satisfied += Math.min(weight, otherWeight);
+                  }
+            }
+            if (total <= 0.0)
+                  return 0.65;
+            return clamp01(satisfied / total);
+      }
+
+      private static double computeUncertainty(Map<String, Double> desired, Map<String, Double> otherSelf) {
+            if (desired == null || desired.isEmpty())
+                  return 0.15;
+            Map<String, Double> other = (otherSelf == null) ? Collections.emptyMap() : otherSelf;
+            double total = 0.0;
+            double missing = 0.0;
+            for (Map.Entry<String, Double> entry : desired.entrySet()) {
+                  String token = entry.getKey();
+                  double weight = entry.getValue() == null ? 0.0 : entry.getValue();
+                  if (token == null || token.isBlank() || weight <= 0.0 || token.startsWith("anti_"))
+                        continue;
+                  total += weight;
+                  if (other.getOrDefault(token, 0.0) <= 0.0) {
+                        missing += weight;
+                  }
+            }
+            if (total <= 0.0)
+                  return 0.15;
+            return clamp01(missing / total);
+      }
+
+      private static String topMissingDesiredToken(Map<String, Double> desired, Map<String, Double> otherSelf) {
+            if (desired == null || desired.isEmpty())
+                  return null;
+            Map<String, Double> other = (otherSelf == null) ? Collections.emptyMap() : otherSelf;
+            String bestToken = null;
+            double bestWeight = -1.0;
+            for (Map.Entry<String, Double> entry : desired.entrySet()) {
+                  String token = entry.getKey();
+                  double weight = entry.getValue() == null ? 0.0 : entry.getValue();
+                  if (token == null || token.isBlank() || token.startsWith("anti_") || weight <= 0.0)
+                        continue;
+                  if (other.getOrDefault(token, 0.0) > 0.0)
+                        continue;
+                  if (weight > bestWeight) {
+                        bestWeight = weight;
+                        bestToken = token;
+                  }
+            }
+            return bestToken;
+      }
+
+      private static double normalizedReactionScore(double reactionValue) {
+            return clamp01(0.6 + (reactionValue / 10.0));
+      }
+
+      private static double noveltyBoost(Map<?, ?> exposureMap, long targetId, long now) {
+            if (exposureMap == null)
+                  return 1.0;
+            Object raw = exposureMap.get(targetId);
+            if (!(raw instanceof Number))
+                  return 1.0;
+            long seenAt = ((Number) raw).longValue();
+            long elapsed = Math.max(0L, now - seenAt);
+            return clamp01((double) elapsed / (double) EXPOSURE_TTL_MS);
+      }
+
+      private static String suppressionKey(String promptId, String signalToken) {
+            if (promptId == null || promptId.isBlank() || signalToken == null || signalToken.isBlank()) {
+                  return null;
+            }
+            return promptId.trim() + "::" + signalToken.trim();
+      }
+
+      private static long parseFacecardTargetId(String answerId) {
+            if (answerId == null || answerId.isBlank() || !answerId.startsWith(FACECARD_REACTION_ANSWER_PREFIX)) {
+                  return 0L;
+            }
+            String raw = answerId.substring(FACECARD_REACTION_ANSWER_PREFIX.length()).trim();
+            if (raw.isBlank()) {
+                  return 0L;
+            }
+            try {
+                  long targetId = Long.parseLong(raw);
+                  return targetId > 0L ? targetId : 0L;
+            } catch (NumberFormatException ignored) {
+                  return 0L;
+            }
+      }
+
+      private static Map<String, Object> scorePair(Filters viewer,
+                  long targetId,
+                  Filters target,
+                  Signals viewerSignals,
+                  Signals targetSignals,
+                  double viewerToTargetReaction,
+                  double targetToViewerReaction,
+                  Map<?, ?> exposureMap,
+                  long now) {
+            HashMap<String, Object> out = new HashMap<>();
+            if (viewer == null || target == null) {
+                  out.put("candidate", null);
+                  out.put("uncertainty", 1.0);
+                  return out;
+            }
+
+            double baseScore = CalypsoHelpers.computeMatchesBaseScore(viewer, target);
+            if (baseScore < 0.0) {
+                  out.put("candidate", null);
+                  out.put("uncertainty", 1.0);
+                  return out;
+            }
+            double lifestyleBonus = CalypsoHelpers.computeLifestyleBonus(viewer, target);
+            double politicsBonus = CalypsoHelpers.computePoliticsBonus(viewer, target);
+            double religionBonus = CalypsoHelpers.computeReligionBonus(viewer, target);
+            double explicitNorm = clamp01((baseScore + lifestyleBonus + politicsBonus + religionBonus) / 120.0);
+
+            Map<String, Double> viewerSelf = toSignalWeights(viewerSignals, false);
+            Map<String, Double> viewerDesired = toSignalWeights(viewerSignals, true);
+            Map<String, Double> targetSelf = toSignalWeights(targetSignals, false);
+            Map<String, Double> targetDesired = toSignalWeights(targetSignals, true);
+
+            double desiredAB = directionalCompatibility(viewerDesired, targetSelf);
+            double desiredBA = directionalCompatibility(targetDesired, viewerSelf);
+            double latent = weightedJaccard(viewerSelf, targetSelf);
+
+            double sSignal = clamp01(0.45 * desiredAB + 0.35 * desiredBA + 0.20 * latent);
+            double s = clamp01(0.55 * explicitNorm + 0.45 * sSignal);
+            double r = normalizedReactionScore(viewerToTargetReaction);
+            double p = clamp01(
+                        0.30 * desiredBA + 0.20 * normalizedReactionScore(targetToViewerReaction) + 0.50 * explicitNorm);
+            double n = noveltyBoost(exposureMap, targetId, now);
+
+            double normalizedScore = clamp01(0.50 * s + 0.30 * r + 0.15 * p + 0.05 * n);
+            double finalScore = normalizedScore * 100.0;
+
+            String viewerMode = CalypsoHelpers.getModeSelfOrNull(viewer);
+            double floor = modeFloor(viewerMode);
+            if (finalScore < floor) {
+                  out.put("candidate", null);
+                  out.put("uncertainty", computeUncertainty(viewerDesired, targetSelf));
+                  return out;
+            }
+
+            MatchCandidate candidate = mkCandidate(targetId, finalScore, now);
+            ArrayList<String> reasons = new ArrayList<>();
+            reasons.add(String.format(Locale.ROOT, "s=%.3f", s));
+            reasons.add(String.format(Locale.ROOT, "r=%.3f", r));
+            reasons.add(String.format(Locale.ROOT, "p=%.3f", p));
+            reasons.add(String.format(Locale.ROOT, "n=%.3f", n));
+            candidate.setReasons(reasons);
+
+            double uncertainty = computeUncertainty(viewerDesired, targetSelf);
+            out.put("candidate", candidate);
+            out.put("uncertainty", uncertainty);
+            out.put("normalizedScore", normalizedScore);
+
+            String missingToken = topMissingDesiredToken(viewerDesired, targetSelf);
+            boolean followupEligible = missingToken != null
+                        && normalizedScore >= FOLLOWUP_MIN_NORMALIZED_SCORE
+                        && uncertainty >= 0.35;
+            if (followupEligible) {
+                  HashMap<String, Object> followup = new HashMap<>();
+                  followup.put("targetId", targetId);
+                  followup.put("missingToken", missingToken);
+                  followup.put("pairScore", finalScore);
+                  followup.put("uncertainty", uncertainty);
+                  followup.put("eligibleAt", now);
+                  out.put("followup", followup);
+            }
+            return out;
+      }
+
+      @SuppressWarnings("unchecked")
+      private static MatchCandidate candidateFromPayload(Map<String, Object> payload) {
+            if (payload == null)
+                  return null;
+            Object raw = payload.get("candidate");
+            return (raw instanceof MatchCandidate) ? (MatchCandidate) raw : null;
+      }
+
+      @SuppressWarnings("unchecked")
+      private static Map<String, Object> followupFromPayload(Map<String, Object> payload) {
+            if (payload == null)
+                  return null;
+            Object raw = payload.get("followup");
+            if (!(raw instanceof Map))
+                  return null;
+            return (Map<String, Object>) raw;
+      }
+
+      private static double uncertaintyFromPayload(Map<String, Object> payload) {
+            if (payload == null)
+                  return 1.0;
+            return asDouble(payload.get("uncertainty"), 1.0);
+      }
+
+      private static long normalizeAccountId(Number n) {
+            return n == null ? 0L : n.longValue();
+      }
+
+      private static long resolveFollowupScheduledAt(PrivatePromptAssignment assignment, Number scheduledAtRaw) {
+            if (assignment != null && assignment.isSetScheduledAt()) {
+                  return assignment.getScheduledAt();
+            }
+            if (scheduledAtRaw != null) {
+                  return scheduledAtRaw.longValue();
+            }
+            return System.currentTimeMillis();
+      }
+
+      private static long resolveFollowupCompletedAt(PrivatePromptAssignment assignment, Number completedAtRaw) {
+            if (assignment != null && assignment.isSetCompletedAt()) {
+                  return assignment.getCompletedAt();
+            }
+            if (completedAtRaw != null) {
+                  return completedAtRaw.longValue();
+            }
+            return System.currentTimeMillis();
+      }
+
+      private static String computeNextActiveMatchmakingFollowupInstanceId(String currentActive,
+                  PrivatePromptAssignment assignment) {
+            if (assignment == null || assignment.getInstanceId() == null) {
+                  return currentActive;
+            }
+            PrivatePromptStatus status = assignment.getStatus();
+            if (status == PrivatePromptStatus.ACTIVE || status == PrivatePromptStatus.SNOOZED) {
+                  return assignment.getInstanceId();
+            }
+            if ((status == PrivatePromptStatus.ANSWERED || status == PrivatePromptStatus.SKIPPED)
+                        && Objects.equals(currentActive, assignment.getInstanceId())) {
+                  return null;
+            }
+            return currentActive;
+      }
+
+      private static boolean isMatchmakingFollowupServableNow(PrivatePromptAssignment assignment, long now) {
+            if (assignment == null || !assignment.isSetStatus() || assignment.getStatus() == null) {
+                  return false;
+            }
+            if (assignment.getStatus() == PrivatePromptStatus.ACTIVE) {
+                  return true;
+            }
+            if (assignment.getStatus() == PrivatePromptStatus.SNOOZED) {
+                  long until = assignment.isSetSnoozeUntil() ? assignment.getSnoozeUntil() : 0L;
+                  return until <= now;
+            }
+            return false;
+      }
+
+      private static long asLong(Object raw, long fallback) {
+            if (raw instanceof Number) {
+                  return ((Number) raw).longValue();
+            }
+            return fallback;
+      }
+
+      @SuppressWarnings("unchecked")
+      private static List<Map<String, Object>> toSortedFollowupCandidates(Map<?, ?> byViewer, Object limitObj) {
+            int limit = 10;
+            if (limitObj instanceof Number) {
+                  int parsed = ((Number) limitObj).intValue();
+                  if (parsed < 1)
+                        limit = 1;
+                  else if (parsed > 100)
+                        limit = 100;
+                  else
+                        limit = parsed;
+            }
+            ArrayList<Map<String, Object>> out = new ArrayList<>();
+            if (byViewer == null || byViewer.isEmpty()) {
+                  return out;
+            }
+            for (Map.Entry<?, ?> entry : byViewer.entrySet()) {
+                  long viewerId = asLong(entry.getKey(), 0L);
+                  if (viewerId <= 0L) {
+                        continue;
+                  }
+                  Object rawValue = entry.getValue();
+                  if (!(rawValue instanceof Map)) {
+                        continue;
+                  }
+                  Map<?, ?> payload = (Map<?, ?>) rawValue;
+                  HashMap<String, Object> candidate = new HashMap<>();
+                  for (Map.Entry<?, ?> payloadEntry : payload.entrySet()) {
+                        Object key = payloadEntry.getKey();
+                        if (key == null)
+                              continue;
+                        candidate.put(key.toString(), payloadEntry.getValue());
+                  }
+                  candidate.put("viewerId", viewerId);
+                  if (!candidate.containsKey("eligibleAt")) {
+                        candidate.put("eligibleAt", System.currentTimeMillis());
+                  }
+                  out.add(candidate);
+            }
+            out.sort((a, b) -> {
+                  double as = asDouble(a.get("pairScore"), 0.0);
+                  double bs = asDouble(b.get("pairScore"), 0.0);
+                  int byScore = Double.compare(bs, as);
+                  if (byScore != 0)
+                        return byScore;
+                  double au = asDouble(a.get("uncertainty"), 0.0);
+                  double bu = asDouble(b.get("uncertainty"), 0.0);
+                  int byUncertainty = Double.compare(bu, au);
+                  if (byUncertainty != 0)
+                        return byUncertainty;
+                  long ae = asLong(a.get("eligibleAt"), Long.MAX_VALUE);
+                  long be = asLong(b.get("eligibleAt"), Long.MAX_VALUE);
+                  return Long.compare(ae, be);
+            });
+            if (out.size() <= limit) {
+                  return out;
+            }
+            return new ArrayList<>(out.subList(0, limit));
+      }
+
+      private static Map<String, Object> buildMatchmakingFollowupSchedulerState(String activeInstanceId,
+                  Number lastScheduledAtRaw,
+                  Number lastAnsweredAtRaw) {
+            HashMap<String, Object> out = new HashMap<>();
+            out.put("activeInstanceId", activeInstanceId);
+            out.put("lastScheduledAt", lastScheduledAtRaw == null ? null : lastScheduledAtRaw.longValue());
+            out.put("lastAnsweredAt", lastAnsweredAtRaw == null ? null : lastAnsweredAtRaw.longValue());
             return out;
       }
 
@@ -197,6 +632,10 @@ public class Core implements RamaModule {
                         PState.mapSchema(Long.class, Map.class));
             stream.pstate("$$viewerIdToTasteByToken",
                         PState.mapSchema(Long.class, Map.class));
+            stream.pstate("$$viewerIdToTargetIdToReactionScore",
+                        PState.mapSchema(Long.class, Map.class));
+            stream.pstate("$$viewerIdToSuppressedSignalTokens",
+                        PState.mapSchema(Long.class, Map.class));
             stream.pstate("$$accountIdToPublicPromptSelection",
                         PState.mapSchema(Long.class, PublicPromptSelection.class));
 
@@ -224,48 +663,148 @@ public class Core implements RamaModule {
                               return event.getReaction().getValue();
                         }, "*data")
                         .out("*reactionValue")
-                        .localTransform("$$viewerIdToReactedAnswerIds",
-                                    Path.key("*viewerIdL", "*answerId").termVal(true))
-                        .localTransform("$$viewerIdToReactedPromptIds",
-                                    Path.key("*viewerIdL", "*promptId").termVal(true))
-                        .localTransform("$$viewerIdToReactionByAnswerId",
-                                    Path.key("*viewerIdL", "*answerId").termVal("*reactionValue"))
-                        .hashPartition("*answerId")
-                        .localSelect("$$answerIdToPublicPromptAnswer", Path.key("*answerId")).out("*answer")
-                        .each((PublicPromptAnswer answer) -> {
-                              if (answer == null || !answer.isSetSignalTokens())
-                                    return new ArrayList<String>();
-                              return answer.getSignalTokens();
-                        }, "*answer").out("*tokens")
-                        .each((Integer reactionValue) -> {
+                        .each((String answerId) -> parseFacecardTargetId(answerId), "*answerId")
+                        .out("*facecardTargetIdL")
+                        .each((Long targetId) -> targetId != null && targetId.longValue() > 0L, "*facecardTargetIdL")
+                        .out("*isFacecardReaction")
+                        .ifTrue(new Expr(Ops.NOT, "*isFacecardReaction"),
+                                    Block.create()
+                                                .localTransform("$$viewerIdToReactedAnswerIds",
+                                                            Path.key("*viewerIdL", "*answerId").termVal(true))
+                                                .localTransform("$$viewerIdToReactedPromptIds",
+                                                            Path.key("*viewerIdL", "*promptId").termVal(true))
+                                                .localTransform("$$viewerIdToReactionByAnswerId",
+                                                            Path.key("*viewerIdL", "*answerId").termVal("*reactionValue")),
+                                    Block.create())
+                        .ifTrue("*isFacecardReaction",
+                                    Block.create()
+                                                .each(Ops.IDENTITY, "*facecardTargetIdL").out("*targetIdL")
+                                                .each(() -> new ArrayList<String>()).out("*tokens"),
+                                    Block.create()
+                                                .hashPartition("*answerId")
+                                                .localSelect("$$answerIdToPublicPromptAnswer", Path.key("*answerId"))
+                                                .out("*answer")
+                                                .each((PublicPromptAnswer answer) -> {
+                                                      if (answer == null)
+                                                            return 0L;
+                                                      return answer.getAccountId();
+                                                }, "*answer").out("*targetIdL")
+                                                .each((PublicPromptAnswer answer) -> {
+                                                      if (answer == null || !answer.isSetSignalTokens())
+                                                            return new ArrayList<String>();
+                                                      return answer.getSignalTokens();
+                                                }, "*answer").out("*tokens"))
+                        .each((Integer reactionValue, Boolean isFacecardReaction) -> {
+                              if (Boolean.TRUE.equals(isFacecardReaction))
+                                    return 0.0;
                               if (reactionValue != null && reactionValue.intValue() == PromptReaction.LIKE.getValue())
                                     return 1.0;
                               if (reactionValue != null
                                           && reactionValue.intValue() == PromptReaction.DISLIKE.getValue())
                                     return -1.0;
                               return 0.0;
-                        }, "*reactionValue").out("*delta")
-                        .each((Double delta, List<String> tokens) -> delta != null
-                                    && delta.doubleValue() != 0.0
-                                    && tokens != null
-                                    && !tokens.isEmpty(),
-                                    "*delta", "*tokens")
-                        .out("*shouldUpdateTaste")
-                        .hashPartition("*viewerIdL")
-                        .ifTrue("*shouldUpdateTaste",
+                        }, "*reactionValue", "*isFacecardReaction").out("*delta")
+                        .each((Integer reactionValue, Boolean isFacecardReaction) -> {
+                              boolean facecard = Boolean.TRUE.equals(isFacecardReaction);
+                              if (reactionValue == null)
+                                    return 0.0;
+                              if (reactionValue.intValue() == PromptReaction.LIKE.getValue()) {
+                                    return facecard ? FACECARD_PAIR_DELTA_LIKE : 2.0;
+                              }
+                              if (reactionValue.intValue() == PromptReaction.DISLIKE.getValue()) {
+                                    return facecard ? FACECARD_PAIR_DELTA_DISLIKE : -4.0;
+                              }
+                              if (reactionValue.intValue() == PromptReaction.SKIP.getValue()) {
+                                    return facecard ? FACECARD_PAIR_DELTA_SKIP : -0.5;
+                              }
+                              return 0.0;
+                        }, "*reactionValue", "*isFacecardReaction").out("*pairDelta")
+                        .each((Long targetIdL) -> targetIdL != null && targetIdL.longValue() > 0L, "*targetIdL")
+                        .out("*hasTarget")
+                        .ifTrue("*hasTarget",
                                     Block.create()
-                                                .each(Ops.EXPLODE, "*tokens").out("*token")
-                                                .localSelect("$$viewerIdToTasteByToken",
-                                                            Path.key("*viewerIdL", "*token").nullToVal(0.0))
-                                                .out("*prevTaste")
+                                                .hashPartition("*viewerIdL")
+                                                .localSelect("$$viewerIdToTargetIdToReactionScore",
+                                                            Path.key("*viewerIdL", "*targetIdL").nullToVal(0.0))
+                                                .out("*prevPairScore")
                                                 .each((Double prev, Double delta) -> {
                                                       double base = prev == null ? 0.0 : prev;
                                                       double inc = delta == null ? 0.0 : delta;
                                                       return base + inc;
-                                                }, "*prevTaste", "*delta")
-                                                .out("*nextTaste")
-                                                .localTransform("$$viewerIdToTasteByToken",
-                                                            Path.key("*viewerIdL", "*token").termVal("*nextTaste")));
+                                                }, "*prevPairScore", "*pairDelta").out("*nextPairScore")
+                                                .localTransform("$$viewerIdToTargetIdToReactionScore",
+                                                            Path.key("*viewerIdL", "*targetIdL").termVal("*nextPairScore"))
+                                                .each((Long viewerIdL, Boolean isFacecardReaction) -> {
+                                                      if (viewerIdL == null || viewerIdL.longValue() <= 0L
+                                                                  || !Boolean.TRUE.equals(isFacecardReaction)) {
+                                                            return null;
+                                                      }
+                                                      MatchRefillRequest req = new MatchRefillRequest();
+                                                      req.setAccountId(viewerIdL);
+                                                      req.setTargetSize(120);
+                                                      return req;
+                                                }, "*viewerIdL", "*isFacecardReaction").out("*facecardRefillReq")
+                                                .each((MatchRefillRequest req) -> req != null, "*facecardRefillReq")
+                                                .out("*shouldQueueFacecardRefill")
+                                                .ifTrue("*shouldQueueFacecardRefill",
+                                                            Block.depotPartitionAppend("*matchRefillDepot",
+                                                                        "*facecardRefillReq"))
+                                                .each((Double delta, List<String> tokens, Boolean isFacecardReaction) -> {
+                                                      if (Boolean.TRUE.equals(isFacecardReaction))
+                                                            return false;
+                                                      return delta != null
+                                                                  && delta.doubleValue() != 0.0
+                                                                  && tokens != null
+                                                                  && !tokens.isEmpty();
+                                                }, "*delta", "*tokens", "*isFacecardReaction")
+                                                .out("*shouldUpdateTaste")
+                                                .ifTrue("*shouldUpdateTaste",
+                                                            Block.create()
+                                                                        .each(Ops.EXPLODE, "*tokens").out("*token")
+                                                                        .localSelect("$$viewerIdToTasteByToken",
+                                                                                    Path.key("*viewerIdL", "*token")
+                                                                                                .nullToVal(0.0))
+                                                                        .out("*prevTaste")
+                                                                        .each((Double prev, Double delta) -> {
+                                                                              double base = prev == null ? 0.0 : prev;
+                                                                              double inc = delta == null ? 0.0 : delta;
+                                                                              return base + inc;
+                                                                        }, "*prevTaste", "*delta")
+                                                                        .out("*nextTaste")
+                                                                        .localTransform("$$viewerIdToTasteByToken",
+                                                                                    Path.key("*viewerIdL", "*token")
+                                                                                                .termVal("*nextTaste")))
+                                                .each((Integer reactionValue, String promptId, List<String> tokens,
+                                                            Boolean isFacecardReaction) -> {
+                                                      if (Boolean.TRUE.equals(isFacecardReaction))
+                                                            return false;
+                                                      boolean reactsToSignal = reactionValue != null
+                                                                  && (reactionValue.intValue() == PromptReaction.LIKE
+                                                                                  .getValue()
+                                                                              || reactionValue.intValue() == PromptReaction.DISLIKE
+                                                                                              .getValue());
+                                                      return reactsToSignal
+                                                                  && promptId != null
+                                                                  && !promptId.isBlank()
+                                                                  && tokens != null
+                                                                  && !tokens.isEmpty();
+                                                }, "*reactionValue", "*promptId", "*tokens", "*isFacecardReaction")
+                                                .out("*shouldSuppressTokens")
+                                                .ifTrue("*shouldSuppressTokens",
+                                                            Block.create()
+                                                                        .each(Ops.EXPLODE, "*tokens").out("*token")
+                                                                        .each((String promptId, String token) -> suppressionKey(promptId,
+                                                                                    token),
+                                                                                    "*promptId", "*token")
+                                                                        .out("*suppressionKey")
+                                                                        .each((String key) -> key != null, "*suppressionKey")
+                                                                        .out("*hasSuppressionKey")
+                                                                        .ifTrue("*hasSuppressionKey",
+                                                                                    Block.create()
+                                                                                                .localTransform("$$viewerIdToSuppressedSignalTokens",
+                                                                                                            Path.key("*viewerIdL",
+                                                                                                                        "*suppressionKey")
+                                                                                                                        .termVal(true)))));
 
             stream.source("*publicPromptSelectionDepot")
                         .out("*data")
@@ -334,6 +873,10 @@ public class Core implements RamaModule {
                         PState.mapSchema(Long.class, Boolean.class));
             stream.pstate("$$accountIdToLastRefillAt",
                         PState.mapSchema(Long.class, Long.class));
+            stream.pstate("$$viewerIdToTargetIdToUncertainty",
+                        PState.mapSchema(Long.class, Map.class));
+            stream.pstate("$$targetIdToFollowupByViewer",
+                        PState.mapSchema(Long.class, Map.class));
 
             stream.source("*matchRefillDepot").out("*data")
                         .macro(extractFields("*data", "*accountId", "*targetSize"))
@@ -341,7 +884,8 @@ public class Core implements RamaModule {
                         .hashPartition("*aidL")
                         .localSelect("$$accountIdToRefillPending", Path.key("*aidL").nullToVal(false))
                         .out("*isPending")
-                        .each((Boolean pending) -> pending == null || !pending, "*isPending")
+                        // Always process refill requests; dropping queued requests can miss reaction-driven rescoring.
+                        .each((Boolean pending) -> true, "*isPending")
                         .out("*shouldProcess")
                         .ifTrue("*shouldProcess",
                                     Block.create()
@@ -351,8 +895,19 @@ public class Core implements RamaModule {
                                                 .localSelect("$$accountIdToFiltersProjection",
                                                             Path.key("*aidL"))
                                                 .out("*viewerFilters")
+                                                .localSelect("$$accountIdToSignals",
+                                                            Path.key("*aidL"))
+                                                .out("*viewerSignals")
                                                 .localSelect("$$accountIdToExposure", Path.key("*aidL"))
                                                 .out("*exposures")
+                                                .each((Map<?, ?> ex) -> ex == null ? new HashMap<>() : ex,
+                                                            "*exposures")
+                                                .out("*exposuresSafe")
+                                                .localSelect("$$viewerIdToTargetIdToReactionScore", Path.key("*aidL"))
+                                                .out("*viewerPairReactions")
+                                                .each((Map<?, ?> reactions) -> reactions == null ? new HashMap<>() : reactions,
+                                                            "*viewerPairReactions")
+                                                .out("*viewerPairReactionsSafe")
                                                 .each((Long aid) -> ALL_ACCOUNTS_KEY, "*aidL").out("*allKey")
                                                 .hashPartition("*allKey")
                                                 // Iterate over all known accountIds:
@@ -393,12 +948,19 @@ public class Core implements RamaModule {
                                                                                     Path.key(
                                                                                                 "*tidL"))
                                                                         .out("*targetFilters")
-
-                                                                        // Cast
-                                                                        // viewer/target
-                                                                        // filters and
-                                                                        // exposures cleanly
-                                                                        .each((Object vfObj) -> (Filters) vfObj,
+                                                                        .localSelect("$$accountIdToSignals",
+                                                                                    Path.key("*tidL"))
+                                                                        .out("*targetSignals")
+                                                                        .localSelect("$$viewerIdToTargetIdToReactionScore",
+                                                                                    Path.key("*tidL", "*aidL")
+                                                                                                .nullToVal(0.0))
+                                                                        .out("*targetToViewerReaction")
+                                                                        // Cast viewer/target
+                                                                        // filters and signals
+                                                                        // cleanly
+                                                                        .each((Object vfObj) -> (vfObj instanceof Filters)
+                                                                                    ? (Filters) vfObj
+                                                                                    : null,
                                                                                     "*viewerFilters")
                                                                         .out("*viewerFiltersC")
                                                                         .each((Object tfObj) -> (tfObj instanceof Filters)
@@ -406,75 +968,82 @@ public class Core implements RamaModule {
                                                                                     : null,
                                                                                     "*targetFilters")
                                                                         .out("*targetFiltersC")
+                                                                        .each((Object vsObj) -> (vsObj instanceof Signals)
+                                                                                    ? (Signals) vsObj
+                                                                                    : null,
+                                                                                    "*viewerSignals")
+                                                                        .out("*viewerSignalsC")
+                                                                        .each((Object tsObj) -> (tsObj instanceof Signals)
+                                                                                    ? (Signals) tsObj
+                                                                                    : null,
+                                                                                    "*targetSignals")
+                                                                        .out("*targetSignalsC")
+                                                                        .each((Map<?, ?> reactionMap, Long tid) -> {
+                                                                              if (reactionMap == null || tid == null)
+                                                                                    return 0.0;
+                                                                              Object raw = reactionMap.get(tid);
+                                                                              if (raw instanceof Number)
+                                                                                    return ((Number) raw).doubleValue();
+                                                                              return 0.0;
+                                                                        }, "*viewerPairReactionsSafe", "*tidL")
+                                                                        .out("*viewerToTargetReaction")
                                                                         .each((Filters viewer,
                                                                                     Long tid,
-                                                                                    Filters target) -> {
-                                                                              if (viewer == null
-                                                                                          || target == null) {
-                                                                                    return null;
-                                                                              }
-
-                                                                              long now = System
-                                                                                          .currentTimeMillis();
-
-                                                                              double baseScore = CalypsoHelpers
-                                                                                          .computeMatchesBaseScore(
-                                                                                                      viewer,
-                                                                                                      target);
-                                                                              if (baseScore < 0.0) {
-                                                                                    return null; // incompatible
-                                                                                                 // on
-                                                                                                 // hard
-                                                                                                 // constraints
-                                                                              }
-
-                                                                              // Soft bonuses:
-                                                                              // lifestyle +
-                                                                              // politics +
-                                                                              // religion
-                                                                              double lifestyleBonus = CalypsoHelpers
-                                                                                          .computeLifestyleBonus(
-                                                                                                      viewer,
-                                                                                                      target);
-                                                                              double politicsBonus = CalypsoHelpers
-                                                                                          .computePoliticsBonus(
-                                                                                                      viewer,
-                                                                                                      target);
-                                                                              double religionBonus = CalypsoHelpers
-                                                                                          .computeReligionBonus(
-                                                                                                      viewer,
-                                                                                                      target);
-                                                                              double finalScore = baseScore
-                                                                                          + lifestyleBonus
-                                                                                          + politicsBonus
-                                                                                          + religionBonus;
-
-                                                                              // Relationship
-                                                                              // mode floor
-                                                                              // applies to
-                                                                              // final score
-                                                                              String viewerMode = CalypsoHelpers
-                                                                                          .getModeSelfOrNull(
-                                                                                                      viewer);
-                                                                              double floor;
-                                                                              if ("focused".equalsIgnoreCase(viewerMode)) {
-                                                                                    floor = MIN_SCORE_FOCUSED;
-                                                                              } else if ("exploratory".equalsIgnoreCase(viewerMode)) {
-                                                                                    floor = MIN_SCORE_EXPLORATORY;
-                                                                              } else {
-                                                                                    floor = MIN_SCORE_BALANCED;
-                                                                              }
-                                                                              if (finalScore < floor) {
-                                                                                    return null;
-                                                                              }
-
-                                                                              return mkCandidate(
-                                                                                          tid,
-                                                                                          finalScore,
-                                                                                          now);
-                                                                        }, "*viewerFiltersC",
+                                                                                    Filters target,
+                                                                                    Signals viewerSignals,
+                                                                                    Signals targetSignals,
+                                                                                    Double viewerToTargetReaction,
+                                                                                    Double targetToViewerReaction,
+                                                                                    Map<?, ?> exposures) -> scorePair(
+                                                                                                viewer,
+                                                                                                tid == null ? 0L : tid,
+                                                                                                target,
+                                                                                                viewerSignals,
+                                                                                                targetSignals,
+                                                                                                viewerToTargetReaction == null
+                                                                                                            ? 0.0
+                                                                                                            : viewerToTargetReaction,
+                                                                                                targetToViewerReaction == null
+                                                                                                            ? 0.0
+                                                                                                            : targetToViewerReaction,
+                                                                                                exposures,
+                                                                                                System.currentTimeMillis()),
+                                                                                    "*viewerFiltersC",
                                                                                     "*tidL",
-                                                                                    "*targetFiltersC")
+                                                                                    "*targetFiltersC",
+                                                                                    "*viewerSignalsC",
+                                                                                    "*targetSignalsC",
+                                                                                    "*viewerToTargetReaction",
+                                                                                    "*targetToViewerReaction",
+                                                                                    "*exposuresSafe")
+                                                                        .out("*pairPayload")
+                                                                        .each((Map<String, Object> payload) -> followupFromPayload(
+                                                                                    payload),
+                                                                                    "*pairPayload")
+                                                                        .out("*followupState")
+                                                                        .each((Map<String, Object> followup) -> followup != null,
+                                                                                    "*followupState")
+                                                                        .out("*hasFollowup")
+                                                                        .ifTrue("*hasFollowup",
+                                                                                    Block.localTransform(
+                                                                                                "$$targetIdToFollowupByViewer",
+                                                                                                Path.key("*tidL", "*aidL")
+                                                                                                            .termVal("*followupState")),
+                                                                                    Block.localTransform(
+                                                                                                "$$targetIdToFollowupByViewer",
+                                                                                                Path.key("*tidL", "*aidL")
+                                                                                                            .termVoid()))
+                                                                        .hashPartition("*aidL")
+                                                                        .each((Map<String, Object> payload) -> uncertaintyFromPayload(
+                                                                                    payload),
+                                                                                    "*pairPayload")
+                                                                        .out("*uncertainty")
+                                                                        .localTransform("$$viewerIdToTargetIdToUncertainty",
+                                                                                    Path.key("*aidL", "*tidL")
+                                                                                                .termVal("*uncertainty"))
+                                                                        .each((Map<String, Object> payload) -> candidateFromPayload(
+                                                                                    payload),
+                                                                                    "*pairPayload")
                                                                         .out("*candMaybe")
                                                                         // Read current heap,
                                                                         // defaulting to empty
@@ -496,15 +1065,18 @@ public class Core implements RamaModule {
                                                                         // non-null; otherwise
                                                                         // keep heap as-is
                                                                         .each((List<MatchCandidate> heap,
-                                                                                    MatchCandidate cand) -> {
-                                                                              if (cand == null)
-                                                                                    return heap;
-                                                                              return upsertIntoHeap(
-                                                                                          heap,
-                                                                                          cand);
+                                                                                    MatchCandidate cand,
+                                                                                    Long targetId) -> {
+                                                                              if (cand == null) {
+                                                                                    return removeFromHeap(heap,
+                                                                                                targetId == null ? 0L
+                                                                                                            : targetId);
+                                                                              }
+                                                                              return upsertIntoHeap(heap, cand);
                                                                         },
                                                                                     "*currHeap",
-                                                                                    "*candMaybe")
+                                                                                    "*candMaybe",
+                                                                                    "*tidL")
                                                                         .out("*newHeap")
 
                                                                         .localTransform(
@@ -523,24 +1095,94 @@ public class Core implements RamaModule {
                                     Path.key("*aidL").termVal(false));
       }
 
+      private static void declareMatchmakingFollowupsTopology(Topologies topologies) {
+            StreamTopology stream = topologies.stream("matchmakingFollowups");
+
+            stream.pstate("$$instanceIdToMatchmakingFollowupAssignment",
+                        PState.mapSchema(String.class, PrivatePromptAssignment.class));
+            stream.pstate("$$instanceIdToMatchmakingFollowupAnswer",
+                        PState.mapSchema(String.class, PrivatePromptAnswer.class));
+            stream.pstate("$$accountIdToActiveMatchmakingFollowupInstanceId",
+                        PState.mapSchema(Long.class, String.class));
+            stream.pstate("$$accountIdToLastMatchmakingFollowupScheduledAt",
+                        PState.mapSchema(Long.class, Long.class));
+            stream.pstate("$$accountIdToLastMatchmakingFollowupAnsweredAt",
+                        PState.mapSchema(Long.class, Long.class));
+
+            stream.source("*matchmakingFollowupAssignmentDepot")
+                        .out("*assignment")
+                        .macro(extractFields("*assignment", "*accountId", "*instanceId", "*scheduledAt",
+                                    "*completedAt"))
+                        .each((Number n) -> normalizeAccountId(n), "*accountId").out("*accountIdL")
+                        .hashPartition("*instanceId")
+                        .localTransform("$$instanceIdToMatchmakingFollowupAssignment",
+                                    Path.key("*instanceId").termVal("*assignment"))
+                        .hashPartition("*accountIdL")
+                        .each((PrivatePromptAssignment assignment, Number scheduledAtRaw) -> resolveFollowupScheduledAt(
+                                    assignment, scheduledAtRaw), "*assignment", "*scheduledAt")
+                        .out("*lastScheduledAt")
+                        .localTransform("$$accountIdToLastMatchmakingFollowupScheduledAt",
+                                    Path.key("*accountIdL").termVal("*lastScheduledAt"))
+                        .localSelect("$$accountIdToActiveMatchmakingFollowupInstanceId", Path.key("*accountIdL"))
+                        .out("*currentActive")
+                        .each((String currentActive, PrivatePromptAssignment assignment) -> computeNextActiveMatchmakingFollowupInstanceId(
+                                    currentActive, assignment), "*currentActive", "*assignment")
+                        .out("*nextActive")
+                        .each((String nextActive) -> nextActive == null, "*nextActive").out("*clearActive")
+                        .ifTrue("*clearActive",
+                                    Block.localTransform("$$accountIdToActiveMatchmakingFollowupInstanceId",
+                                                Path.key("*accountIdL").termVoid()),
+                                    Block.localTransform("$$accountIdToActiveMatchmakingFollowupInstanceId",
+                                                Path.key("*accountIdL").termVal("*nextActive")))
+                        .each((PrivatePromptAssignment assignment, Number completedAtRaw) -> {
+                              if (assignment == null || assignment.getStatus() != PrivatePromptStatus.ANSWERED) {
+                                    return null;
+                              }
+                              return resolveFollowupCompletedAt(assignment, completedAtRaw);
+                        }, "*assignment", "*completedAt")
+                        .out("*answeredAtMaybe")
+                        .each((Object answeredAtMaybe) -> answeredAtMaybe instanceof Number, "*answeredAtMaybe")
+                        .out("*hasAnsweredAt")
+                        .ifTrue("*hasAnsweredAt",
+                                    Block.localTransform("$$accountIdToLastMatchmakingFollowupAnsweredAt",
+                                                Path.key("*accountIdL").termVal("*answeredAtMaybe")));
+
+            stream.source("*matchmakingFollowupAnswerDepot")
+                        .out("*answer")
+                        .macro(extractFields("*answer", "*instanceId"))
+                        .hashPartition("*instanceId")
+                        .localTransform("$$instanceIdToMatchmakingFollowupAnswer",
+                                    Path.key("*instanceId").termVal("*answer"));
+      }
+
       private void declareQueries(Topologies topologies) {
             topologies
                         .query("getAccountsFromAccountIds", "*requestAccountId", "*accountIds")
                         .out("*results")
                         .each(Ops.EXPLODE_INDEXED, "*accountIds").out("*index", "*accountId")
                         .select("$$accountIdToAccount", Path.key("*accountId")).out("*account")
-                        .each((RamaFunction2<Long, Account, AccountWithId>) AccountWithId::new,
-                                    "*accountId", "*account")
-                        .out("*accountWithId")
-                        .each((RamaFunction2<Integer, AccountWithId, IndexedAccountWithId>) IndexedAccountWithId::new,
-                                    "*index", "*accountWithId")
+                        .each((Integer index, Long accountId, Account account) -> {
+                              if (index == null || accountId == null || account == null) {
+                                    return null;
+                              }
+                              return new IndexedAccountWithId(index, new AccountWithId(accountId, account));
+                        }, "*index", "*accountId", "*account")
                         .out("*indexedAccountWithId")
                         .originPartition()
                         .agg(Agg.list("*indexedAccountWithId")).out("*unsortedResults")
                         .each((RamaFunction1<List<IndexedAccountWithId>, List<AccountWithId>>) unsorted -> {
                               if (unsorted == null || unsorted.isEmpty())
                                     return new ArrayList<>();
-                              List<IndexedAccountWithId> sorted = new ArrayList<>(unsorted);
+                              List<IndexedAccountWithId> sorted = new ArrayList<>();
+                              for (IndexedAccountWithId item : unsorted) {
+                                    if (item == null || item.accountWithId == null || item.accountWithId.account == null) {
+                                          continue;
+                                    }
+                                    sorted.add(item);
+                              }
+                              if (sorted.isEmpty()) {
+                                    return new ArrayList<>();
+                              }
                               sorted.sort(Comparator.comparingLong(o -> o.index));
                               return sorted.stream()
                                           .map(o -> o.accountWithId)
@@ -623,16 +1265,30 @@ public class Core implements RamaModule {
                         .each((Map<?, ?> reacted) -> reacted == null ? new HashMap<>() : reacted,
                                     "*reactedAnswerIdsRaw")
                         .out("*reactedAnswerIds")
-                        .localSelect("$$viewerIdToReactedPromptIds", Path.key("*viewerIdL"))
-                        .out("*reactedPromptIdsRaw")
-                        .each((Map<?, ?> reacted) -> reacted == null ? new HashMap<>() : reacted,
-                                    "*reactedPromptIdsRaw")
-                        .out("*reactedPromptIds")
+                        .localSelect("$$viewerIdToSuppressedSignalTokens", Path.key("*viewerIdL"))
+                        .out("*suppressedTokensRaw")
+                        .each((Map<?, ?> suppressed) -> suppressed == null ? new HashMap<>() : suppressed,
+                                    "*suppressedTokensRaw")
+                        .out("*suppressedTokens")
                         .localSelect("$$viewerIdToTasteByToken", Path.key("*viewerIdL"))
                         .out("*tasteMapRaw")
                         .each((Map<?, ?> taste) -> taste == null ? new HashMap<>() : taste,
                                     "*tasteMapRaw")
                         .out("*tasteMap")
+                        .localSelect("$$accountIdToCandidateHeap", Path.key("*viewerIdL"))
+                        .out("*candidateHeapRaw")
+                        .each((List<MatchCandidate> heap) -> {
+                              HashMap<Long, Double> out = new HashMap<>();
+                              if (heap == null || heap.isEmpty())
+                                    return out;
+                              for (MatchCandidate candidate : heap) {
+                                    if (candidate == null)
+                                          continue;
+                                    out.put(candidate.getTargetAccountId(), candidate.getStage0Score());
+                              }
+                              return out;
+                        }, "*candidateHeapRaw")
+                        .out("*candidateScoreByTarget")
                         .each((Long vid) -> ALL_ACCOUNTS_KEY, "*viewerIdL").out("*allKey")
                         .hashPartition("*allKey")
                         .localSelect("$$allAccountIdsGlobal", Path.key("*allKey")).out("*allIdsRaw")
@@ -696,59 +1352,79 @@ public class Core implements RamaModule {
                         .each((Object s) -> s == null ? null : s.toString(),
                                     "*answerIdObj")
                         .out("*answerId")
-                        .each((Map<?, ?> reacted, String pid) -> reacted != null
-                                    && pid != null
-                                    && reacted.containsKey(pid),
-                                    "*reactedPromptIds",
-                                    "*promptId")
-                        .out("*promptAlreadyReacted")
                         .each((Map<?, ?> reacted, String aid) -> reacted != null
                                     && aid != null
                                     && reacted.containsKey(aid),
                                     "*reactedAnswerIds",
                                     "*answerId")
                         .out("*answerAlreadyReacted")
-                        .each((Boolean a, Boolean b) -> (a != null && a)
-                                    || (b != null && b),
-                                    "*promptAlreadyReacted",
-                                    "*answerAlreadyReacted")
-                        .out("*shouldSkip")
                         .hashPartition("*answerId")
                         .localSelect(
                                     "$$answerIdToPublicPromptAnswer",
                                     Path.key(
                                                 "*answerId"))
                         .out("*answer")
+                        .each((PublicPromptAnswer ans, Map<?, ?> suppressed) -> {
+                              if (ans == null || suppressed == null || suppressed.isEmpty())
+                                    return false;
+                              String promptId = ans.getPromptId();
+                              if (promptId == null || promptId.isBlank())
+                                    return false;
+                              if (!ans.isSetSignalTokens() || ans.getSignalTokens() == null)
+                                    return false;
+                              for (String token : ans.getSignalTokens()) {
+                                    String key = suppressionKey(promptId, token);
+                                    if (key != null && suppressed.containsKey(key)) {
+                                          return true;
+                                    }
+                              }
+                              return false;
+                        }, "*answer", "*suppressedTokens").out("*tokenSuppressed")
                         .each((Boolean isOther,
                                     Boolean isCompatible,
-                                    Boolean shouldSkip,
+                                    Boolean answerAlreadyReacted,
+                                    Boolean tokenSuppressed,
                                     PublicPromptAnswer ans,
-                                    Map<String, Double> taste) -> {
+                                    Map<?, ?> taste,
+                                    Map<?, ?> candidateScoreByTarget,
+                                    Long targetId) -> {
                               if (isOther == null || !isOther)
                                     return null;
                               if (isCompatible == null || !isCompatible)
                                     return null;
-                              if (shouldSkip != null && shouldSkip)
+                              if (answerAlreadyReacted != null && answerAlreadyReacted)
+                                    return null;
+                              if (tokenSuppressed != null && tokenSuppressed)
                                     return null;
                               if (ans == null)
                                     return null;
                               if (ans.isSetDeleted() && ans.isDeleted())
                                     return null;
-                              double score = 0.0;
-                              if (taste != null && ans.isSetSignalTokens()) {
+                              double personNorm = 0.45;
+                              if (candidateScoreByTarget != null && targetId != null) {
+                                    Object raw = candidateScoreByTarget.get(targetId);
+                                    if (raw instanceof Number) {
+                                          personNorm = clamp01(((Number) raw).doubleValue() / 100.0);
+                                    }
+                              }
+                              double tasteLinear = 0.0;
+                              if (taste != null && ans.isSetSignalTokens() && ans.getSignalTokens() != null) {
                                     for (String token : ans.getSignalTokens()) {
                                           if (token == null)
                                                 continue;
-                                          Double val = taste.get(token);
-                                          if (val != null)
-                                                score += val;
+                                          Object rawVal = taste.get(token);
+                                          if (rawVal instanceof Number)
+                                                tasteLinear += ((Number) rawVal).doubleValue();
                                     }
                               }
+                              double tasteNorm = clamp01(0.5 + (tasteLinear / 6.0));
+                              double finalScore = (0.70 * personNorm + 0.30 * tasteNorm) * 100.0;
                               ArrayList<Object> candidate = new ArrayList<>(2);
                               candidate.add(ans);
-                              candidate.add(score);
+                              candidate.add(finalScore);
                               return candidate;
-                        }, "*isOther", "*isCompatible", "*shouldSkip", "*answer", "*tasteMap")
+                        }, "*isOther", "*isCompatible", "*answerAlreadyReacted", "*tokenSuppressed", "*answer",
+                                    "*tasteMap", "*candidateScoreByTarget", "*targetIdL")
                         .out("*candidate")
                         .originPartition()
                         .agg(Agg.list("*candidate")).out("*candidates")
@@ -823,6 +1499,70 @@ public class Core implements RamaModule {
                               }
                               return new ArrayList<>(deduped.values());
                         }, "*candidates", "*limit").out("*results");
+
+            topologies.query("getMatchmakingFollowupCandidatesForTarget", "*targetId", "*limit").out("*followups")
+                        .each((Number n) -> n == null ? 0L : n.longValue(), "*targetId").out("*targetIdL")
+                        .hashPartition("*targetIdL")
+                        .localSelect("$$targetIdToFollowupByViewer", Path.key("*targetIdL"))
+                        .out("*followupByViewerRaw")
+                        .each((Map<?, ?> byViewer, Object limitObj) -> toSortedFollowupCandidates(
+                                    byViewer == null ? new HashMap<>() : byViewer,
+                                    limitObj),
+                                    "*followupByViewerRaw", "*limit")
+                        .out("*followups")
+                        .originPartition();
+
+            topologies.query("getMatchmakingFollowupAssignmentByInstanceId", "*instanceId").out("*assignment")
+                        .hashPartition("*instanceId")
+                        .localSelect("$$instanceIdToMatchmakingFollowupAssignment", Path.key("*instanceId"))
+                        .out("*assignment")
+                        .originPartition();
+
+            topologies.query("getMatchmakingFollowupAnswerByInstanceId", "*instanceId").out("*answer")
+                        .hashPartition("*instanceId")
+                        .localSelect("$$instanceIdToMatchmakingFollowupAnswer", Path.key("*instanceId"))
+                        .out("*answer")
+                        .originPartition();
+
+            topologies.query("getMatchmakingFollowupSchedulerState", "*requesterId", "*accountId").out("*state")
+                        .each((Number n) -> normalizeAccountId(n), "*accountId").out("*accountIdL")
+                        .hashPartition("*accountIdL")
+                        .localSelect("$$accountIdToActiveMatchmakingFollowupInstanceId", Path.key("*accountIdL"))
+                        .out("*activeInstanceId")
+                        .localSelect("$$accountIdToLastMatchmakingFollowupScheduledAt", Path.key("*accountIdL"))
+                        .out("*lastScheduledAtRaw")
+                        .localSelect("$$accountIdToLastMatchmakingFollowupAnsweredAt", Path.key("*accountIdL"))
+                        .out("*lastAnsweredAtRaw")
+                        .each((String activeInstanceId,
+                                    Number lastScheduledAtRaw,
+                                    Number lastAnsweredAtRaw) -> buildMatchmakingFollowupSchedulerState(activeInstanceId,
+                                                lastScheduledAtRaw,
+                                                lastAnsweredAtRaw),
+                                    "*activeInstanceId", "*lastScheduledAtRaw", "*lastAnsweredAtRaw")
+                        .out("*state")
+                        .originPartition();
+
+            topologies.query("getActiveMatchmakingFollowupAssignment", "*requesterId", "*accountId")
+                        .out("*assignment")
+                        .each((Number n) -> normalizeAccountId(n), "*accountId").out("*accountIdL")
+                        .hashPartition("*accountIdL")
+                        .localSelect("$$accountIdToActiveMatchmakingFollowupInstanceId", Path.key("*accountIdL"))
+                        .out("*instanceId")
+                        .each((String instanceId) -> instanceId != null, "*instanceId").out("*hasInstanceId")
+                        .ifTrue("*hasInstanceId",
+                                    Block.hashPartition("*instanceId")
+                                                .localSelect("$$instanceIdToMatchmakingFollowupAssignment",
+                                                            Path.key("*instanceId"))
+                                                .out("*assignmentRaw")
+                                                .each((PrivatePromptAssignment assignment) -> {
+                                                      if (!isMatchmakingFollowupServableNow(assignment,
+                                                                  System.currentTimeMillis())) {
+                                                            return null;
+                                                      }
+                                                      return assignment;
+                                                }, "*assignmentRaw").out("*assignment"),
+                                    Block.each(() -> null).out("*assignment"))
+                        .originPartition();
 
             topologies.query("getFiltersFromAccountId", "*requesterId", "*accountId").out("*filters")
                         .each((Number n) -> n == null ? 0L : n.longValue(), "*accountId").out("*accountIdL")
@@ -938,6 +1678,8 @@ public class Core implements RamaModule {
             setup.declareDepot("*matchRefillDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
             setup.declareDepot("*matchesServeDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
             setup.declareDepot("*matchesCursorAckDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
+            setup.declareDepot("*matchmakingFollowupAssignmentDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
+            setup.declareDepot("*matchmakingFollowupAnswerDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
             setup.declareDepot("*signalsDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
             setup.declareDepot("*publicPromptAnswerDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
             setup.declareDepot("*publicPromptReactionDepot",
@@ -950,6 +1692,7 @@ public class Core implements RamaModule {
             declareFiltersTopology(topologies);
             declareMatchesServeAndCursorTopology(topologies);
             declareMatchesRefillTopology(topologies);
+            declareMatchmakingFollowupsTopology(topologies);
             declareMatchesSignalsTopology(topologies);
             declarePublicPromptsTopology(topologies);
 

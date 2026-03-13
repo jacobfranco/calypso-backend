@@ -1040,6 +1040,39 @@ class CalypsoApiControllerTest {
                                 .json("{}");
         }
 
+        @Test
+        void postFacecardReaction_invalidReaction_returns400() {
+                String targetId = CalypsoHelpers.serializeAccountId(9L);
+                when(mockManager.postFacecardReaction(eq(7L), eq(9L), isNull()))
+                                .thenReturn(CompletableFuture.failedFuture(
+                                                new IllegalArgumentException("Reaction required.")));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/facecards/" + targetId + "/reaction")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(new PostPublicPromptReactionRequest("not_real"))
+                                .exchange()
+                                .expectStatus().isBadRequest();
+        }
+
+        @Test
+        void postFacecardReaction_valid_returns200() {
+                String targetId = CalypsoHelpers.serializeAccountId(9L);
+                when(mockManager.postFacecardReaction(eq(7L), eq(9L), eq(PromptReaction.DISLIKE)))
+                                .thenReturn(CompletableFuture.completedFuture(true));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/facecards/" + targetId + "/reaction")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(new PostPublicPromptReactionRequest("DISLIKE"))
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .json("{}");
+        }
+
         // --------- Matches endpoint tests (new) ---------
 
         @Test
