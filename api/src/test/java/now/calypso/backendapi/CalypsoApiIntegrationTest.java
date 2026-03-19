@@ -23,6 +23,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import com.rpl.rama.Depot;
+import com.rpl.rama.Path;
 import com.rpl.rama.PState;
 import com.rpl.rama.QueryTopologyClient;
 import com.rpl.rama.cluster.ClusterManagerBase;
@@ -34,6 +35,7 @@ import now.calypso.backend.data.ActivePrivatePrompt;
 import now.calypso.backend.data.AgentMessage;
 import now.calypso.backend.data.AgentMessageSender;
 import now.calypso.backend.data.AgentSession;
+import now.calypso.backend.data.MatchCandidate;
 import now.calypso.backend.data.PrivatePromptAssignment;
 import now.calypso.backend.data.PrivatePromptStatus;
 import now.calypso.backend.data.SignalIntent;
@@ -52,6 +54,8 @@ import now.calypso.backend.modules.Core;
 import now.calypso.backend.serialization.CalypsoSerialization;
 import now.calypso.backendapi.agent.AgentResponder;
 import now.calypso.backendapi.llm.OpenAIJson;
+import now.calypso.backendapi.pojos.GetMatch;
+import now.calypso.backendapi.pojos.PostAccount;
 import now.calypso.backendapi.pojos.PostFilters;
 import now.calypso.backendapi.prompts.PromptLibrary;
 
@@ -432,7 +436,7 @@ class CalypsoApiIntegrationTest {
     }
 
     @Test
-    void publicPromptFeedSuppressesPromptIdAfterReaction() throws Exception {
+    void publicPromptFeedDoesNotSuppressPromptIdAfterReaction() throws Exception {
         try (InProcessCluster ipc = newCluster()) {
             CalypsoApiManager mgr = newManager(ipc);
             long viewerId = 925L;
@@ -456,14 +460,72 @@ class CalypsoApiIntegrationTest {
 
             List<PublicPromptFeedCard> first = mgr.getPublicPromptFeed(viewerId, 1).get(5, TimeUnit.SECONDS);
             assertEquals(1, first.size());
-            mgr.postPublicPromptReaction(viewerId, first.get(0).getAnswerId(), PromptReaction.SKIP).get(5,
+            String reactedAnswerId = first.get(0).getAnswerId();
+            String otherAnswerId = reactedAnswerId.equals(answerA.getAnswerId()) ? answerB.getAnswerId()
+                    : answerA.getAnswerId();
+            mgr.postPublicPromptReaction(viewerId, reactedAnswerId, PromptReaction.SKIP).get(5,
                     TimeUnit.SECONDS);
 
             List<PublicPromptFeedCard> after = mgr.getPublicPromptFeed(viewerId, 10).get(5, TimeUnit.SECONDS);
-            assertTrue(after.stream().noneMatch(card -> "prompt.talk.hours".equals(card.getPromptId())),
-                    "PromptId should be suppressed after reaction");
+            assertTrue(after.stream().noneMatch(card -> reactedAnswerId.equals(card.getAnswerId())),
+                    "Reacted answerId should be suppressed.");
+            assertTrue(after.stream().anyMatch(card -> otherAnswerId.equals(card.getAnswerId())),
+                    "Other answers with the same promptId should remain eligible.");
             assertNotNull(answerA);
             assertNotNull(answerB);
+        }
+    }
+
+    @Test
+    void publicPromptFeedSuppressesSemanticallyRedundantSignalsAfterReaction() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = 938L;
+            long targetA = 939L;
+            long targetB = 940L;
+            long targetC = 941L;
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetA).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetB).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetC).get(5, TimeUnit.SECONDS);
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[{\"token\":\"pineapple_on_pizza\",\"intent\":\"self\"}]}");
+            PublicPromptAnswer seed;
+            try {
+                seed = mgr.postPublicPromptAnswer(targetA, "prompt.hill.die.on", "Pineapple on pizza").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            List<PublicPromptFeedCard> first = mgr.getPublicPromptFeed(viewerId, 1).get(5, TimeUnit.SECONDS);
+            assertEquals(1, first.size());
+            assertEquals(seed.getAnswerId(), first.get(0).getAnswerId());
+            mgr.postPublicPromptReaction(viewerId, seed.getAnswerId(), PromptReaction.DISLIKE).get(5, TimeUnit.SECONDS);
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[{\"token\":\"pineapple_on_pizza\",\"intent\":\"self\"}]}");
+            PublicPromptAnswer redundant;
+            try {
+                redundant = mgr.postPublicPromptAnswer(targetB, "prompt.hill.die.on", "Pineapple belongs on pizza").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[{\"token\":\"loves_hiking\",\"intent\":\"self\"}]}");
+            PublicPromptAnswer fresh;
+            try {
+                fresh = mgr.postPublicPromptAnswer(targetC, "prompt.life.goal", "Do a long thru-hike").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            List<PublicPromptFeedCard> after = mgr.getPublicPromptFeed(viewerId, 10).get(5, TimeUnit.SECONDS);
+            assertTrue(after.stream().noneMatch(card -> redundant.getAnswerId().equals(card.getAnswerId())),
+                    "Same-prompt answers carrying already-reacted signal tokens should be suppressed.");
+            assertTrue(after.stream().anyMatch(card -> fresh.getAnswerId().equals(card.getAnswerId())),
+                    "Non-redundant answers should still be served.");
         }
     }
 
@@ -570,6 +632,229 @@ class CalypsoApiIntegrationTest {
                     .filter(card -> "prompt.talk.hours".equals(card.getPromptId()))
                     .count();
             assertTrue(talkHoursCount <= 1, "Feed should include at most one card per promptId");
+        }
+    }
+
+    @Test
+    void matchmakingFollowupLifecycle_schedulesAnswersAndAppliesDailyCap() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = 947L;
+            long targetId = 948L;
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetId).get(5, TimeUnit.SECONDS);
+
+            long now = System.currentTimeMillis();
+            Signals viewerSignals = new Signals();
+            viewerSignals.setAccountId(viewerId);
+            SignalRecord desired = new SignalRecord();
+            desired.setToken("loves_hiking");
+            desired.setIntent(SignalIntent.SEEKING);
+            desired.setCount(3);
+            desired.setConfidence(0.95);
+            desired.setImportance(0.95);
+            desired.setFirstSeen(now);
+            desired.setLastSeen(now);
+            desired.setSource("test");
+            viewerSignals.setRecords(List.of(desired));
+            ipc.clusterDepot(Core.class.getName(), "*signalsDepot").append(viewerSignals);
+
+            ActivePrivatePrompt followup = awaitMatchmakingFollowup(mgr, viewerId, targetId, 5000);
+            assertNotNull(followup);
+            assertEquals("private.matchmaking.followup", followup.getPrompt().getPromptId());
+            assertNotNull(followup.getPrompt().getText());
+            assertTrue(followup.getPrompt().getText().toLowerCase().contains("hiking"));
+
+            OpenAIJson.setTestOverride(
+                    (system, user) -> "{\"signals\":[{\"token\":\"loves_hiking\",\"intent\":\"self\"}]}");
+            ActivePrivatePrompt answered;
+            try {
+                answered = mgr.postMatchmakingFollowupAnswer(targetId, followup.getAssignment().getInstanceId(),
+                        "I hike multiple times a week.").get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            assertNotNull(answered);
+            assertEquals(PrivatePromptStatus.ANSWERED, answered.getAssignment().getStatus());
+            assertNotNull(answered.getAnswer());
+            assertTrue(answered.getAnswer().isSetSignalTokens());
+            assertTrue(answered.getAnswer().getSignalTokens().contains("loves_hiking"));
+
+            ActivePrivatePrompt immediate = mgr.getActiveMatchmakingFollowup(targetId).get(5, TimeUnit.SECONDS);
+            assertNull(immediate, "Matchmaking followups should respect the 1/day cap.");
+        }
+    }
+
+    @Test
+    void facecardsEndpointUsesRankedCandidatePool() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = createAccount(mgr, "Facecard Viewer", "+1555000949");
+            long targetA = createAccount(mgr, "Facecard Target A", "+1555000950");
+            long targetB = createAccount(mgr, "Facecard Target B", "+1555000951");
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetA).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetB).get(5, TimeUnit.SECONDS);
+
+            List<?> facecards = awaitFacecards(mgr, viewerId, 20, 20000);
+            assertNotNull(facecards);
+            assertFalse(facecards.isEmpty(), "Facecards should backfill from top-ranked candidates.");
+            assertTrue(facecards.size() <= 20);
+        }
+    }
+
+    @Test
+    void facecardReactionUpdatesPairSignalsAndRescoresHeap() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = createAccount(mgr, "Facecard Reactor", "+1555000952");
+            long targetA = createAccount(mgr, "Facecard Reacted A", "+1555000953");
+            long targetB = createAccount(mgr, "Facecard Reacted B", "+1555000954");
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetA).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetB).get(5, TimeUnit.SECONDS);
+
+            awaitFacecards(mgr, viewerId, 20, 20000);
+
+            PState heapP = ipc.clusterPState(Core.class.getName(), "$$accountIdToCandidateHeap");
+            PState pairReactionP = ipc.clusterPState(Core.class.getName(), "$$viewerIdToTargetIdToReactionScore");
+
+            waitFor(() -> candidateScoreFromHeap(heapP, viewerId, targetA) != null, 5000,
+                    "Target A should be present in viewer heap.");
+            Double beforeScoreA = candidateScoreFromHeap(heapP, viewerId, targetA);
+            assertNotNull(beforeScoreA);
+
+            mgr.postFacecardReaction(viewerId, targetA, PromptReaction.DISLIKE).get(5, TimeUnit.SECONDS);
+            waitFor(() -> {
+                Object raw = pairReactionP.selectOne(Path.key(viewerId, targetA));
+                return raw instanceof Number && ((Number) raw).doubleValue() <= -10.0;
+            }, 5000, "DISLIKE should apply strong negative pair reaction score.");
+
+            waitFor(() -> {
+                Double updated = candidateScoreFromHeap(heapP, viewerId, targetA);
+                return updated == null || updated < beforeScoreA;
+            }, 8000, "Heap score should drop (or candidate removed) after facecard dislike.");
+
+            mgr.postFacecardReaction(viewerId, targetB, PromptReaction.LIKE).get(5, TimeUnit.SECONDS);
+            waitFor(() -> {
+                Object raw = pairReactionP.selectOne(Path.key(viewerId, targetB));
+                return raw instanceof Number && ((Number) raw).doubleValue() >= 4.0;
+            }, 5000, "LIKE should apply positive pair reaction score.");
+        }
+    }
+
+    @Test
+    void matchesRequireReciprocalPromptLikesAndFacecardLikes() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = createAccount(mgr, "Mutual Viewer", "+1555000960");
+            long targetId = createAccount(mgr, "Mutual Target", "+1555000961");
+
+            mgr.postFilters(filtersForGender("woman", List.of("man", "woman"), "exploratory"), viewerId).get(5,
+                    TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("man", List.of("woman", "man"), "exploratory"), targetId).get(5,
+                    TimeUnit.SECONDS);
+
+            PublicPromptAnswer viewerAnswer;
+            PublicPromptAnswer targetAnswer;
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            try {
+                viewerAnswer = mgr.postPublicPromptAnswer(
+                        viewerId,
+                        "prompt.talk.hours",
+                        "I can talk for hours about travel planning.").get(5, TimeUnit.SECONDS);
+                targetAnswer = mgr.postPublicPromptAnswer(
+                        targetId,
+                        "prompt.ideal.sunday",
+                        "Coffee, a long walk, and a museum stop.").get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            awaitFacecards(mgr, viewerId, 20, 20000);
+            awaitFacecards(mgr, targetId, 20, 20000);
+
+            List<GetMatch> initial = mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
+            assertTrue(initial == null || initial.isEmpty(),
+                    "Matches should not appear without reciprocal prompt+facecard likes.");
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            try {
+                mgr.postPublicPromptReaction(viewerId, targetAnswer.getAnswerId(), PromptReaction.LIKE).get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+            mgr.postFacecardReaction(viewerId, targetId, PromptReaction.LIKE).get(5, TimeUnit.SECONDS);
+
+            List<GetMatch> stillMissing = mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
+            assertTrue(stillMissing == null || stillMissing.isEmpty(),
+                    "One-sided likes should not pass the mutual match gate.");
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            try {
+                mgr.postPublicPromptReaction(targetId, viewerAnswer.getAnswerId(), PromptReaction.LIKE).get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+            mgr.postFacecardReaction(targetId, viewerId, PromptReaction.LIKE).get(5, TimeUnit.SECONDS);
+
+            PState heapP = ipc.clusterPState(Core.class.getName(), "$$accountIdToCandidateHeap");
+            PState facecardP = ipc.clusterPState(Core.class.getName(), "$$viewerIdToTargetIdToFacecardReaction");
+            PState promptLikeP = ipc.clusterPState(Core.class.getName(), "$$viewerIdToTargetIdToPromptLikeSeen");
+            PState reactionByAnswerP = ipc.clusterPState(Core.class.getName(), "$$viewerIdToReactionByAnswerId");
+
+            waitFor(() -> candidateScoreFromHeap(heapP, viewerId, targetId) != null, 12000,
+                    "Viewer->target should be present in candidate heap.");
+            waitFor(() -> candidateScoreFromHeap(heapP, targetId, viewerId) != null, 12000,
+                    "Target->viewer should be present in candidate heap.");
+            waitFor(() -> {
+                Object raw = facecardP.selectOne(Path.key(viewerId, targetId));
+                return raw instanceof Number && ((Number) raw).intValue() == PromptReaction.LIKE.getValue();
+            }, 12000, "Viewer facecard like should be persisted.");
+            long facecardDeadline = System.currentTimeMillis() + 12000L;
+            boolean targetFacecardPersisted = false;
+            Object targetFacecardRaw = null;
+            while (System.currentTimeMillis() < facecardDeadline) {
+                targetFacecardRaw = facecardP.selectOne(Path.key(targetId, viewerId));
+                if (targetFacecardRaw instanceof Number
+                        && ((Number) targetFacecardRaw).intValue() == PromptReaction.LIKE.getValue()) {
+                    targetFacecardPersisted = true;
+                    break;
+                }
+                Thread.sleep(60L);
+            }
+            assertTrue(targetFacecardPersisted,
+                    "Target facecard like should be persisted. raw="
+                            + targetFacecardRaw
+                            + ", byViewerMap="
+                            + facecardP.selectOne(Path.key(targetId))
+                            + ", reactionsByAnswer="
+                            + reactionByAnswerP.selectOne(Path.key(targetId)));
+            waitFor(() -> {
+                Object raw = promptLikeP.selectOne(Path.key(viewerId, targetId));
+                return raw instanceof Boolean && ((Boolean) raw).booleanValue();
+            }, 12000, "Viewer prompt-like evidence should be persisted.");
+            waitFor(() -> {
+                Object raw = promptLikeP.selectOne(Path.key(targetId, viewerId));
+                return raw instanceof Boolean && ((Boolean) raw).booleanValue();
+            }, 12000, "Target prompt-like evidence should be persisted.");
+
+            String targetSerialized = now.calypso.backend.CalypsoHelpers.serializeAccountId(targetId);
+            waitFor(() -> {
+                List<GetMatch> matches = mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
+                if (matches == null || matches.isEmpty()) {
+                    return false;
+                }
+                for (GetMatch match : matches) {
+                    if (match != null && match.account != null && targetSerialized.equals(match.account.id)) {
+                        return true;
+                    }
+                }
+                return false;
+            }, 35000, "Reciprocal prompt + facecard likes should produce a mutual match.");
         }
     }
 
@@ -786,9 +1071,13 @@ class CalypsoApiIntegrationTest {
     }
 
     private static PostFilters filtersForGender(String self, List<String> seeking) {
+        return filtersForGender(self, seeking, "balanced");
+    }
+
+    private static PostFilters filtersForGender(String self, List<String> seeking, String mode) {
         PostFilters filters = new PostFilters();
         ModeFilter relationshipMode = new ModeFilter();
-        relationshipMode.setSelf("balanced");
+        relationshipMode.setSelf(mode == null || mode.isBlank() ? "balanced" : mode);
         filters.relationshipMode = relationshipMode;
 
         filters.age = new RangeFilter();
@@ -827,6 +1116,79 @@ class CalypsoApiIntegrationTest {
             Thread.sleep(50);
         }
         return null;
+    }
+
+    private ActivePrivatePrompt awaitMatchmakingFollowup(CalypsoApiManager mgr, long viewerId, long targetId,
+            long timeoutMs) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            mgr.getMatches(viewerId, viewerId, 10).get(5, TimeUnit.SECONDS);
+            ActivePrivatePrompt followup = mgr.getActiveMatchmakingFollowup(targetId).get(5, TimeUnit.SECONDS);
+            if (followup != null) {
+                return followup;
+            }
+            Thread.sleep(75);
+        }
+        return null;
+    }
+
+    private List<?> awaitFacecards(CalypsoApiManager mgr, long accountId, int limit, long timeoutMs) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            List<?> facecards = mgr.getFacecards(accountId, accountId, limit).get(20, TimeUnit.SECONDS);
+            if (facecards != null && !facecards.isEmpty()) {
+                return facecards;
+            }
+            Thread.sleep(75);
+        }
+        return List.of();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Double candidateScoreFromHeap(PState heapP, long viewerId, long targetId) {
+        Object raw = heapP.selectOne(Path.key(viewerId));
+        if (!(raw instanceof List<?>)) {
+            return null;
+        }
+        for (Object entry : (List<Object>) raw) {
+            if (!(entry instanceof MatchCandidate)) {
+                continue;
+            }
+            MatchCandidate candidate = (MatchCandidate) entry;
+            if (candidate.getTargetAccountId() == targetId) {
+                return candidate.getStage0Score();
+            }
+        }
+        return null;
+    }
+
+    private void waitFor(Check condition, long timeoutMs, String message) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            if (condition.evaluate()) {
+                return;
+            }
+            Thread.sleep(75);
+        }
+        assertTrue(false, message);
+    }
+
+    @FunctionalInterface
+    private interface Check {
+        boolean evaluate() throws Exception;
+    }
+
+    private long createAccount(CalypsoApiManager mgr, String name, String phoneNumber) throws Exception {
+        PostAccount account = new PostAccount();
+        account.name = name;
+        account.phone_number = phoneNumber;
+        account.locale = "en-US";
+        account.agreement = true;
+        account.verification_token = "integration-test-token";
+        assertTrue(mgr.postAccount(account).get(5, TimeUnit.SECONDS));
+        Long accountId = mgr.getAccountId(phoneNumber).get(5, TimeUnit.SECONDS);
+        assertNotNull(accountId);
+        return accountId.longValue();
     }
 
     private static long currentSpawnSlotStart(long epochMillis) {

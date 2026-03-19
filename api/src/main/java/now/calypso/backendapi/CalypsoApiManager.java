@@ -10,6 +10,7 @@ import java.time.ZonedDateTime;
 import java.util.*;
 import java.util.concurrent.*;
 import java.net.URI;
+import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -41,6 +42,7 @@ public class CalypsoApiManager {
     private final ConcurrentHashMap<Long, CompletableFuture<Void>> serialByAccount = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, CompletableFuture<AgentSession>> agentSerialByAccount = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, CompletableFuture<?>> privatePromptSerialByAccount = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, CompletableFuture<?>> matchmakingFollowupSerialByAccount = new ConcurrentHashMap<>();
 
     // Modules
     public static final String CORE_MODULE_NAME = Core.class.getName();
@@ -53,10 +55,18 @@ public class CalypsoApiManager {
     private final Depot publicPromptAnswerDepot;
     private final Depot publicPromptReactionDepot;
     private final Depot publicPromptSelectionDepot;
+    private final Depot matchmakingFollowupAssignmentDepot;
+    private final Depot matchmakingFollowupAnswerDepot;
 
     // Core PStates
     private final PState phoneToUser;
     private final PState authCodeToAccountId;
+    private final PState accountIdToCandidateHeap;
+    private final PState viewerIdToTargetIdToFacecardReaction;
+    private final PState viewerIdToTargetIdToPromptLikeSeen;
+    private final PState viewerIdToReactionByAnswerId;
+    private final PState answerIdToPublicPromptAnswer;
+    private final PState targetIdToFollowupByViewer;
 
     // Core Queries
     private final QueryTopologyClient<List<AccountWithId>> getAccountsFromAccountIds;
@@ -65,6 +75,11 @@ public class CalypsoApiManager {
     private final QueryTopologyClient<List<PublicPromptAnswer>> getPublicPromptFeed;
     private final QueryTopologyClient<List<PublicPromptAnswer>> getMyPublicPromptAnswers;
     private final QueryTopologyClient<PublicPromptSelection> getPublicPromptSelection;
+    private final QueryTopologyClient<List<Map<String, Object>>> getMatchmakingFollowupCandidatesForTarget;
+    private final QueryTopologyClient<PrivatePromptAssignment> getMatchmakingFollowupAssignmentByInstanceId;
+    private final QueryTopologyClient<PrivatePromptAnswer> getMatchmakingFollowupAnswerByInstanceId;
+    private final QueryTopologyClient<PrivatePromptAssignment> getActiveMatchmakingFollowupAssignment;
+    private final QueryTopologyClient<Map<String, Object>> getMatchmakingFollowupSchedulerState;
 
     // Matches Depots
     private final Depot signalsDepot;
@@ -88,6 +103,17 @@ public class CalypsoApiManager {
     private static final long PRIVATE_PROMPT_DEFAULT_SNOOZE_MS = 12L * 60 * 60 * 1000;
     private static final int PRIVATE_PROMPT_DAILY_SPAWN_HOUR = 20;
     private static final int PRIVATE_PROMPT_BODY_LIMIT = 1200;
+    private static final long MATCHMAKING_FOLLOWUP_COOLDOWN_MS = 24L * 60 * 60 * 1000;
+    private static final int MATCHMAKING_FOLLOWUP_DEFAULT_LIMIT = 20;
+    private static final String MATCHMAKING_FOLLOWUP_PROMPT_ID = "private.matchmaking.followup";
+    private static final String MATCHMAKING_FOLLOWUP_PROMPT_PREFIX = MATCHMAKING_FOLLOWUP_PROMPT_ID + "|";
+    private static final String FACECARD_REACTION_ANSWER_PREFIX = "facecard_target:";
+    private static final double MATCH_MIN_EXPLORATORY = 58.0;
+    private static final double MATCH_MIN_BALANCED = 64.0;
+    private static final double MATCH_MIN_FOCUSED = 72.0;
+    private static final double MATCH_AUTOPASS_EXPLORATORY = 66.0;
+    private static final double MATCH_AUTOPASS_BALANCED = 72.0;
+    private static final double MATCH_AUTOPASS_FOCUSED = 80.0;
     private static final SecureRandom PHONE_CODE_RANDOM = new SecureRandom();
     private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
     private static final String SMS_FALLBACK_ENV = "CALYPSO_SMS_FALLBACK";
@@ -108,10 +134,20 @@ public class CalypsoApiManager {
         publicPromptAnswerDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*publicPromptAnswerDepot");
         publicPromptReactionDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*publicPromptReactionDepot");
         publicPromptSelectionDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*publicPromptSelectionDepot");
+        matchmakingFollowupAssignmentDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*matchmakingFollowupAssignmentDepot");
+        matchmakingFollowupAnswerDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*matchmakingFollowupAnswerDepot");
 
         // Core PStates
         phoneToUser = cluster.clusterPState(CORE_MODULE_NAME, "$$phoneToUser");
         authCodeToAccountId = cluster.clusterPState(CORE_MODULE_NAME, "$$authCodeToAccountId");
+        accountIdToCandidateHeap = cluster.clusterPState(CORE_MODULE_NAME, "$$accountIdToCandidateHeap");
+        viewerIdToTargetIdToFacecardReaction = cluster.clusterPState(CORE_MODULE_NAME,
+                "$$viewerIdToTargetIdToFacecardReaction");
+        viewerIdToTargetIdToPromptLikeSeen = cluster.clusterPState(CORE_MODULE_NAME,
+                "$$viewerIdToTargetIdToPromptLikeSeen");
+        viewerIdToReactionByAnswerId = cluster.clusterPState(CORE_MODULE_NAME, "$$viewerIdToReactionByAnswerId");
+        answerIdToPublicPromptAnswer = cluster.clusterPState(CORE_MODULE_NAME, "$$answerIdToPublicPromptAnswer");
+        targetIdToFollowupByViewer = cluster.clusterPState(CORE_MODULE_NAME, "$$targetIdToFollowupByViewer");
 
         // Core Queries
         getAccountsFromAccountIds = cluster.clusterQuery(CORE_MODULE_NAME, "getAccountsFromAccountIds");
@@ -120,6 +156,16 @@ public class CalypsoApiManager {
         getPublicPromptFeed = cluster.clusterQuery(CORE_MODULE_NAME, "getPublicPromptFeed");
         getMyPublicPromptAnswers = cluster.clusterQuery(CORE_MODULE_NAME, "getMyPublicPromptAnswers");
         getPublicPromptSelection = cluster.clusterQuery(CORE_MODULE_NAME, "getPublicPromptSelection");
+        getMatchmakingFollowupCandidatesForTarget = cluster.clusterQuery(CORE_MODULE_NAME,
+                "getMatchmakingFollowupCandidatesForTarget");
+        getMatchmakingFollowupAssignmentByInstanceId = cluster.clusterQuery(CORE_MODULE_NAME,
+                "getMatchmakingFollowupAssignmentByInstanceId");
+        getMatchmakingFollowupAnswerByInstanceId = cluster.clusterQuery(CORE_MODULE_NAME,
+                "getMatchmakingFollowupAnswerByInstanceId");
+        getActiveMatchmakingFollowupAssignment = cluster.clusterQuery(CORE_MODULE_NAME,
+                "getActiveMatchmakingFollowupAssignment");
+        getMatchmakingFollowupSchedulerState = cluster.clusterQuery(CORE_MODULE_NAME,
+                "getMatchmakingFollowupSchedulerState");
 
         // Matches Depots
         signalsDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*signalsDepot");
@@ -357,11 +403,27 @@ public class CalypsoApiManager {
         });
     }
 
+    @SuppressWarnings("unchecked")
+    private <T> CompletableFuture<T> serializeMatchmakingFollowupOp(long accountId, Supplier<CompletableFuture<T>> op) {
+        return (CompletableFuture<T>) matchmakingFollowupSerialByAccount.compute(accountId, (k, prev) -> {
+            CompletableFuture<Void> start = (prev == null)
+                    ? CompletableFuture.completedFuture(null)
+                    : ((CompletableFuture<?>) prev).handle((ignored, err) -> null);
+            CompletableFuture<T> next = start.thenCompose(v -> op.get());
+            next.whenComplete((r, e) -> matchmakingFollowupSerialByAccount.remove(k, next));
+            return next;
+        });
+    }
+
     private static String asTrimmedString(Object raw) {
         if (raw == null)
             return null;
         String s = raw.toString().trim();
         return s.isEmpty() ? null : s;
+    }
+
+    private static String encodeFacecardReactionAnswerId(long targetAccountId) {
+        return FACECARD_REACTION_ANSWER_PREFIX + targetAccountId;
     }
 
     private static Long asLong(Object raw) {
@@ -394,6 +456,108 @@ public class CalypsoApiManager {
             }
         }
         return out;
+    }
+
+    private static boolean isMatchmakingFollowupPrompt(String promptId) {
+        return promptId != null && promptId.startsWith(MATCHMAKING_FOLLOWUP_PROMPT_PREFIX);
+    }
+
+    private static String encodeMatchmakingFollowupPromptId(long viewerId, String missingToken, double pairScore,
+            double uncertainty) {
+        String token = SignalNormalizer.normalizeOne(missingToken);
+        if (token == null) {
+            token = "unknown";
+        }
+        return MATCHMAKING_FOLLOWUP_PROMPT_PREFIX
+                + "viewer=" + viewerId
+                + "&token=" + urlEncode(token)
+                + "&score=" + String.format(Locale.ROOT, "%.3f", pairScore)
+                + "&unc=" + String.format(Locale.ROOT, "%.3f", uncertainty);
+    }
+
+    private static Map<String, String> parseMatchmakingFollowupPromptFields(String promptId) {
+        if (!isMatchmakingFollowupPrompt(promptId)) {
+            return Map.of();
+        }
+        String body = promptId.substring(MATCHMAKING_FOLLOWUP_PROMPT_PREFIX.length());
+        if (body.isBlank()) {
+            return Map.of();
+        }
+        HashMap<String, String> out = new HashMap<>();
+        String[] pairs = body.split("&");
+        for (String pair : pairs) {
+            if (pair == null || pair.isBlank()) {
+                continue;
+            }
+            int idx = pair.indexOf('=');
+            if (idx <= 0 || idx >= pair.length() - 1) {
+                continue;
+            }
+            String key = pair.substring(0, idx).trim();
+            String rawValue = pair.substring(idx + 1);
+            if (key.isEmpty() || rawValue.isEmpty()) {
+                continue;
+            }
+            out.put(key, URLDecoder.decode(rawValue, StandardCharsets.UTF_8));
+        }
+        return out;
+    }
+
+    private static long parseLong(String raw, long fallback) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Long.parseLong(raw.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private static double parseDouble(String raw, double fallback) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Double.parseDouble(raw.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private static String humanizeSignalToken(String token) {
+        String normalized = SignalNormalizer.normalizeOne(token);
+        if (normalized == null) {
+            return "that";
+        }
+        String phrase = normalized.replace("anti_", "not_").replace('_', ' ').trim();
+        if (phrase.isBlank()) {
+            return "that";
+        }
+        return phrase;
+    }
+
+    private static String buildMatchmakingFollowupQuestion(String token) {
+        String normalized = SignalNormalizer.normalizeOne(token);
+        if (normalized == null) {
+            return "Quick matchmaking check: can you share a little more about your preferences here?";
+        }
+        if (normalized.startsWith("anti_")) {
+            String phrase = humanizeSignalToken(normalized.substring("anti_".length()));
+            return "Quick matchmaking check: how do you feel about " + phrase + " in a partner?";
+        }
+        String phrase = humanizeSignalToken(normalized);
+        return "Quick matchmaking check: how important is " + phrase + " in your lifestyle or dating preferences?";
+    }
+
+    private static PromptDefinition matchmakingFollowupPromptDefinition(String questionText) {
+        PromptDefinition prompt = new PromptDefinition();
+        prompt.setPromptId(MATCHMAKING_FOLLOWUP_PROMPT_ID);
+        prompt.setBank(PromptBankKind.PRIVATE);
+        prompt.setText(questionText);
+        prompt.setTopic("private");
+        prompt.setTags(List.of("agent", "matchmaking_followup"));
+        return prompt;
     }
 
     private static long currentSpawnSlotStart(long epochMillis) {
@@ -836,6 +1000,273 @@ public class CalypsoApiManager {
         });
     }
 
+    private CompletableFuture<Map<String, Object>> readMatchmakingFollowupSchedulerState(long accountId) {
+        return getMatchmakingFollowupSchedulerState.invokeAsync(accountId, accountId)
+                .thenApply(state -> state == null ? new HashMap<>() : new HashMap<>(state));
+    }
+
+    private CompletableFuture<ActivePrivatePrompt> hydrateMatchmakingFollowup(PrivatePromptAssignment assignment) {
+        if (assignment == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+        Map<String, String> fields = parseMatchmakingFollowupPromptFields(assignment.getPromptId());
+        String questionText = buildMatchmakingFollowupQuestion(fields.get("token"));
+        return getMatchmakingFollowupAnswerByInstanceId.invokeAsync(assignment.getInstanceId()).thenApply(answer -> {
+            ActivePrivatePrompt out = new ActivePrivatePrompt();
+            PrivatePromptAssignment sanitizedAssignment = new PrivatePromptAssignment(assignment);
+            sanitizedAssignment.setPromptId(MATCHMAKING_FOLLOWUP_PROMPT_ID);
+            out.setAssignment(sanitizedAssignment);
+            out.setPrompt(matchmakingFollowupPromptDefinition(questionText));
+            if (answer != null) {
+                PrivatePromptAnswer sanitizedAnswer = new PrivatePromptAnswer(answer);
+                sanitizedAnswer.setPromptId(MATCHMAKING_FOLLOWUP_PROMPT_ID);
+                out.setAnswer(sanitizedAnswer);
+            }
+            return out;
+        });
+    }
+
+    private CompletableFuture<PrivatePromptAssignment> requireMutableMatchmakingFollowupAssignment(long accountId,
+            String instanceId) {
+        String normalizedInstanceId = asTrimmedString(instanceId);
+        if (normalizedInstanceId == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("instanceId required."));
+        }
+        return getMatchmakingFollowupAssignmentByInstanceId.invokeAsync(normalizedInstanceId).thenCompose(assignment -> {
+            if (assignment == null) {
+                return CompletableFuture.failedFuture(
+                        new IllegalArgumentException("Unknown matchmaking followup instance."));
+            }
+            if (assignment.getAccountId() != accountId) {
+                return CompletableFuture.failedFuture(new SecurityException("Forbidden"));
+            }
+            if (!isMatchmakingFollowupPrompt(assignment.getPromptId())) {
+                return CompletableFuture
+                        .failedFuture(new IllegalArgumentException("Unknown matchmaking followup prompt."));
+            }
+            if (!isMutablePrivatePromptStatus(assignment.getStatus())) {
+                return CompletableFuture.failedFuture(new IllegalStateException("Matchmaking followup is not active."));
+            }
+            return CompletableFuture.completedFuture(assignment);
+        });
+    }
+
+    private CompletableFuture<ActivePrivatePrompt> scheduleNextMatchmakingFollowup(long accountId,
+            Map<String, Object> state,
+            long now,
+            boolean ignoreCooldown) {
+        Long lastScheduledAt = asLong(state == null ? null : state.get("lastScheduledAt"));
+        if (!ignoreCooldown && lastScheduledAt != null
+                && (now - lastScheduledAt.longValue()) < MATCHMAKING_FOLLOWUP_COOLDOWN_MS) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return getMatchmakingFollowupCandidatesForTarget
+                .invokeAsync(accountId, MATCHMAKING_FOLLOWUP_DEFAULT_LIMIT)
+                .thenCompose(candidates -> {
+                    if (candidates == null || candidates.isEmpty()) {
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    Map<String, Object> picked = null;
+                    for (Map<String, Object> cand : candidates) {
+                        if (cand == null || cand.isEmpty()) {
+                            continue;
+                        }
+                        long viewerId = parseLong(asTrimmedString(cand.get("viewerId")), -1L);
+                        String missingToken = asTrimmedString(cand.get("missingToken"));
+                        if (viewerId >= 0L && viewerId != accountId && missingToken != null) {
+                            picked = cand;
+                            break;
+                        }
+                    }
+                    if (picked == null) {
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    long viewerId = parseLong(asTrimmedString(picked.get("viewerId")), -1L);
+                    String missingToken = asTrimmedString(picked.get("missingToken"));
+                    double pairScore = parseDouble(asTrimmedString(picked.get("pairScore")), 0.0);
+                    double uncertainty = parseDouble(asTrimmedString(picked.get("uncertainty")), 1.0);
+                    String encodedPromptId = encodeMatchmakingFollowupPromptId(viewerId, missingToken, pairScore,
+                            uncertainty);
+
+                    PrivatePromptAssignment assignment = new PrivatePromptAssignment();
+                    assignment.setInstanceId(UUID.randomUUID().toString());
+                    assignment.setAccountId(accountId);
+                    assignment.setPromptId(encodedPromptId);
+                    assignment.setScheduledAt(now);
+                    assignment.setSurfacedAt(now);
+                    assignment.setStatus(PrivatePromptStatus.ACTIVE);
+
+                    return matchmakingFollowupAssignmentDepot.appendAsync(assignment)
+                            .thenCompose(v -> hydrateMatchmakingFollowup(assignment));
+                });
+    }
+
+    private CompletableFuture<ActivePrivatePrompt> ensureActiveMatchmakingFollowupInternal(long accountId) {
+        long now = System.currentTimeMillis();
+        return readMatchmakingFollowupSchedulerState(accountId).thenCompose(state -> {
+            String activeInstanceId = asTrimmedString(state.get("activeInstanceId"));
+            if (activeInstanceId != null) {
+                return getMatchmakingFollowupAssignmentByInstanceId.invokeAsync(activeInstanceId).thenCompose(assignment -> {
+                    if (assignment == null || assignment.getAccountId() != accountId
+                            || !isMatchmakingFollowupPrompt(assignment.getPromptId())) {
+                        return scheduleNextMatchmakingFollowup(accountId, state, now, false);
+                    }
+                    PrivatePromptStatus status = assignment.getStatus();
+                    if (status == PrivatePromptStatus.ACTIVE) {
+                        return hydrateMatchmakingFollowup(assignment);
+                    }
+                    if (status == PrivatePromptStatus.SNOOZED) {
+                        long snoozeUntil = assignment.isSetSnoozeUntil() ? assignment.getSnoozeUntil() : 0L;
+                        if (snoozeUntil > now) {
+                            return CompletableFuture.completedFuture(null);
+                        }
+                        PrivatePromptAssignment resumed = new PrivatePromptAssignment(assignment);
+                        resumed.setStatus(PrivatePromptStatus.ACTIVE);
+                        resumed.setSurfacedAt(now);
+                        if (resumed.isSetSnoozeUntil()) {
+                            resumed.unsetSnoozeUntil();
+                        }
+                        return matchmakingFollowupAssignmentDepot.appendAsync(resumed)
+                                .thenCompose(v -> hydrateMatchmakingFollowup(resumed));
+                    }
+                    return scheduleNextMatchmakingFollowup(accountId, state, now, false);
+                });
+            }
+            return scheduleNextMatchmakingFollowup(accountId, state, now, false);
+        });
+    }
+
+    public CompletableFuture<ActivePrivatePrompt> getActiveMatchmakingFollowup(long accountId) {
+        return serializeMatchmakingFollowupOp(accountId, () -> ensureActiveMatchmakingFollowupInternal(accountId));
+    }
+
+    public CompletableFuture<GetPrivatePromptChatTurn> postMatchmakingFollowupChatTurn(
+            long accountId,
+            String instanceId,
+            String questionPart,
+            String userMessage,
+            List<String> conversationLines) {
+        String normalizedQuestionPart = clampPromptText(questionPart, 320);
+        String normalizedUserMessage = clampPromptText(userMessage, 800);
+        if (normalizedUserMessage == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Message text required."));
+        }
+        List<String> normalizedConversation = clampConversationLines(conversationLines, 24, 320);
+        return serializeMatchmakingFollowupOp(accountId, () -> requireMutableMatchmakingFollowupAssignment(accountId,
+                instanceId).thenCompose(current -> {
+                    Map<String, String> fields = parseMatchmakingFollowupPromptFields(current.getPromptId());
+                    String baseQuestion = buildMatchmakingFollowupQuestion(fields.get("token"));
+                    String effectivePart = normalizedQuestionPart == null ? baseQuestion : normalizedQuestionPart;
+                    PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
+                            baseQuestion,
+                            effectivePart,
+                            normalizedConversation,
+                            normalizedUserMessage);
+                    return CompletableFuture.supplyAsync(() -> PrivatePromptTurnResponder.generate(openAI, input))
+                            .thenApply(result -> new GetPrivatePromptChatTurn(
+                                    result == null ? null : result.agentMessage,
+                                    result != null && result.needsMoreDetail));
+                }));
+    }
+
+    public CompletableFuture<ActivePrivatePrompt> postMatchmakingFollowupAnswer(long accountId, String instanceId,
+            String body, List<String> conversationLines) {
+        List<String> normalizedConversation = clampConversationLines(conversationLines, 40, 320);
+        String bodyCandidate = clampPrivatePromptBody(body);
+        if (bodyCandidate == null) {
+            bodyCandidate = bodyFromConversation(normalizedConversation);
+        }
+        if (bodyCandidate == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Answer body required."));
+        }
+        final String normalizedBody = bodyCandidate;
+        return serializeMatchmakingFollowupOp(accountId, () -> requireMutableMatchmakingFollowupAssignment(accountId,
+                instanceId).thenCompose(current -> {
+                    long now = System.currentTimeMillis();
+                    Map<String, String> fields = parseMatchmakingFollowupPromptFields(current.getPromptId());
+                    long viewerId = parseLong(fields.get("viewer"), -1L);
+                    String question = buildMatchmakingFollowupQuestion(fields.get("token"));
+
+                    PrivatePromptAnswer answer = new PrivatePromptAnswer();
+                    answer.setInstanceId(current.getInstanceId());
+                    answer.setAccountId(accountId);
+                    answer.setPromptId(MATCHMAKING_FOLLOWUP_PROMPT_ID);
+                    answer.setBody(normalizedBody);
+                    answer.setAnsweredAt(now);
+
+                    CompletableFuture<List<String>> signalTokensFuture = extractAndAppendSignalsFromPrompt(
+                            accountId,
+                            question,
+                            normalizedBody,
+                            normalizedConversation,
+                            "matchmaking_followup",
+                            current.getInstanceId()).exceptionally(ex -> {
+                                LOG.warn("Signal extraction failed for matchmaking followup {}", current.getInstanceId(),
+                                        ex);
+                                return List.of();
+                            });
+
+                    return signalTokensFuture.thenCompose(tokens -> {
+                        if (tokens != null && !tokens.isEmpty()) {
+                            answer.setSignalTokens(tokens);
+                        }
+                        PrivatePromptAssignment updated = new PrivatePromptAssignment(current);
+                        updated.setStatus(PrivatePromptStatus.ANSWERED);
+                        updated.setCompletedAt(now);
+                        if (updated.isSetSnoozeUntil()) {
+                            updated.unsetSnoozeUntil();
+                        }
+                        return matchmakingFollowupAnswerDepot.appendAsync(answer)
+                                .thenCompose(v -> matchmakingFollowupAssignmentDepot.appendAsync(updated))
+                                .thenCompose(v -> {
+                                    CompletableFuture<Void> refillSelf = requestRefill(accountId, 120)
+                                            .exceptionally(ex -> null);
+                                    CompletableFuture<Void> refillViewer = viewerId < 0L
+                                            ? CompletableFuture.completedFuture(null)
+                                            : requestRefill(viewerId, 120).exceptionally(ex -> null);
+                                    return CompletableFuture.allOf(refillSelf, refillViewer)
+                                            .thenCompose(ignored -> hydrateMatchmakingFollowup(updated));
+                                });
+                    });
+                }));
+    }
+
+    public CompletableFuture<ActivePrivatePrompt> postMatchmakingFollowupAnswer(long accountId, String instanceId,
+            String body) {
+        return postMatchmakingFollowupAnswer(accountId, instanceId, body, List.of());
+    }
+
+    public CompletableFuture<Boolean> postMatchmakingFollowupSkip(long accountId, String instanceId) {
+        return serializeMatchmakingFollowupOp(accountId, () -> requireMutableMatchmakingFollowupAssignment(accountId,
+                instanceId).thenCompose(current -> {
+                    PrivatePromptAssignment updated = new PrivatePromptAssignment(current);
+                    updated.setStatus(PrivatePromptStatus.SKIPPED);
+                    updated.setCompletedAt(System.currentTimeMillis());
+                    if (updated.isSetSnoozeUntil()) {
+                        updated.unsetSnoozeUntil();
+                    }
+                    return matchmakingFollowupAssignmentDepot.appendAsync(updated).thenApply(v -> true);
+                }));
+    }
+
+    public CompletableFuture<Boolean> postMatchmakingFollowupSnooze(long accountId, String instanceId,
+            Long snoozeUntilMaybe) {
+        return serializeMatchmakingFollowupOp(accountId, () -> requireMutableMatchmakingFollowupAssignment(accountId,
+                instanceId).thenCompose(current -> {
+                    long now = System.currentTimeMillis();
+                    long snoozeUntil = (snoozeUntilMaybe != null && snoozeUntilMaybe.longValue() > now)
+                            ? snoozeUntilMaybe.longValue()
+                            : now + PRIVATE_PROMPT_DEFAULT_SNOOZE_MS;
+                    PrivatePromptAssignment updated = new PrivatePromptAssignment(current);
+                    updated.setStatus(PrivatePromptStatus.SNOOZED);
+                    updated.setSnoozeUntil(snoozeUntil);
+                    if (!updated.isSetSurfacedAt()) {
+                        updated.setSurfacedAt(now);
+                    }
+                    return matchmakingFollowupAssignmentDepot.appendAsync(updated).thenApply(v -> true);
+                }));
+    }
+
     /** Read current signals for the owner (treat null as empty list). */
     private CompletableFuture<List<SignalRecord>> readCurrentSignalRecords(long accountId) {
         return getSignals(accountId, accountId).thenApply(s -> {
@@ -1040,6 +1471,11 @@ public class CalypsoApiManager {
 
     public CompletableFuture<List<PublicPromptFeedCard>> getPublicPromptFeed(long accountId, int limit) {
         int clamped = Math.max(1, Math.min(50, limit));
+        int refillTarget = Math.max(80, clamped * 4);
+        requestRefill(accountId, refillTarget).exceptionally(ex -> {
+            LOG.warn("Failed to enqueue feed refill for account {} (target size {})", accountId, refillTarget, ex);
+            return null;
+        });
         return getPublicPromptFeed.invokeAsync(accountId, clamped).thenApply(answers -> {
             if (answers == null || answers.isEmpty())
                 return List.of();
@@ -1084,12 +1520,54 @@ public class CalypsoApiManager {
             if (reaction == PromptReaction.LIKE || reaction == PromptReaction.DISLIKE) {
                 String promptText = PromptLibrary.publicTextById(answer.getPromptId());
                 if (promptText != null) {
-                    return persist.thenCompose(v -> extractAndAppendSignalsFromPrompt(viewerId, promptText,
-                            answer.getBody(), "public_prompt_reaction", answerId))
-                            .thenApply(tokens -> true);
+                    persist.thenCompose(v -> extractAndAppendSignalsFromPrompt(
+                            viewerId,
+                            promptText,
+                            answer.getBody(),
+                            "public_prompt_reaction",
+                            answerId)).exceptionally(ex -> {
+                                LOG.warn("Signal extraction failed for public prompt reaction viewer={} answer={}",
+                                        viewerId, answerId, ex);
+                                return List.of();
+                            });
                 }
             }
             return persist.thenApply(v -> true);
+        });
+    }
+
+    public CompletableFuture<Boolean> postFacecardReaction(long viewerId, long targetAccountId,
+            PromptReaction reaction) {
+        if (reaction == null) {
+            throw new IllegalArgumentException("Reaction required.");
+        }
+        if (targetAccountId < 0L) {
+            throw new IllegalArgumentException("Target account required.");
+        }
+        if (viewerId == targetAccountId) {
+            throw new IllegalArgumentException("Cannot react to your own facecard.");
+        }
+
+        return getAccountWithId(viewerId, targetAccountId).thenCompose(target -> {
+            if (target == null || target.account == null) {
+                throw new IllegalArgumentException("Unknown facecard target: " + targetAccountId);
+            }
+
+            PublicPromptReactionEvent event = new PublicPromptReactionEvent();
+            event.setViewerAccountId(viewerId);
+            event.setAnswerId(encodeFacecardReactionAnswerId(targetAccountId));
+            event.setPromptId("facecard");
+            event.setReaction(reaction);
+            event.setReactedAt(System.currentTimeMillis());
+
+            int refillTarget = 120;
+            return publicPromptReactionDepot.appendAsync(event)
+                    .thenCompose(res -> requestRefill(viewerId, refillTarget)
+                            .exceptionally(ex -> {
+                                LOG.warn("Facecard reaction recorded but refill failed for viewer {}", viewerId, ex);
+                                return null;
+                            }))
+                    .thenApply(ignored -> true);
         });
     }
 
@@ -1289,58 +1767,425 @@ public class CalypsoApiManager {
         return matchRefillDepot.appendAsync(req).thenApply(x -> null);
     }
 
-    public CompletableFuture<List<GetMatch>> getMatches(long requesterId, long viewerId, int limit) {
+    private static int clampMatchLimit(int limit) {
         if (limit <= 0)
-            limit = 20;
-        if (limit > 100)
-            limit = 100;
+            return 20;
+        return Math.min(100, limit);
+    }
 
-        // 1) opportunistic refill (non-blocking)
-        int refillTarget = Math.max(60, limit * 2);
+    private static double modeAwareMatchThreshold(String mode) {
+        if ("focused".equalsIgnoreCase(mode))
+            return MATCH_MIN_FOCUSED;
+        if ("exploratory".equalsIgnoreCase(mode))
+            return MATCH_MIN_EXPLORATORY;
+        return MATCH_MIN_BALANCED;
+    }
+
+    private static double modeAwareAutoPassThreshold(String mode) {
+        if ("focused".equalsIgnoreCase(mode))
+            return MATCH_AUTOPASS_FOCUSED;
+        if ("exploratory".equalsIgnoreCase(mode))
+            return MATCH_AUTOPASS_EXPLORATORY;
+        return MATCH_AUTOPASS_BALANCED;
+    }
+
+    private static Double scoreFromHeap(Object rawHeap, long targetAccountId) {
+        if (!(rawHeap instanceof List<?> heap))
+            return null;
+        for (Object entry : heap) {
+            if (!(entry instanceof MatchCandidate))
+                continue;
+            MatchCandidate candidate = (MatchCandidate) entry;
+            if (candidate.getTargetAccountId() == targetAccountId) {
+                return candidate.getStage0Score();
+            }
+        }
+        return null;
+    }
+
+    private static List<MatchCandidate> normalizeHeap(Object rawHeap, int limit) {
+        if (!(rawHeap instanceof List<?> heap) || heap.isEmpty()) {
+            return List.of();
+        }
+        List<MatchCandidate> out = new ArrayList<>();
+        for (Object entry : heap) {
+            if (!(entry instanceof MatchCandidate)) {
+                continue;
+            }
+            out.add((MatchCandidate) entry);
+            if (out.size() >= limit) {
+                break;
+            }
+        }
+        return out;
+    }
+
+    private static boolean isPromptLikeSeen(Object raw) {
+        if (raw instanceof Boolean)
+            return ((Boolean) raw).booleanValue();
+        if (raw instanceof Number)
+            return ((Number) raw).intValue() != 0;
+        return false;
+    }
+
+    private static boolean isLikeReaction(Object raw) {
+        if (!(raw instanceof Number))
+            return false;
+        return ((Number) raw).intValue() == PromptReaction.LIKE.getValue();
+    }
+
+    private static List<String> likedAnswerIds(Object rawByAnswer) {
+        if (!(rawByAnswer instanceof Map<?, ?> map) || map.isEmpty()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (!(entry.getKey() instanceof String answerId) || answerId.isBlank()) {
+                continue;
+            }
+            if (!(entry.getValue() instanceof Number reactionValue)) {
+                continue;
+            }
+            if (reactionValue.intValue() == PromptReaction.LIKE.getValue()) {
+                out.add(answerId);
+            }
+        }
+        return out;
+    }
+
+    private static boolean isActiveFollowupPendingForPair(PrivatePromptAssignment assignment, long accountId,
+            long otherAccountId) {
+        if (assignment == null || assignment.getAccountId() != accountId) {
+            return false;
+        }
+        PrivatePromptStatus status = assignment.getStatus();
+        if (status != PrivatePromptStatus.ACTIVE && status != PrivatePromptStatus.SNOOZED) {
+            return false;
+        }
+        if (!isMatchmakingFollowupPrompt(assignment.getPromptId())) {
+            return false;
+        }
+        Map<String, String> fields = parseMatchmakingFollowupPromptFields(assignment.getPromptId());
+        long viewerId = parseLong(fields.get("viewer"), -1L);
+        return viewerId == otherAccountId;
+    }
+
+    private static long parseTargetAccountId(GetMatch match) {
+        if (match == null || match.account == null || match.account.id == null) {
+            return -1L;
+        }
+        try {
+            return CalypsoHelpers.parseAccountId(match.account.id);
+        } catch (RuntimeException ignored) {
+            return -1L;
+        }
+    }
+
+    private CompletableFuture<List<GetMatch>> loadRankedCandidates(long requesterId, long viewerId, int limit,
+            boolean recordExposure) {
+        CompletableFuture<List<MatchCandidate>> readCandidates = getMatchesFromAccountId
+                .invokeAsync(requesterId, viewerId, limit)
+                .completeOnTimeout(List.of(), 5, TimeUnit.SECONDS)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to read ranked candidates for account {}", viewerId, ex);
+                    return List.of();
+                });
+
+        return readCandidates.thenCompose(cands -> {
+            List<MatchCandidate> safeCandidates = cands == null ? List.of() : cands;
+            List<Long> ids = new ArrayList<>();
+            for (MatchCandidate c : safeCandidates) {
+                if (c == null)
+                    continue;
+                ids.add(c.getTargetAccountId());
+            }
+
+            if (ids.isEmpty()) {
+                return CompletableFuture.completedFuture(List.of());
+            }
+
+            return getAccountsFromAccountIds.invokeAsync(viewerId, ids).thenCompose(accounts -> {
+                List<AccountWithId> safeAccounts = accounts == null ? List.of() : accounts;
+                List<GetMatch> out = new ArrayList<>(safeCandidates.size());
+                List<Long> servedIds = new ArrayList<>(safeCandidates.size());
+                Map<Long, MatchCandidate> byId = new HashMap<>();
+                for (MatchCandidate c : safeCandidates) {
+                    if (c == null)
+                        continue;
+                    byId.put(c.getTargetAccountId(), c);
+                }
+
+                for (AccountWithId aw : safeAccounts) {
+                    if (aw == null || aw.account == null)
+                        continue;
+                    MatchCandidate c = byId.get(aw.accountId);
+                    if (c == null)
+                        continue;
+                    out.add(new GetMatch(new GetAccount(aw), c.getStage0Score(), c.getComputedAt()));
+                    servedIds.add(aw.accountId);
+                }
+
+                if (!recordExposure || servedIds.isEmpty()) {
+                    return CompletableFuture.completedFuture(out);
+                }
+                ServedPairs sp = new ServedPairs();
+                sp.setAccountId(viewerId);
+                sp.setTargetIds(servedIds);
+                sp.setServedAt(System.currentTimeMillis());
+                return matchesServeDepot.appendAsync(sp).thenApply(x -> out);
+            });
+        });
+    }
+
+    private CompletableFuture<List<GetMatch>> loadRawRankedCandidates(long viewerId, int limit) {
+        return accountIdToCandidateHeap.selectOneAsync(Path.key(viewerId))
+                .completeOnTimeout(null, 5, TimeUnit.SECONDS)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to read raw candidate heap for account {}", viewerId, ex);
+                    return null;
+                })
+                .thenCompose(rawHeap -> {
+                    List<MatchCandidate> top = normalizeHeap(rawHeap, limit);
+                    if (top.isEmpty()) {
+                        return CompletableFuture.completedFuture(List.<GetMatch>of());
+                    }
+                    List<Long> ids = new ArrayList<>(top.size());
+                    for (MatchCandidate candidate : top) {
+                        if (candidate == null) {
+                            continue;
+                        }
+                        ids.add(candidate.getTargetAccountId());
+                    }
+                    if (ids.isEmpty()) {
+                        return CompletableFuture.completedFuture(List.<GetMatch>of());
+                    }
+                    return getAccountsFromAccountIds.invokeAsync(viewerId, ids).thenApply(accounts -> {
+                        List<AccountWithId> safeAccounts = accounts == null ? List.of() : accounts;
+                        Map<Long, MatchCandidate> byId = new HashMap<>();
+                        for (MatchCandidate candidate : top) {
+                            if (candidate == null) {
+                                continue;
+                            }
+                            byId.put(candidate.getTargetAccountId(), candidate);
+                        }
+                        List<GetMatch> out = new ArrayList<>(safeAccounts.size());
+                        for (AccountWithId accountWithId : safeAccounts) {
+                            if (accountWithId == null || accountWithId.account == null) {
+                                continue;
+                            }
+                            MatchCandidate candidate = byId.get(accountWithId.accountId);
+                            if (candidate == null) {
+                                continue;
+                            }
+                            out.add(new GetMatch(new GetAccount(accountWithId), candidate.getStage0Score(),
+                                    candidate.getComputedAt()));
+                        }
+                        return out;
+                    });
+                });
+    }
+
+    private CompletableFuture<Boolean> hasPromptLikeThroughAnswerHistory(long viewerId, long targetId) {
+        return viewerIdToReactionByAnswerId.selectOneAsync(Path.key(viewerId))
+                .completeOnTimeout(null, 2, TimeUnit.SECONDS)
+                .exceptionally(ex -> null)
+                .thenCompose(rawByAnswer -> {
+                    List<String> answerIds = likedAnswerIds(rawByAnswer);
+                    if (answerIds.isEmpty()) {
+                        return CompletableFuture.completedFuture(false);
+                    }
+                    List<CompletableFuture<Boolean>> checks = new ArrayList<>(answerIds.size());
+                    for (String answerId : answerIds) {
+                        CompletableFuture<Boolean> check = answerIdToPublicPromptAnswer.selectOneAsync(Path.key(answerId))
+                                .thenApply(rawAnswer -> {
+                                    if (!(rawAnswer instanceof PublicPromptAnswer answer)) {
+                                        return false;
+                                    }
+                                    return answer.getAccountId() == targetId;
+                                })
+                                .completeOnTimeout(false, 1, TimeUnit.SECONDS)
+                                .exceptionally(ex -> false);
+                        checks.add(check);
+                    }
+                    CompletableFuture<Void> all = CompletableFuture.allOf(checks.toArray(new CompletableFuture[0]));
+                    return all.thenApply(v -> {
+                        for (CompletableFuture<Boolean> check : checks) {
+                            if (Boolean.TRUE.equals(check.join())) {
+                                return true;
+                            }
+                        }
+                        return false;
+                    });
+                })
+                .completeOnTimeout(false, 4, TimeUnit.SECONDS)
+                .exceptionally(ex -> false);
+    }
+
+    private CompletableFuture<Boolean> resolvePromptLikeEvidence(long viewerId, long targetId) {
+        return viewerIdToTargetIdToPromptLikeSeen.selectOneAsync(Path.key(viewerId, targetId))
+                .completeOnTimeout(false, 2, TimeUnit.SECONDS)
+                .exceptionally(ex -> false)
+                .thenCompose(raw -> {
+                    if (isPromptLikeSeen(raw)) {
+                        return CompletableFuture.completedFuture(true);
+                    }
+                    return hasPromptLikeThroughAnswerHistory(viewerId, targetId);
+                })
+                .completeOnTimeout(false, 5, TimeUnit.SECONDS)
+                .exceptionally(ex -> false);
+    }
+
+    private CompletableFuture<GetMatch> evaluateMutualMatch(long viewerId, String viewerMode, GetMatch ranked) {
+        long targetId = parseTargetAccountId(ranked);
+        if (targetId < 0L || targetId == viewerId) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        CompletableFuture<Double> targetToViewerScoreFuture = accountIdToCandidateHeap
+                .selectOneAsync(Path.key(targetId))
+                .thenApply(raw -> scoreFromHeap(raw, viewerId))
+                .completeOnTimeout(null, 2, TimeUnit.SECONDS)
+                .exceptionally(ex -> null);
+
+        CompletableFuture<Filters> targetFiltersFuture = getFiltersFromAccountId
+                .invokeAsync(viewerId, targetId)
+                .completeOnTimeout(null, 2, TimeUnit.SECONDS)
+                .exceptionally(ex -> null);
+
+        CompletableFuture<Boolean> viewerLikedTargetFacecardFuture = viewerIdToTargetIdToFacecardReaction
+                .selectOneAsync(Path.key(viewerId, targetId))
+                .thenApply(CalypsoApiManager::isLikeReaction)
+                .completeOnTimeout(false, 2, TimeUnit.SECONDS)
+                .exceptionally(ex -> false);
+
+        CompletableFuture<Boolean> targetLikedViewerFacecardFuture = viewerIdToTargetIdToFacecardReaction
+                .selectOneAsync(Path.key(targetId, viewerId))
+                .thenApply(CalypsoApiManager::isLikeReaction)
+                .completeOnTimeout(false, 2, TimeUnit.SECONDS)
+                .exceptionally(ex -> false);
+
+        CompletableFuture<Boolean> viewerPromptLikeSeenFuture = resolvePromptLikeEvidence(viewerId, targetId);
+        CompletableFuture<Boolean> targetPromptLikeSeenFuture = resolvePromptLikeEvidence(targetId, viewerId);
+
+        CompletableFuture<Boolean> viewerToTargetFollowupFuture = getActiveMatchmakingFollowupAssignment
+                .invokeAsync(viewerId, targetId)
+                .thenApply(assignment -> isActiveFollowupPendingForPair(assignment, targetId, viewerId))
+                .completeOnTimeout(false, 2, TimeUnit.SECONDS)
+                .exceptionally(ex -> false);
+
+        CompletableFuture<Boolean> targetToViewerFollowupFuture = getActiveMatchmakingFollowupAssignment
+                .invokeAsync(viewerId, viewerId)
+                .thenApply(assignment -> isActiveFollowupPendingForPair(assignment, viewerId, targetId))
+                .completeOnTimeout(false, 2, TimeUnit.SECONDS)
+                .exceptionally(ex -> false);
+
+        CompletableFuture<Void> all = CompletableFuture.allOf(
+                targetToViewerScoreFuture,
+                targetFiltersFuture,
+                viewerLikedTargetFacecardFuture,
+                targetLikedViewerFacecardFuture,
+                viewerPromptLikeSeenFuture,
+                targetPromptLikeSeenFuture,
+                viewerToTargetFollowupFuture,
+                targetToViewerFollowupFuture);
+
+        return all.thenApply(v -> {
+            Double targetToViewerScore = targetToViewerScoreFuture.join();
+            if (targetToViewerScore == null) {
+                return null;
+            }
+            double viewerToTargetScore = ranked.score;
+            Filters targetFilters = targetFiltersFuture.join();
+            String targetMode = CalypsoHelpers.getModeSelfOrNull(targetFilters);
+
+            if (viewerToTargetScore < modeAwareMatchThreshold(viewerMode)
+                    || targetToViewerScore.doubleValue() < modeAwareMatchThreshold(targetMode)) {
+                return null;
+            }
+
+            boolean viewerLikedTargetFacecard = viewerLikedTargetFacecardFuture.join();
+            boolean targetLikedViewerFacecard = targetLikedViewerFacecardFuture.join();
+            if (!viewerLikedTargetFacecard || !targetLikedViewerFacecard) {
+                return null;
+            }
+
+            boolean viewerPromptLikeSeen = viewerPromptLikeSeenFuture.join();
+            boolean targetPromptLikeSeen = targetPromptLikeSeenFuture.join();
+            if (!viewerPromptLikeSeen || !targetPromptLikeSeen) {
+                return null;
+            }
+
+            boolean followupPending = viewerToTargetFollowupFuture.join() || targetToViewerFollowupFuture.join();
+            if (followupPending
+                    && (viewerToTargetScore < modeAwareAutoPassThreshold(viewerMode)
+                            || targetToViewerScore.doubleValue() < modeAwareAutoPassThreshold(targetMode))) {
+                return null;
+            }
+
+            double mutualScore = Math.min(viewerToTargetScore, targetToViewerScore.doubleValue());
+            return new GetMatch(ranked.account, mutualScore, ranked.computedAt);
+        }).exceptionally(ex -> {
+            LOG.warn("Failed to evaluate mutual match {} -> {}", viewerId, targetId, ex);
+            return null;
+        });
+    }
+
+    public CompletableFuture<List<GetMatch>> getMatches(long requesterId, long viewerId, int limit) {
+        int clamped = clampMatchLimit(limit);
+        int refillTarget = Math.max(80, clamped * 3);
+        requestRefill(viewerId, refillTarget).exceptionally(ex -> {
+            LOG.warn("Failed to enqueue match refill for account {} (target size {})", viewerId, refillTarget, ex);
+            return null;
+        });
+
+        CompletableFuture<Filters> viewerFiltersFuture = getFiltersFromAccountId
+                .invokeAsync(requesterId, viewerId)
+                .completeOnTimeout(null, 3, TimeUnit.SECONDS)
+                .exceptionally(ex -> null);
+
+        return loadRawRankedCandidates(viewerId, clamped)
+                .thenCompose(ranked -> viewerFiltersFuture.thenCompose(viewerFilters -> {
+                    String viewerMode = CalypsoHelpers.getModeSelfOrNull(viewerFilters);
+                    if (ranked == null || ranked.isEmpty()) {
+                        return CompletableFuture.completedFuture(List.<GetMatch>of());
+                    }
+                    List<CompletableFuture<GetMatch>> futures = new ArrayList<>(ranked.size());
+                    for (GetMatch candidate : ranked) {
+                        futures.add(evaluateMutualMatch(viewerId, viewerMode, candidate));
+                    }
+                    CompletableFuture<Void> all = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+                    return all.thenApply(v -> {
+                        List<GetMatch> out = new ArrayList<>();
+                        for (CompletableFuture<GetMatch> future : futures) {
+                            GetMatch match = future.join();
+                            if (match != null) {
+                                out.add(match);
+                            }
+                        }
+                        return out;
+                    });
+                }))
+                .completeOnTimeout(List.<GetMatch>of(), 10, TimeUnit.SECONDS)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to load mutual matches for account {}", viewerId, ex);
+                    return List.<GetMatch>of();
+                });
+    }
+
+    public CompletableFuture<List<GetMatch>> getFacecards(long requesterId, long viewerId, int limit) {
+        int clamped = clampMatchLimit(limit);
+        int refillTarget = Math.max(120, clamped * 6);
         requestRefill(viewerId, refillTarget)
                 .exceptionally(ex -> {
-                    LOG.warn("Failed to enqueue match refill for account {} (target size {})", viewerId, refillTarget,
+                    LOG.warn("Failed to enqueue facecard refill for account {} (target size {})", viewerId, refillTarget,
                             ex);
                     return null;
                 });
-
-        // 2) read top candidates (query is read-only & already filters
-        // exposure/exclusions)
-        return getMatchesFromAccountId.invokeAsync(requesterId, viewerId, limit)
-                .thenCompose(cands -> {
-                    // Collect target ids in order
-                    List<Long> ids = new ArrayList<>();
-                    for (MatchCandidate c : cands)
-                        ids.add(c.getTargetAccountId());
-
-                    // 3) fetch account cards in the same order
-                    return getAccountsFromAccountIds.invokeAsync(viewerId, ids)
-                            .thenCompose(accounts -> {
-                                // Build DTOs aligned with cands
-                                List<GetMatch> out = new ArrayList<>(cands.size());
-                                Map<Long, MatchCandidate> byId = new HashMap<>();
-                                for (MatchCandidate c : cands)
-                                    byId.put(c.getTargetAccountId(), c);
-
-                                for (AccountWithId aw : accounts) {
-                                    MatchCandidate c = byId.get(aw.accountId);
-                                    if (c == null)
-                                        continue; // safety
-                                    GetAccount ga = new GetAccount(aw);
-                                    out.add(new GetMatch(ga, c.getStage0Score(), c.getComputedAt()));
-                                }
-
-                                // 4) log exposure (so refills/query skip these soon)
-                                if (!ids.isEmpty()) {
-                                    ServedPairs sp = new ServedPairs();
-                                    sp.setAccountId(viewerId);
-                                    sp.setTargetIds(ids);
-                                    sp.setServedAt(System.currentTimeMillis());
-                                    return matchesServeDepot.appendAsync(sp).thenApply(x -> out);
-                                } else {
-                                    return CompletableFuture.completedFuture(out);
-                                }
-                            });
+        return loadRankedCandidates(requesterId, viewerId, clamped, true)
+                .completeOnTimeout(List.<GetMatch>of(), 8, TimeUnit.SECONDS)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to load facecards for account {}", viewerId, ex);
+                    return List.<GetMatch>of();
                 });
     }
 

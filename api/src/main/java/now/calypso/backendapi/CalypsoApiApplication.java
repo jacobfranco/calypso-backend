@@ -1,9 +1,21 @@
 package now.calypso.backendapi;
 
 import now.calypso.backend.*;
-import now.calypso.backend.data.Account;
+import now.calypso.backend.data.Importance;
+import now.calypso.backend.data.LocationFilter;
+import now.calypso.backend.data.LocationScope;
+import now.calypso.backend.data.ManyToManyFilter;
+import now.calypso.backend.data.ModeFilter;
+import now.calypso.backend.data.OneToManyFilter;
+import now.calypso.backend.data.PromptReaction;
+import now.calypso.backend.data.PublicPromptAnswer;
+import now.calypso.backend.data.RangeFilter;
+import now.calypso.backend.data.TagPreference;
 import now.calypso.backend.modules.*;
 import now.calypso.backend.serialization.CalypsoSerialization;
+import now.calypso.backendapi.llm.OpenAIJson;
+import now.calypso.backendapi.pojos.PostAccount;
+import now.calypso.backendapi.pojos.PostFilters;
 
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
@@ -16,12 +28,68 @@ import java.io.IOException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
 public class CalypsoApiApplication {
+    private static final List<String> SEED_PROMPT_IDS = List.of(
+            "prompt.talk.hours",
+            "prompt.ideal.sunday",
+            "prompt.life.goal");
+
+    private static final String[] SEED_NAMES = {
+            "Avery", "Blake", "Casey", "Devon", "Emery", "Finley"
+    };
+
+    private static final String[] SEED_PHONES = {
+            "+11111111111", "+11111111112", "+11111111113",
+            "+11111111114", "+11111111115", "+11111111116"
+    };
+
+    private static final String[] SEED_HOBBY_TOPICS = {
+            "film photography", "lifting and mobility", "indie game design", "food science",
+            "street fashion", "startup product ideas", "live music sets", "coffee techniques",
+            "travel hacking", "distance running", "language learning", "documentary breakdowns"
+    };
+
+    private static final String[] SEED_SUNDAY_STYLES = {
+            "a long walk and a good cappuccino",
+            "a lifting session followed by farmers market food",
+            "gaming co-op with homemade dinner",
+            "museum hop and a slow brunch",
+            "sunrise run and a podcast queue",
+            "reading in a park and cooking dinner at home"
+    };
+
+    private static final String[] SEED_GOALS = {
+            "build something meaningful that helps people",
+            "stay healthy long-term and keep learning",
+            "travel more intentionally and document stories",
+            "grow a small creative business",
+            "be deeply present for family and close friends",
+            "ship products I am proud of"
+    };
+
+    private static final String[] SEED_POLITICS = {
+            "liberal", "center", "conservative", "apolitical"
+    };
+
+    private static final String[] SEED_RELIGIONS = {
+            "agnostic", "spiritual", "secular_humanist", "christian"
+    };
+
+    private static final List<List<String>> SEED_LIFESTYLE_SELF = List.of(
+            List.of("no_kids", "open_to_kids", "social_drinker", "non_smoker", "no_drugs"),
+            List.of("no_kids", "wants_kids", "social_drinker", "non_smoker", "cannabis_user"),
+            List.of("has_kids", "open_to_kids", "non_drinker", "non_smoker", "no_drugs"),
+            List.of("no_kids", "doesnt_want_kids", "regular_drinker", "vaping", "recreational_drugs"));
+
+    private static final String[] SEED_LIFESTYLE_PREFERENCE = {
+            "non_smoker", "social_drinker", "no_drugs", "open_to_kids", "no_kids", "cannabis_user"
+    };
 
     public static void main(String[] args) throws NoSuchAlgorithmException, IOException, NoSuchProviderException {
         if (args.length > 1) {
@@ -78,17 +146,184 @@ public class CalypsoApiApplication {
         agentConfig.numWorkers(2);
         ipc.launchModule(agentModule, agentConfig);
 
-        int weekMillis = 1000 * 60 * 60 * 24 * 7;
-        long ts = System.currentTimeMillis() - weekMillis;
-
         // Build openAI Client
         OpenAIClient openAI = OpenAIOkHttpClient.builder()
                 .apiKey(System.getenv("OPENAI_API_KEY"))
                 .build();
 
         CalypsoApiController.manager = new CalypsoApiManager(ipc, openAI);
+        String seedToggle = System.getenv("CALYPSO_IPC_SEED");
+        boolean seedEnabled = seedToggle == null
+                || (!"false".equalsIgnoreCase(seedToggle.trim()) && !"0".equals(seedToggle.trim()));
+        if (seedEnabled) {
+            seedIpcUsers(CalypsoApiController.manager);
+        } else {
+            System.out.println("IPC seed bootstrap skipped (CALYPSO_IPC_SEED=false).");
+        }
 
         return ipc;
+    }
+
+    private static void seedIpcUsers(CalypsoApiManager manager) {
+        OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+        try {
+            List<Long> accountIds = new ArrayList<>();
+            Map<Long, String> firstAnswerByAccountId = new HashMap<>();
+
+            for (int i = 0; i < SEED_NAMES.length; i++) {
+                String name = SEED_NAMES[i];
+                String phone = SEED_PHONES[i];
+                String gender = "woman";
+                String mode = switch (i % 3) {
+                    case 0 -> "balanced";
+                    case 1 -> "focused";
+                    default -> "exploratory";
+                };
+                long accountId = ensureSeedAccount(manager, name, phone, i);
+                accountIds.add(accountId);
+
+                PostFilters filters = seedFilters(i, gender, mode);
+                manager.postFilters(filters, accountId).get(8, TimeUnit.SECONDS);
+
+                manager.postPublicPromptSelection(accountId, SEED_PROMPT_IDS).get(8, TimeUnit.SECONDS);
+                PublicPromptAnswer first = manager.postPublicPromptAnswer(
+                        accountId,
+                        SEED_PROMPT_IDS.get(0),
+                        "I can talk for hours about " + SEED_HOBBY_TOPICS[i % SEED_HOBBY_TOPICS.length] + ".")
+                        .get(8, TimeUnit.SECONDS);
+                manager.postPublicPromptAnswer(
+                        accountId,
+                        SEED_PROMPT_IDS.get(1),
+                        "My ideal Sunday is " + SEED_SUNDAY_STYLES[i % SEED_SUNDAY_STYLES.length] + ".")
+                        .get(8, TimeUnit.SECONDS);
+                manager.postPublicPromptAnswer(
+                        accountId,
+                        SEED_PROMPT_IDS.get(2),
+                        "A life goal of mine is to " + SEED_GOALS[i % SEED_GOALS.length] + ".")
+                        .get(8, TimeUnit.SECONDS);
+
+                if (first != null && first.getAnswerId() != null) {
+                    firstAnswerByAccountId.put(accountId, first.getAnswerId());
+                }
+            }
+
+            for (int i = 0; i < accountIds.size(); i++) {
+                long viewerId = accountIds.get(i);
+                long likeTargetId = accountIds.get((i + 1) % accountIds.size());
+                long dislikeTargetId = accountIds.get((i + 2) % accountIds.size());
+
+                String likeAnswerId = firstAnswerByAccountId.get(likeTargetId);
+                if (likeAnswerId != null) {
+                    manager.postPublicPromptReaction(viewerId, likeAnswerId, PromptReaction.LIKE)
+                            .get(6, TimeUnit.SECONDS);
+                }
+                String dislikeAnswerId = firstAnswerByAccountId.get(dislikeTargetId);
+                if (dislikeAnswerId != null) {
+                    manager.postPublicPromptReaction(viewerId, dislikeAnswerId, PromptReaction.DISLIKE)
+                            .get(6, TimeUnit.SECONDS);
+                }
+            }
+
+            if (accountIds.size() >= 2) {
+                seedMutualPair(manager, accountIds, firstAnswerByAccountId, 0, 1);
+            }
+            if (accountIds.size() >= 4) {
+                seedMutualPair(manager, accountIds, firstAnswerByAccountId, 2, 3);
+            }
+            if (accountIds.size() >= 6) {
+                seedMutualPair(manager, accountIds, firstAnswerByAccountId, 4, 5);
+            }
+
+            System.out.println("Seeded " + accountIds.size() + " IPC users with filters, prompts, and reactions.");
+        } catch (Exception e) {
+            System.err.println("IPC seed bootstrap failed: " + e.getMessage());
+            e.printStackTrace();
+        } finally {
+            OpenAIJson.clearTestOverride();
+        }
+    }
+
+    private static void seedMutualPair(CalypsoApiManager manager, List<Long> ids, Map<Long, String> firstAnswerByAccountId,
+            int leftIdx, int rightIdx) throws Exception {
+        if (leftIdx < 0 || rightIdx < 0 || leftIdx >= ids.size() || rightIdx >= ids.size()) {
+            return;
+        }
+        long left = ids.get(leftIdx);
+        long right = ids.get(rightIdx);
+        String leftAnswer = firstAnswerByAccountId.get(left);
+        String rightAnswer = firstAnswerByAccountId.get(right);
+        if (leftAnswer != null) {
+            manager.postPublicPromptReaction(right, leftAnswer, PromptReaction.LIKE).get(6, TimeUnit.SECONDS);
+        }
+        if (rightAnswer != null) {
+            manager.postPublicPromptReaction(left, rightAnswer, PromptReaction.LIKE).get(6, TimeUnit.SECONDS);
+        }
+        manager.postFacecardReaction(left, right, PromptReaction.LIKE).get(6, TimeUnit.SECONDS);
+        manager.postFacecardReaction(right, left, PromptReaction.LIKE).get(6, TimeUnit.SECONDS);
+    }
+
+    private static long ensureSeedAccount(CalypsoApiManager manager, String name, String phone, int idx) throws Exception {
+        Long existing = manager.getAccountId(phone).get(5, TimeUnit.SECONDS);
+        if (existing != null && existing.longValue() >= 0L) {
+            return existing.longValue();
+        }
+        PostAccount account = new PostAccount();
+        account.name = name;
+        account.phone_number = phone;
+        account.locale = "en-US";
+        account.agreement = true;
+        account.verification_token = "ipc-seed-token-" + idx;
+        account.birthday = "1998-01-01";
+        manager.postAccount(account).get(8, TimeUnit.SECONDS);
+        Long created = manager.getAccountId(phone).get(5, TimeUnit.SECONDS);
+        if (created == null || created.longValue() < 0L) {
+            throw new IllegalStateException("Unable to create IPC seed account for " + phone);
+        }
+        return created.longValue();
+    }
+
+    private static PostFilters seedFilters(int idx, String gender, String mode) {
+        PostFilters filters = new PostFilters();
+
+        ModeFilter relationshipMode = new ModeFilter();
+        relationshipMode.setSelf(mode);
+        filters.relationshipMode = relationshipMode;
+
+        OneToManyFilter genderFilter = new OneToManyFilter();
+        genderFilter.setSelf(gender);
+        genderFilter.setSeeking(List.of("man"));
+        filters.gender = genderFilter;
+
+        RangeFilter age = new RangeFilter();
+        age.setSelf(23 + (idx % 6));
+        age.setMin(21);
+        age.setMax(40);
+        filters.age = age;
+
+        LocationFilter location = new LocationFilter();
+        location.setLat(37.7749);
+        location.setLon(-122.4194);
+        location.setRadiusKm(30000.0);
+        location.setScope(LocationScope.WORLDWIDE);
+        filters.location = location;
+
+        OneToManyFilter politics = new OneToManyFilter();
+        politics.setSelf(SEED_POLITICS[idx % SEED_POLITICS.length]);
+        filters.politics = politics;
+
+        OneToManyFilter religion = new OneToManyFilter();
+        religion.setSelf(SEED_RELIGIONS[idx % SEED_RELIGIONS.length]);
+        filters.religion = religion;
+
+        ManyToManyFilter lifestyle = new ManyToManyFilter();
+        lifestyle.setSelf(new ArrayList<>(SEED_LIFESTYLE_SELF.get(idx % SEED_LIFESTYLE_SELF.size())));
+        TagPreference pref = new TagPreference();
+        pref.setTag(SEED_LIFESTYLE_PREFERENCE[idx % SEED_LIFESTYLE_PREFERENCE.length]);
+        pref.setImportance(Importance.PREFERENCE);
+        lifestyle.setPreferences(List.of(pref));
+        filters.lifestyle = lifestyle;
+
+        return filters;
     }
 
 }

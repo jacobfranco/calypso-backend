@@ -342,8 +342,8 @@ public class CalypsoApiController {
                         }
                     }));
         }
-        Mono<Boolean> existingAccount = Mono.fromFuture(manager.getAccountId(phoneNumber))
-                .map(Objects::nonNull)
+        Mono<Boolean> existingAccount = resolveAccountIdByPhoneVariants(phoneNumber)
+                .map(id -> true)
                 .onErrorReturn(false)
                 .defaultIfEmpty(false);
         return Mono.fromFuture(manager.requestPhoneCode(phoneNumber))
@@ -414,8 +414,7 @@ public class CalypsoApiController {
         }
         String code = params.code.trim();
         return Mono.fromFuture(manager.verifyPhoneCode(phoneNumber, code))
-                .flatMap(result -> Mono.fromFuture(manager.getAccountId(phoneNumber))
-                        .filter(Objects::nonNull)
+                .flatMap(result -> resolveAccountIdByPhoneVariants(phoneNumber)
                         .flatMap(accountId -> Mono.fromFuture(manager.getAccountWithId(accountId)))
                         .flatMap(accountWithId -> Mono.fromFuture(manager.consumePhoneVerification(phoneNumber, result))
                                 .onErrorReturn(false)
@@ -434,6 +433,40 @@ public class CalypsoApiController {
                                 }
                             }));
                 });
+    }
+
+    private Mono<Long> resolveAccountIdByPhoneVariants(String normalizedPhone) {
+        List<String> candidates = phoneLookupVariants(normalizedPhone);
+        if (candidates.isEmpty()) {
+            return Mono.empty();
+        }
+        Mono<Long> lookup = Mono.empty();
+        for (String candidate : candidates) {
+            lookup = lookup.switchIfEmpty(
+                    Mono.defer(() -> {
+                        CompletableFuture<Long> future = manager.getAccountId(candidate);
+                        if (future == null) {
+                            return Mono.empty();
+                        }
+                        return Mono.fromFuture(future).filter(Objects::nonNull);
+                    }));
+        }
+        return lookup;
+    }
+
+    private static List<String> phoneLookupVariants(String normalizedPhone) {
+        if (normalizedPhone == null || normalizedPhone.isBlank()) {
+            return List.of();
+        }
+        LinkedHashSet<String> variants = new LinkedHashSet<>();
+        variants.add(normalizedPhone);
+        String digits = normalizedPhone.replaceAll("[^0-9]", "");
+        if (digits.length() == 11 && digits.startsWith("1")) {
+            variants.add(digits.substring(1));
+        } else if (digits.length() == 10) {
+            variants.add(digits);
+        }
+        return new ArrayList<>(variants);
     }
 
     private static String normalizePhoneNumber(String raw) {
@@ -632,6 +665,25 @@ public class CalypsoApiController {
                         ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
     }
 
+    @PostMapping("/api/accounts/{id}/facecards/{targetId}/reaction")
+    public Mono<Map<String, Object>> postFacecardReaction(
+            @PathVariable("id") String idStr,
+            @PathVariable("targetId") String targetIdStr,
+            @RequestBody(required = false) PostPublicPromptReactionRequest payload,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        long targetId = CalypsoHelpers.parseAccountId(targetIdStr);
+        PromptReaction reaction = payload == null ? null : payload.parsedReaction();
+        return Mono.fromFuture(manager.postFacecardReaction(accountId, targetId, reaction))
+                .map(ok -> Collections.<String, Object>emptyMap())
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
     @GetMapping("/api/accounts/{id}/agent/session")
     public Mono<GetAgentSession> getAgentSession(@PathVariable("id") String idStr, WebSession session) {
         long accountId = CalypsoHelpers.parseAccountId(idStr);
@@ -781,6 +833,108 @@ public class CalypsoApiController {
                         ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
     }
 
+    @GetMapping("/api/accounts/{id}/agent/matchmaking-followup")
+    public Mono<ResponseEntity<ActivePrivatePrompt>> getActiveMatchmakingFollowup(
+            @PathVariable("id") String idStr,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getActiveMatchmakingFollowup(accountId))
+                .map(ResponseEntity::ok)
+                .defaultIfEmpty(ResponseEntity.noContent().build());
+    }
+
+    @PostMapping("/api/accounts/{id}/agent/matchmaking-followup/{instanceId}/answer")
+    public Mono<ActivePrivatePrompt> postMatchmakingFollowupAnswer(
+            @PathVariable("id") String idStr,
+            @PathVariable("instanceId") String instanceId,
+            @RequestBody(required = false) PostPrivatePromptAnswerRequest payload,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        String body = payload == null ? null : payload.safeBody();
+        List<String> conversation = payload == null ? List.of() : payload.safeConversation();
+        return Mono.fromFuture(manager.postMatchmakingFollowupAnswer(accountId, instanceId, body, conversation))
+                .onErrorMap(SecurityException.class,
+                        ex -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden", ex))
+                .onErrorMap(IllegalStateException.class,
+                        ex -> new ResponseStatusException(HttpStatus.CONFLICT, ex.getMessage(), ex))
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
+    @PostMapping("/api/accounts/{id}/agent/matchmaking-followup/{instanceId}/chat-turn")
+    public Mono<GetPrivatePromptChatTurn> postMatchmakingFollowupChatTurn(
+            @PathVariable("id") String idStr,
+            @PathVariable("instanceId") String instanceId,
+            @RequestBody(required = false) PostPrivatePromptChatTurnRequest payload,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        String questionPart = payload == null ? null : payload.safeQuestionPart();
+        String userMessage = payload == null ? null : payload.safeUserMessage();
+        List<String> conversation = payload == null ? List.of() : payload.safeConversation();
+        return Mono.fromFuture(
+                manager.postMatchmakingFollowupChatTurn(accountId, instanceId, questionPart, userMessage, conversation))
+                .onErrorMap(SecurityException.class,
+                        ex -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden", ex))
+                .onErrorMap(IllegalStateException.class,
+                        ex -> new ResponseStatusException(HttpStatus.CONFLICT, ex.getMessage(), ex))
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
+    @PostMapping("/api/accounts/{id}/agent/matchmaking-followup/{instanceId}/skip")
+    public Mono<Map<String, Object>> postMatchmakingFollowupSkip(
+            @PathVariable("id") String idStr,
+            @PathVariable("instanceId") String instanceId,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.postMatchmakingFollowupSkip(accountId, instanceId))
+                .map(ok -> Collections.<String, Object>emptyMap())
+                .onErrorMap(SecurityException.class,
+                        ex -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden", ex))
+                .onErrorMap(IllegalStateException.class,
+                        ex -> new ResponseStatusException(HttpStatus.CONFLICT, ex.getMessage(), ex))
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
+    @PostMapping("/api/accounts/{id}/agent/matchmaking-followup/{instanceId}/snooze")
+    public Mono<Map<String, Object>> postMatchmakingFollowupSnooze(
+            @PathVariable("id") String idStr,
+            @PathVariable("instanceId") String instanceId,
+            @RequestBody(required = false) PostPrivatePromptSnoozeRequest payload,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        Long snoozeUntil = payload == null ? null : payload.snoozeUntil;
+        return Mono.fromFuture(manager.postMatchmakingFollowupSnooze(accountId, instanceId, snoozeUntil))
+                .map(ok -> Collections.<String, Object>emptyMap())
+                .onErrorMap(SecurityException.class,
+                        ex -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden", ex))
+                .onErrorMap(IllegalStateException.class,
+                        ex -> new ResponseStatusException(HttpStatus.CONFLICT, ex.getMessage(), ex))
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
     @PostMapping("/api/accounts/{id}/signals")
     public Mono<GetSignals> postSignals(@PathVariable("id") String idStr,
             @RequestBody(required = false) PostSignalsRequest params,
@@ -842,6 +996,20 @@ public class CalypsoApiController {
             throw new ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
         }
         return Mono.fromFuture(manager.getMatches(me, accountId, limit))
+                .map(GetMatches::new);
+    }
+
+    @GetMapping("/api/accounts/{id}/facecards")
+    public Mono<GetMatches> getFacecards(
+            @PathVariable("id") String idStr,
+            @RequestParam(name = "limit", defaultValue = "20") int limit,
+            WebSession session) {
+        long accountId = now.calypso.backend.CalypsoHelpers.parseAccountId(idStr);
+        Long me = (Long) session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getFacecards(me, accountId, limit))
                 .map(GetMatches::new);
     }
 
