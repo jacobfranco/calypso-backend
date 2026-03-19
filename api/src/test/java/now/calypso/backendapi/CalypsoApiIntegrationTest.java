@@ -54,6 +54,7 @@ import now.calypso.backend.modules.Core;
 import now.calypso.backend.serialization.CalypsoSerialization;
 import now.calypso.backendapi.agent.AgentResponder;
 import now.calypso.backendapi.llm.OpenAIJson;
+import now.calypso.backendapi.pojos.GetMatch;
 import now.calypso.backendapi.pojos.PostAccount;
 import now.calypso.backendapi.pojos.PostFilters;
 import now.calypso.backendapi.prompts.PromptLibrary;
@@ -744,6 +745,120 @@ class CalypsoApiIntegrationTest {
     }
 
     @Test
+    void matchesRequireReciprocalPromptLikesAndFacecardLikes() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = createAccount(mgr, "Mutual Viewer", "+1555000960");
+            long targetId = createAccount(mgr, "Mutual Target", "+1555000961");
+
+            mgr.postFilters(filtersForGender("woman", List.of("man", "woman"), "exploratory"), viewerId).get(5,
+                    TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("man", List.of("woman", "man"), "exploratory"), targetId).get(5,
+                    TimeUnit.SECONDS);
+
+            PublicPromptAnswer viewerAnswer;
+            PublicPromptAnswer targetAnswer;
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            try {
+                viewerAnswer = mgr.postPublicPromptAnswer(
+                        viewerId,
+                        "prompt.talk.hours",
+                        "I can talk for hours about travel planning.").get(5, TimeUnit.SECONDS);
+                targetAnswer = mgr.postPublicPromptAnswer(
+                        targetId,
+                        "prompt.ideal.sunday",
+                        "Coffee, a long walk, and a museum stop.").get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            awaitFacecards(mgr, viewerId, 20, 20000);
+            awaitFacecards(mgr, targetId, 20, 20000);
+
+            List<GetMatch> initial = mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
+            assertTrue(initial == null || initial.isEmpty(),
+                    "Matches should not appear without reciprocal prompt+facecard likes.");
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            try {
+                mgr.postPublicPromptReaction(viewerId, targetAnswer.getAnswerId(), PromptReaction.LIKE).get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+            mgr.postFacecardReaction(viewerId, targetId, PromptReaction.LIKE).get(5, TimeUnit.SECONDS);
+
+            List<GetMatch> stillMissing = mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
+            assertTrue(stillMissing == null || stillMissing.isEmpty(),
+                    "One-sided likes should not pass the mutual match gate.");
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            try {
+                mgr.postPublicPromptReaction(targetId, viewerAnswer.getAnswerId(), PromptReaction.LIKE).get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+            mgr.postFacecardReaction(targetId, viewerId, PromptReaction.LIKE).get(5, TimeUnit.SECONDS);
+
+            PState heapP = ipc.clusterPState(Core.class.getName(), "$$accountIdToCandidateHeap");
+            PState facecardP = ipc.clusterPState(Core.class.getName(), "$$viewerIdToTargetIdToFacecardReaction");
+            PState promptLikeP = ipc.clusterPState(Core.class.getName(), "$$viewerIdToTargetIdToPromptLikeSeen");
+            PState reactionByAnswerP = ipc.clusterPState(Core.class.getName(), "$$viewerIdToReactionByAnswerId");
+
+            waitFor(() -> candidateScoreFromHeap(heapP, viewerId, targetId) != null, 12000,
+                    "Viewer->target should be present in candidate heap.");
+            waitFor(() -> candidateScoreFromHeap(heapP, targetId, viewerId) != null, 12000,
+                    "Target->viewer should be present in candidate heap.");
+            waitFor(() -> {
+                Object raw = facecardP.selectOne(Path.key(viewerId, targetId));
+                return raw instanceof Number && ((Number) raw).intValue() == PromptReaction.LIKE.getValue();
+            }, 12000, "Viewer facecard like should be persisted.");
+            long facecardDeadline = System.currentTimeMillis() + 12000L;
+            boolean targetFacecardPersisted = false;
+            Object targetFacecardRaw = null;
+            while (System.currentTimeMillis() < facecardDeadline) {
+                targetFacecardRaw = facecardP.selectOne(Path.key(targetId, viewerId));
+                if (targetFacecardRaw instanceof Number
+                        && ((Number) targetFacecardRaw).intValue() == PromptReaction.LIKE.getValue()) {
+                    targetFacecardPersisted = true;
+                    break;
+                }
+                Thread.sleep(60L);
+            }
+            assertTrue(targetFacecardPersisted,
+                    "Target facecard like should be persisted. raw="
+                            + targetFacecardRaw
+                            + ", byViewerMap="
+                            + facecardP.selectOne(Path.key(targetId))
+                            + ", reactionsByAnswer="
+                            + reactionByAnswerP.selectOne(Path.key(targetId)));
+            waitFor(() -> {
+                Object raw = promptLikeP.selectOne(Path.key(viewerId, targetId));
+                return raw instanceof Boolean && ((Boolean) raw).booleanValue();
+            }, 12000, "Viewer prompt-like evidence should be persisted.");
+            waitFor(() -> {
+                Object raw = promptLikeP.selectOne(Path.key(targetId, viewerId));
+                return raw instanceof Boolean && ((Boolean) raw).booleanValue();
+            }, 12000, "Target prompt-like evidence should be persisted.");
+
+            String targetSerialized = now.calypso.backend.CalypsoHelpers.serializeAccountId(targetId);
+            waitFor(() -> {
+                List<GetMatch> matches = mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
+                if (matches == null || matches.isEmpty()) {
+                    return false;
+                }
+                for (GetMatch match : matches) {
+                    if (match != null && match.account != null && targetSerialized.equals(match.account.id)) {
+                        return true;
+                    }
+                }
+                return false;
+            }, 35000, "Reciprocal prompt + facecard likes should produce a mutual match.");
+        }
+    }
+
+    @Test
     void privatePromptScheduling_createsOneAndIsIdempotent() throws Exception {
         try (InProcessCluster ipc = newCluster()) {
             CalypsoApiManager mgr = newManager(ipc);
@@ -956,9 +1071,13 @@ class CalypsoApiIntegrationTest {
     }
 
     private static PostFilters filtersForGender(String self, List<String> seeking) {
+        return filtersForGender(self, seeking, "balanced");
+    }
+
+    private static PostFilters filtersForGender(String self, List<String> seeking, String mode) {
         PostFilters filters = new PostFilters();
         ModeFilter relationshipMode = new ModeFilter();
-        relationshipMode.setSelf("balanced");
+        relationshipMode.setSelf(mode == null || mode.isBlank() ? "balanced" : mode);
         filters.relationshipMode = relationshipMode;
 
         filters.age = new RangeFilter();

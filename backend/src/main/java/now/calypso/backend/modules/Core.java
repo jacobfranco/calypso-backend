@@ -21,9 +21,9 @@ public class Core implements RamaModule {
       // ------- Tunables -------
       private static final int HEAP_K = 400;
       private static final long EXPOSURE_TTL_MS = 14L * 24 * 60 * 60 * 1000L; // 14 days
-      private static final double MIN_SCORE_EXPLORATORY = 50.0;
-      private static final double MIN_SCORE_BALANCED = 60.0;
-      private static final double MIN_SCORE_FOCUSED = 75.0;
+      private static final double MIN_SCORE_EXPLORATORY = 45.0;
+      private static final double MIN_SCORE_BALANCED = 55.0;
+      private static final double MIN_SCORE_FOCUSED = 65.0;
       private static final double FOLLOWUP_MIN_NORMALIZED_SCORE = 0.60;
       private static final String ALL_ACCOUNTS_KEY = "all";
       private static final String FACECARD_REACTION_ANSWER_PREFIX = "facecard_target:";
@@ -85,7 +85,7 @@ public class Core implements RamaModule {
       }
 
       private static List<MatchCandidate> removeFromHeap(List<MatchCandidate> heap, long targetId) {
-            if (heap == null || heap.isEmpty() || targetId <= 0L) {
+            if (heap == null || heap.isEmpty() || targetId < 0L) {
                   return (heap == null) ? new ArrayList<MatchCandidate>() : heap;
             }
             ArrayList<MatchCandidate> list = new ArrayList<>(heap);
@@ -281,17 +281,17 @@ public class Core implements RamaModule {
 
       private static long parseFacecardTargetId(String answerId) {
             if (answerId == null || answerId.isBlank() || !answerId.startsWith(FACECARD_REACTION_ANSWER_PREFIX)) {
-                  return 0L;
+                  return -1L;
             }
             String raw = answerId.substring(FACECARD_REACTION_ANSWER_PREFIX.length()).trim();
             if (raw.isBlank()) {
-                  return 0L;
+                  return -1L;
             }
             try {
                   long targetId = Long.parseLong(raw);
-                  return targetId > 0L ? targetId : 0L;
+                  return targetId >= 0L ? targetId : -1L;
             } catch (NumberFormatException ignored) {
-                  return 0L;
+                  return -1L;
             }
       }
 
@@ -480,8 +480,8 @@ public class Core implements RamaModule {
                   return out;
             }
             for (Map.Entry<?, ?> entry : byViewer.entrySet()) {
-                  long viewerId = asLong(entry.getKey(), 0L);
-                  if (viewerId <= 0L) {
+                  long viewerId = asLong(entry.getKey(), -1L);
+                  if (viewerId < 0L) {
                         continue;
                   }
                   Object rawValue = entry.getValue();
@@ -634,6 +634,10 @@ public class Core implements RamaModule {
                         PState.mapSchema(Long.class, Map.class));
             stream.pstate("$$viewerIdToTargetIdToReactionScore",
                         PState.mapSchema(Long.class, Map.class));
+            stream.pstate("$$viewerIdToTargetIdToFacecardReaction",
+                        PState.mapSchema(Long.class, Map.class));
+            stream.pstate("$$viewerIdToTargetIdToPromptLikeSeen",
+                        PState.mapSchema(Long.class, Map.class));
             stream.pstate("$$viewerIdToSuppressedSignalTokens",
                         PState.mapSchema(Long.class, Map.class));
             stream.pstate("$$accountIdToPublicPromptSelection",
@@ -656,7 +660,7 @@ public class Core implements RamaModule {
             stream.source("*publicPromptReactionDepot")
                         .out("*data")
                         .macro(extractFields("*data", "*viewerAccountId", "*promptId", "*answerId"))
-                        .each((Number n) -> n == null ? 0L : n.longValue(), "*viewerAccountId").out("*viewerIdL")
+                        .each((Number n) -> n == null ? -1L : n.longValue(), "*viewerAccountId").out("*viewerIdL")
                         .each((PublicPromptReactionEvent event) -> {
                               if (event == null || !event.isSetReaction() || event.getReaction() == null)
                                     return 0;
@@ -665,7 +669,7 @@ public class Core implements RamaModule {
                         .out("*reactionValue")
                         .each((String answerId) -> parseFacecardTargetId(answerId), "*answerId")
                         .out("*facecardTargetIdL")
-                        .each((Long targetId) -> targetId != null && targetId.longValue() > 0L, "*facecardTargetIdL")
+                        .each((Long targetId) -> targetId != null && targetId.longValue() >= 0L, "*facecardTargetIdL")
                         .out("*isFacecardReaction")
                         .ifTrue(new Expr(Ops.NOT, "*isFacecardReaction"),
                                     Block.create()
@@ -719,11 +723,30 @@ public class Core implements RamaModule {
                               }
                               return 0.0;
                         }, "*reactionValue", "*isFacecardReaction").out("*pairDelta")
-                        .each((Long targetIdL) -> targetIdL != null && targetIdL.longValue() > 0L, "*targetIdL")
+                        .each((Long targetIdL) -> targetIdL != null && targetIdL.longValue() >= 0L, "*targetIdL")
                         .out("*hasTarget")
                         .ifTrue("*hasTarget",
                                     Block.create()
                                                 .hashPartition("*viewerIdL")
+                                                .each((Boolean isFacecardReaction, Integer reactionValue) -> Boolean.TRUE
+                                                            .equals(isFacecardReaction)
+                                                            && reactionValue != null,
+                                                            "*isFacecardReaction", "*reactionValue")
+                                                .out("*shouldTrackFacecard")
+                                                .ifTrue("*shouldTrackFacecard",
+                                                            Block.localTransform("$$viewerIdToTargetIdToFacecardReaction",
+                                                                        Path.key("*viewerIdL", "*targetIdL")
+                                                                                    .termVal("*reactionValue")))
+                                                .each((Boolean isFacecardReaction, Integer reactionValue) -> !Boolean.TRUE
+                                                            .equals(isFacecardReaction)
+                                                            && reactionValue != null
+                                                            && reactionValue.intValue() == PromptReaction.LIKE.getValue(),
+                                                            "*isFacecardReaction", "*reactionValue")
+                                                .out("*shouldTrackPromptLike")
+                                                .ifTrue("*shouldTrackPromptLike",
+                                                            Block.localTransform("$$viewerIdToTargetIdToPromptLikeSeen",
+                                                                        Path.key("*viewerIdL", "*targetIdL")
+                                                                                    .termVal(true)))
                                                 .localSelect("$$viewerIdToTargetIdToReactionScore",
                                                             Path.key("*viewerIdL", "*targetIdL").nullToVal(0.0))
                                                 .out("*prevPairScore")
@@ -735,7 +758,7 @@ public class Core implements RamaModule {
                                                 .localTransform("$$viewerIdToTargetIdToReactionScore",
                                                             Path.key("*viewerIdL", "*targetIdL").termVal("*nextPairScore"))
                                                 .each((Long viewerIdL, Boolean isFacecardReaction) -> {
-                                                      if (viewerIdL == null || viewerIdL.longValue() <= 0L
+                                                      if (viewerIdL == null || viewerIdL.longValue() < 0L
                                                                   || !Boolean.TRUE.equals(isFacecardReaction)) {
                                                             return null;
                                                       }

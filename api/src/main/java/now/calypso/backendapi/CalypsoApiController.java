@@ -342,8 +342,8 @@ public class CalypsoApiController {
                         }
                     }));
         }
-        Mono<Boolean> existingAccount = Mono.fromFuture(manager.getAccountId(phoneNumber))
-                .map(Objects::nonNull)
+        Mono<Boolean> existingAccount = resolveAccountIdByPhoneVariants(phoneNumber)
+                .map(id -> true)
                 .onErrorReturn(false)
                 .defaultIfEmpty(false);
         return Mono.fromFuture(manager.requestPhoneCode(phoneNumber))
@@ -414,8 +414,7 @@ public class CalypsoApiController {
         }
         String code = params.code.trim();
         return Mono.fromFuture(manager.verifyPhoneCode(phoneNumber, code))
-                .flatMap(result -> Mono.fromFuture(manager.getAccountId(phoneNumber))
-                        .filter(Objects::nonNull)
+                .flatMap(result -> resolveAccountIdByPhoneVariants(phoneNumber)
                         .flatMap(accountId -> Mono.fromFuture(manager.getAccountWithId(accountId)))
                         .flatMap(accountWithId -> Mono.fromFuture(manager.consumePhoneVerification(phoneNumber, result))
                                 .onErrorReturn(false)
@@ -434,6 +433,40 @@ public class CalypsoApiController {
                                 }
                             }));
                 });
+    }
+
+    private Mono<Long> resolveAccountIdByPhoneVariants(String normalizedPhone) {
+        List<String> candidates = phoneLookupVariants(normalizedPhone);
+        if (candidates.isEmpty()) {
+            return Mono.empty();
+        }
+        Mono<Long> lookup = Mono.empty();
+        for (String candidate : candidates) {
+            lookup = lookup.switchIfEmpty(
+                    Mono.defer(() -> {
+                        CompletableFuture<Long> future = manager.getAccountId(candidate);
+                        if (future == null) {
+                            return Mono.empty();
+                        }
+                        return Mono.fromFuture(future).filter(Objects::nonNull);
+                    }));
+        }
+        return lookup;
+    }
+
+    private static List<String> phoneLookupVariants(String normalizedPhone) {
+        if (normalizedPhone == null || normalizedPhone.isBlank()) {
+            return List.of();
+        }
+        LinkedHashSet<String> variants = new LinkedHashSet<>();
+        variants.add(normalizedPhone);
+        String digits = normalizedPhone.replaceAll("[^0-9]", "");
+        if (digits.length() == 11 && digits.startsWith("1")) {
+            variants.add(digits.substring(1));
+        } else if (digits.length() == 10) {
+            variants.add(digits);
+        }
+        return new ArrayList<>(variants);
     }
 
     private static String normalizePhoneNumber(String raw) {
