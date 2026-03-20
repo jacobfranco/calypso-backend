@@ -41,7 +41,7 @@ public class CalypsoApiApplication {
             "prompt.life.goal");
 
     private static final String[] SEED_NAMES = {
-            "Avery", "Blake", "Casey", "Devon", "Emery", "Finley"
+            "Avery", "Bhavya", "Chantelle", "Daria", "Eva", "Farah"
     };
 
     private static final String[] SEED_PHONES = {
@@ -49,46 +49,55 @@ public class CalypsoApiApplication {
             "+11111111114", "+11111111115", "+11111111116"
     };
 
-    private static final String[] SEED_HOBBY_TOPICS = {
-            "film photography", "lifting and mobility", "indie game design", "food science",
-            "street fashion", "startup product ideas", "live music sets", "coffee techniques",
-            "travel hacking", "distance running", "language learning", "documentary breakdowns"
+    private static final String[] SEED_MODES = {
+            "balanced", "exploratory", "exploratory", "exploratory", "balanced", "exploratory"
     };
 
-    private static final String[] SEED_SUNDAY_STYLES = {
-            "a long walk and a good cappuccino",
-            "a lifting session followed by farmers market food",
-            "gaming co-op with homemade dinner",
-            "museum hop and a slow brunch",
-            "sunrise run and a podcast queue",
-            "reading in a park and cooking dinner at home"
+    private static final String[] SEED_TALK_ANSWERS = {
+            "my favorite romance novels !",
+            "How much I love cooking",
+            "high fashion",
+            "gym science and nutrition",
+            "All of the birds that are local in my area",
+            "my favorite traveling adventures"
     };
 
-    private static final String[] SEED_GOALS = {
-            "build something meaningful that helps people",
-            "stay healthy long-term and keep learning",
-            "travel more intentionally and document stories",
-            "grow a small creative business",
-            "be deeply present for family and close friends",
-            "ship products I am proud of"
+    private static final String[] SEED_SUNDAY_ANSWERS = {
+            "pilates and brunch with the girls !!",
+            "A nice cozy day with a book and a homemade meal",
+            "a morning gym session and relaxing the rest of the day",
+            "watching the panthers and some casual gaming",
+            "A sunrise hike and working on some of my side projects",
+            "relaxing in bed all day"
+    };
+
+    private static final String[] SEED_GOAL_ANSWERS = {
+            "travel the world !",
+            "Getting my PhD",
+            "doing a runway show",
+            "going to the World Cup",
+            "Launching a startup",
+            "go clubbing in Amsterdam"
     };
 
     private static final String[] SEED_POLITICS = {
-            "liberal", "center", "conservative", "apolitical"
+            "liberal", "center", "liberal", "apolitical", "center", "apolitical"
     };
 
     private static final String[] SEED_RELIGIONS = {
-            "agnostic", "spiritual", "secular_humanist", "christian"
+            "spiritual", "spiritual", "agnostic", "agnostic", "secular_humanist", "christian"
     };
 
     private static final List<List<String>> SEED_LIFESTYLE_SELF = List.of(
             List.of("no_kids", "open_to_kids", "social_drinker", "non_smoker", "no_drugs"),
-            List.of("no_kids", "wants_kids", "social_drinker", "non_smoker", "cannabis_user"),
-            List.of("has_kids", "open_to_kids", "non_drinker", "non_smoker", "no_drugs"),
-            List.of("no_kids", "doesnt_want_kids", "regular_drinker", "vaping", "recreational_drugs"));
+            List.of("no_kids", "wants_kids", "non_drinker", "non_smoker", "no_drugs"),
+            List.of("no_kids", "open_to_kids", "social_drinker", "non_smoker", "no_drugs"),
+            List.of("no_kids", "open_to_kids", "social_drinker", "non_smoker", "cannabis_user"),
+            List.of("no_kids", "open_to_kids", "non_drinker", "non_smoker", "no_drugs"),
+            List.of("no_kids", "doesnt_want_kids", "regular_drinker", "non_smoker", "cannabis_user"));
 
     private static final String[] SEED_LIFESTYLE_PREFERENCE = {
-            "non_smoker", "social_drinker", "no_drugs", "open_to_kids", "no_kids", "cannabis_user"
+            "non_smoker", "no_drugs", "social_drinker", "cannabis_user", "non_smoker", "regular_drinker"
     };
 
     public static void main(String[] args) throws NoSuchAlgorithmException, IOException, NoSuchProviderException {
@@ -174,11 +183,7 @@ public class CalypsoApiApplication {
                 String name = SEED_NAMES[i];
                 String phone = SEED_PHONES[i];
                 String gender = "woman";
-                String mode = switch (i % 3) {
-                    case 0 -> "balanced";
-                    case 1 -> "focused";
-                    default -> "exploratory";
-                };
+                String mode = SEED_MODES[i % SEED_MODES.length];
                 long accountId = ensureSeedAccount(manager, name, phone, i);
                 accountIds.add(accountId);
 
@@ -189,17 +194,17 @@ public class CalypsoApiApplication {
                 PublicPromptAnswer first = manager.postPublicPromptAnswer(
                         accountId,
                         SEED_PROMPT_IDS.get(0),
-                        "I can talk for hours about " + SEED_HOBBY_TOPICS[i % SEED_HOBBY_TOPICS.length] + ".")
+                        SEED_TALK_ANSWERS[i % SEED_TALK_ANSWERS.length])
                         .get(8, TimeUnit.SECONDS);
                 manager.postPublicPromptAnswer(
                         accountId,
                         SEED_PROMPT_IDS.get(1),
-                        "My ideal Sunday is " + SEED_SUNDAY_STYLES[i % SEED_SUNDAY_STYLES.length] + ".")
+                        SEED_SUNDAY_ANSWERS[i % SEED_SUNDAY_ANSWERS.length])
                         .get(8, TimeUnit.SECONDS);
                 manager.postPublicPromptAnswer(
                         accountId,
                         SEED_PROMPT_IDS.get(2),
-                        "A life goal of mine is to " + SEED_GOALS[i % SEED_GOALS.length] + ".")
+                        SEED_GOAL_ANSWERS[i % SEED_GOAL_ANSWERS.length])
                         .get(8, TimeUnit.SECONDS);
 
                 if (first != null && first.getAnswerId() != null) {
