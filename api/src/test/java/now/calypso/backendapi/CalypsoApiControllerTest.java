@@ -1011,7 +1011,8 @@ class CalypsoApiControllerTest {
 
         @Test
         void postPublicPromptReaction_invalidReaction_returns400() {
-                when(mockManager.postPublicPromptReaction(eq(7L), eq("answer-1"), isNull()))
+                when(mockManager.postPublicPromptReaction(eq(7L), eq("answer-1"),
+                                org.mockito.ArgumentMatchers.<Integer>isNull()))
                                 .thenReturn(CompletableFuture.failedFuture(
                                                 new IllegalArgumentException("Reaction required.")));
 
@@ -1019,21 +1020,21 @@ class CalypsoApiControllerTest {
                                 .uri("/api/accounts/" + serializedId + "/public-prompt-feed/answer-1/reaction")
                                 .header("Authorization", "Bearer " + sessionToken)
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(new PostPublicPromptReactionRequest("not_real"))
+                                .bodyValue(new PostPublicPromptReactionRequest("not_real", null))
                                 .exchange()
                                 .expectStatus().isBadRequest();
         }
 
         @Test
         void postPublicPromptReaction_valid_returns200() {
-                when(mockManager.postPublicPromptReaction(eq(7L), eq("answer-1"), eq(PromptReaction.LIKE)))
+                when(mockManager.postPublicPromptReaction(eq(7L), eq("answer-1"), eq(Integer.valueOf(1))))
                                 .thenReturn(CompletableFuture.completedFuture(true));
 
                 client.post()
                                 .uri("/api/accounts/" + serializedId + "/public-prompt-feed/answer-1/reaction")
                                 .header("Authorization", "Bearer " + sessionToken)
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(new PostPublicPromptReactionRequest("LIKE"))
+                                .bodyValue(new PostPublicPromptReactionRequest("LIKE", null))
                                 .exchange()
                                 .expectStatus().isOk()
                                 .expectBody()
@@ -1051,7 +1052,7 @@ class CalypsoApiControllerTest {
                                 .uri("/api/accounts/" + serializedId + "/facecards/" + targetId + "/reaction")
                                 .header("Authorization", "Bearer " + sessionToken)
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(new PostPublicPromptReactionRequest("not_real"))
+                                .bodyValue(new PostPublicPromptReactionRequest("not_real", null))
                                 .exchange()
                                 .expectStatus().isBadRequest();
         }
@@ -1066,7 +1067,7 @@ class CalypsoApiControllerTest {
                                 .uri("/api/accounts/" + serializedId + "/facecards/" + targetId + "/reaction")
                                 .header("Authorization", "Bearer " + sessionToken)
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(new PostPublicPromptReactionRequest("DISLIKE"))
+                                .bodyValue(new PostPublicPromptReactionRequest("DISLIKE", null))
                                 .exchange()
                                 .expectStatus().isOk()
                                 .expectBody()

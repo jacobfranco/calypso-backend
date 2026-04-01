@@ -14,10 +14,13 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -53,11 +56,13 @@ import now.calypso.backend.modules.Agent;
 import now.calypso.backend.modules.Core;
 import now.calypso.backend.serialization.CalypsoSerialization;
 import now.calypso.backendapi.agent.AgentResponder;
+import now.calypso.backendapi.llm.MatchReranker;
 import now.calypso.backendapi.llm.OpenAIJson;
 import now.calypso.backendapi.pojos.GetMatch;
 import now.calypso.backendapi.pojos.PostAccount;
 import now.calypso.backendapi.pojos.PostFilters;
 import now.calypso.backendapi.prompts.PromptLibrary;
+import now.calypso.backendapi.signals.ExtractedSignal;
 
 class CalypsoApiIntegrationTest {
     private static final int PRIVATE_PROMPT_DAILY_SPAWN_HOUR = 20;
@@ -65,6 +70,7 @@ class CalypsoApiIntegrationTest {
     @AfterEach
     void clearOverride() {
         OpenAIJson.clearTestOverride();
+        MatchReranker.clearTestOverride();
     }
 
     @Test
@@ -193,7 +199,7 @@ class CalypsoApiIntegrationTest {
                     "user: " + answer);
 
             OpenAIJson.setTestOverride((system, user) -> """
-                    {"signals":[{"token":"taylor_swift","intent":"self","confidence":0.91,"importance":0.45}]}
+                    {"signals":[{"token":"taylor_swift","intent":"self","valence":0.91}]}
                     """);
             try {
                 List<String> tokens = mgr.extractAndAppendSignalsFromPrompt(
@@ -203,18 +209,137 @@ class CalypsoApiIntegrationTest {
                         conversation,
                         "private_prompt",
                         "private#904").get(5, TimeUnit.SECONDS);
-                assertEquals(List.of("anti_taylor_swift"), tokens);
+                assertEquals(List.of("taylor_swift"), tokens);
             } finally {
                 OpenAIJson.clearTestOverride();
             }
 
             Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
-            SignalRecord exclusion = findRecord(stored, "anti_taylor_swift", SignalIntent.SEEKING);
+            SignalRecord exclusion = findRecord(stored, "taylor_swift", SignalIntent.SEEKING);
             assertNotNull(exclusion);
             assertEquals("private_prompt", exclusion.getSource());
             assertEquals("private#904", exclusion.getSourceId());
-            assertTrue(exclusion.isSetImportance());
-            assertTrue(exclusion.getImportance() >= 0.72);
+            assertTrue(exclusion.isSetValence());
+            assertTrue(exclusion.getValence() < 0.0);
+        }
+    }
+
+    @Test
+    void extractAndAppendSignalsFromPrompt_preservesPromptOutputWithoutHardcodedShapeCanonicalization() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 9041L;
+            String question = "What are your lifestyle preferences?";
+            String answer = "Cooking, reading, and gym mornings.";
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[
+                      {"token":"cooking_homemade_meals","intent":"self","valence":0.84},
+                      {"token":"cozy_homebody","intent":"self","valence":0.70},
+                      {"token":"reading_books","intent":"self","valence":0.72},
+                      {"token":"morning_gym_sesson","intent":"self","valence":0.78},
+                      {"token":"sports_fandom","intent":"self","valence":0.63},
+                      {"token":"casual_gaming","intent":"self","valence":0.64},
+                      {"token":"career_direction","intent":"self","valence":0.58},
+                      {"token":"world_exploration","intent":"self","valence":0.73},
+                      {"token":"long_term_goal","intent":"self","valence":0.67},
+                      {"token":"clubbing","intent":"self","valence":0.66},
+                      {"token":"female_friends","intent":"self","valence":0.52},
+                      {"token":"performance","intent":"self","valence":0.51},
+                      {"token":"day","intent":"self","valence":0.50},
+                      {"token":"relaxing_rest_of_day","intent":"self","valence":0.55},
+                      {"token":"bucket_list","intent":"self","valence":0.52}
+                    ]}
+                    """);
+            List<String> tokens;
+            try {
+                tokens = mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        question,
+                        answer,
+                        "private_prompt",
+                        "private#9041").get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            assertTrue(tokens.contains("cooking_homemade_meals"));
+            assertTrue(tokens.contains("cozy_homebody"));
+            assertTrue(tokens.contains("reading_books"));
+            assertTrue(tokens.contains("morning_gym_sesson"));
+            assertTrue(tokens.contains("sports_fandom"));
+            assertTrue(tokens.contains("casual_gaming"));
+            assertTrue(tokens.contains("career_direction"));
+            assertTrue(tokens.contains("world_exploration"));
+            assertTrue(tokens.contains("long_term_goal"));
+            assertTrue(tokens.contains("clubbing"));
+            assertTrue(tokens.contains("female_friends"));
+            assertTrue(tokens.contains("performance"));
+            assertTrue(tokens.contains("day"));
+            assertTrue(tokens.contains("relaxing_rest_of_day"));
+            assertTrue(tokens.contains("bucket_list"));
+            assertFalse(tokens.contains("cooking"));
+            assertFalse(tokens.contains("homebody"));
+            assertFalse(tokens.contains("reading"));
+            assertFalse(tokens.contains("gym"));
+            assertFalse(tokens.contains("early_riser"));
+            assertFalse(tokens.contains("sports"));
+            assertFalse(tokens.contains("gaming"));
+            assertFalse(tokens.contains("career_focused"));
+            assertFalse(tokens.contains("travel"));
+            assertFalse(tokens.contains("ambition"));
+            assertFalse(tokens.contains("club"));
+            assertFalse(tokens.contains("socializing"));
+
+            Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(findRecord(stored, "cooking_homemade_meals", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "cozy_homebody", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "reading_books", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "morning_gym_sesson", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "sports_fandom", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "casual_gaming", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "career_direction", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "world_exploration", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "long_term_goal", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "clubbing", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "female_friends", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "performance", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "day", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "relaxing_rest_of_day", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "bucket_list", SignalIntent.SELF));
+            assertNull(findRecord(stored, "cooking", SignalIntent.SELF));
+            assertNull(findRecord(stored, "club", SignalIntent.SELF));
+            assertNull(findRecord(stored, "socializing", SignalIntent.SELF));
+        }
+    }
+
+    @Test
+    void extractAndAppendSignalsFromPrompt_negativeContextSuppressesBroadSocialUmbrella() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 9042L;
+            String question = "What's a vibe that makes you think not my person?";
+            String answer = "Pilates and brunch with the girls.";
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"socializing_with_friends","intent":"self","valence":0.78}]}
+                    """);
+            List<String> tokens;
+            try {
+                tokens = mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        question,
+                        answer,
+                        "private_prompt",
+                        "private#9042").get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            assertTrue(tokens.isEmpty(), "Broad social umbrella should be suppressed when not explicitly stated.");
+            Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNull(findRecord(stored, "socializing_with_friends", SignalIntent.SEEKING));
+            assertNull(findRecord(stored, "socializing", SignalIntent.SEEKING));
         }
     }
 
@@ -227,7 +352,10 @@ class CalypsoApiIntegrationTest {
             String answer = "Building this app.";
 
             OpenAIJson.setTestOverride((system, user) -> """
-                    {"signals":[{"token":"ambitious","intent":"self","confidence":0.89,"importance":0.70}]}
+                    {"signals":[
+                      {"token":"ambitious","intent":"self","valence":0.89},
+                      {"token":"app_builder","intent":"self","valence":0.78}
+                    ]}
                     """);
             try {
                 List<String> tokens = mgr.extractAndAppendSignalsFromPrompt(
@@ -264,7 +392,11 @@ class CalypsoApiIntegrationTest {
                     "user: I like the self improvement and social side.");
 
             OpenAIJson.setTestOverride((system, user) -> """
-                    {"signals":[{"token":"socially_active","intent":"self","confidence":0.80,"importance":0.65}]}
+                    {"signals":[
+                      {"token":"socially_active","intent":"self","valence":0.80},
+                      {"token":"gym","intent":"self","valence":0.84},
+                      {"token":"greek_life","intent":"self","valence":0.75}
+                    ]}
                     """);
             try {
                 List<String> tokens = mgr.extractAndAppendSignalsFromPrompt(
@@ -275,15 +407,407 @@ class CalypsoApiIntegrationTest {
                         "private_prompt",
                         "private#906").get(5, TimeUnit.SECONDS);
                 assertTrue(tokens.contains("socially_active"));
-                assertTrue(tokens.contains("gym_regular"));
-                assertTrue(tokens.contains("greek_life_alumni"));
+                assertTrue(tokens.contains("gym"));
+                assertTrue(tokens.contains("greek_life"));
             } finally {
                 OpenAIJson.clearTestOverride();
             }
 
             Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
-            assertNotNull(findRecord(stored, "gym_regular", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "greek_life_alumni", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "gym", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "greek_life", SignalIntent.SELF));
+        }
+    }
+
+    @Test
+    void extractAndAppendSignalsFromPrompt_expandsBothIntentIntoSelfAndSeeking() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 9061L;
+            String question = "I could talk for hours about...";
+            String answer = "Jojo's Bizarre Adventure";
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[
+                      {"token":"jojo_bizarre_adventure","intent":"both","valence":0.86,"intensity":0.70,"confidence":0.92,"importance":0.36}
+                    ]}
+                    """);
+            try {
+                List<String> tokens = mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        question,
+                        answer,
+                        "private_prompt",
+                        "private#9061").get(5, TimeUnit.SECONDS);
+                assertEquals(List.of("jojo_bizarre_adventure"), tokens);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(findRecord(stored, "jojo_bizarre_adventure", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "jojo_bizarre_adventure", SignalIntent.SEEKING));
+            assertNull(findRecord(stored, "jojo_bizarre_adventure", SignalIntent.BOTH));
+        }
+    }
+
+    @Test
+    void extractSignalsFromPrompt_prioritizesExplicitSpecificSignalsOverDerivedUmbrellas() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            String question = "I could talk for hours about...";
+            String answer = "Jojo's bizarre adventure";
+
+            OpenAIJson.setTestOverride((system, user) -> {
+                if (system != null && system.contains("refine prompt-level signals")) {
+                    return "{\"signals\":[]}";
+                }
+                return """
+                        {"signals":[
+                          {"token":"jojo_bizarre_adventure","intent":"self","valence":0.72,"intensity":0.39,"importance":0.27,"confidence":0.71},
+                          {"token":"anime","intent":"self","valence":0.62,"intensity":0.37,"importance":0.21,"confidence":0.66},
+                          {"token":"manga","intent":"self","valence":0.64,"intensity":0.43,"importance":0.29,"confidence":0.69},
+                          {"token":"anime_fan","intent":"self","valence":0.57,"intensity":0.29,"importance":0.21,"confidence":0.63}
+                        ]}
+                        """;
+            });
+            try {
+                List<ExtractedSignal> extracted = mgr.extractSignalsFromPrompt(question, answer).get(5, TimeUnit.SECONDS);
+                ExtractedSignal jojo = findExtracted(extracted, "jojo_bizarre_adventure", SignalIntent.SELF);
+                ExtractedSignal anime = findExtracted(extracted, "anime_fan", SignalIntent.SELF);
+                ExtractedSignal manga = findExtracted(extracted, "manga", SignalIntent.SELF);
+                ExtractedSignal animeGeneric = findExtracted(extracted, "anime", SignalIntent.SELF);
+
+                assertNotNull(jojo);
+                assertNotNull(manga);
+                assertNotNull(animeGeneric);
+                assertNotNull(anime);
+
+                assertTrue(jojo.valence() >= 0.84);
+                assertTrue(animeGeneric.valence() < jojo.valence());
+                assertTrue(manga.valence() < jojo.valence());
+                assertTrue(anime.valence() < jojo.valence());
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+        }
+    }
+
+    @Test
+    void extractAndAppendSignalsFromPrompt_storedScoresFavorExplicitOverInferred() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 9062L;
+            String question = "I could talk for hours about...";
+            String answer = "Jojo's bizarre adventure";
+
+            OpenAIJson.setTestOverride((system, user) -> {
+                if (system != null && system.contains("refine prompt-level signals")) {
+                    return "{\"signals\":[]}";
+                }
+                return """
+                        {"signals":[
+                          {"token":"jojo_bizarre_adventure","intent":"self","valence":0.72,"intensity":0.39,"importance":0.27,"confidence":0.71},
+                          {"token":"anime","intent":"self","valence":0.62,"intensity":0.37,"importance":0.21,"confidence":0.66},
+                          {"token":"manga","intent":"self","valence":0.64,"intensity":0.43,"importance":0.29,"confidence":0.69},
+                          {"token":"anime_fan","intent":"self","valence":0.57,"intensity":0.29,"importance":0.21,"confidence":0.63}
+                        ]}
+                        """;
+            });
+            try {
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        question,
+                        answer,
+                        "private_prompt",
+                        "private#9062").get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord jojo = findRecord(stored, "jojo_bizarre_adventure", SignalIntent.SELF);
+            SignalRecord anime = findRecord(stored, "anime", SignalIntent.SELF);
+            SignalRecord manga = findRecord(stored, "manga", SignalIntent.SELF);
+            SignalRecord animeFan = findRecord(stored, "anime_fan", SignalIntent.SELF);
+            assertNotNull(jojo);
+            assertNotNull(anime);
+            assertNotNull(manga);
+            assertNotNull(animeFan);
+
+            assertTrue(jojo.isSetValence());
+            assertTrue(anime.isSetValence());
+            assertTrue(manga.isSetValence());
+            assertTrue(animeFan.isSetValence());
+            assertTrue(jojo.getValence() > anime.getValence());
+            assertTrue(jojo.getValence() > manga.getValence());
+            assertTrue(jojo.getValence() > animeFan.getValence());
+        }
+    }
+
+    @Test
+    void extractSignalsFromPrompt_detectsEnthusiasticVariantAndBoostsExplicitSignal() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            String question = "What's something you could yap about for hours?";
+            String answer = "Jojo's bizarre adventure";
+
+            OpenAIJson.setTestOverride((system, user) -> {
+                if (system != null && system.contains("refine prompt-level signals")) {
+                    return "{\"signals\":[]}";
+                }
+                return """
+                        {"signals":[
+                          {"token":"jojo_bizarre_adventure","intent":"self","valence":0.72,"intensity":0.39,"importance":0.27,"confidence":0.71}
+                        ]}
+                        """;
+            });
+            try {
+                List<ExtractedSignal> extracted = mgr.extractSignalsFromPrompt(question, answer).get(5, TimeUnit.SECONDS);
+                ExtractedSignal jojo = findExtracted(extracted, "jojo_bizarre_adventure", SignalIntent.SELF);
+                assertNotNull(jojo);
+                assertTrue(jojo.valence() >= 0.90);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+        }
+    }
+
+    @Test
+    void extractAndAppendSignalsFromPrompt_publicPromptStrongExplicitFirstHitUsesFloors() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 9063L;
+            String question = "I could talk for hours about...";
+            String answer = "Jojo's bizarre adventure";
+
+            OpenAIJson.setTestOverride((system, user) -> {
+                if (system != null && system.contains("refine prompt-level signals")) {
+                    return "{\"signals\":[]}";
+                }
+                return """
+                        {"signals":[
+                          {"token":"jojo_bizarre_adventure","intent":"self","valence":0.72,"intensity":0.39,"importance":0.27,"confidence":0.71}
+                        ]}
+                        """;
+            });
+            try {
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        question,
+                        answer,
+                        "public_prompt",
+                        "public#9063").get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord jojo = findRecord(stored, "jojo_bizarre_adventure", SignalIntent.SELF);
+            assertNotNull(jojo);
+            assertTrue(jojo.isSetValence());
+            assertTrue(jojo.getValence() >= 0.72);
+        }
+    }
+
+    @Test
+    void extractSignalsFromPrompt_explicitAnswerFocusBoostIsTokenAgnostic() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            String question = "I could talk for hours about...";
+            String answer = "Elden Ring";
+
+            OpenAIJson.setTestOverride((system, user) -> {
+                if (system != null && system.contains("refine prompt-level signals")) {
+                    return "{\"signals\":[]}";
+                }
+                return """
+                        {"signals":[
+                          {"token":"elden_ring","intent":"self","valence":0.70,"intensity":0.24,"importance":0.20,"confidence":0.69},
+                          {"token":"gaming","intent":"self","valence":0.62,"intensity":0.28,"importance":0.18,"confidence":0.64}
+                        ]}
+                        """;
+            });
+            try {
+                List<ExtractedSignal> extracted = mgr.extractSignalsFromPrompt(question, answer).get(5, TimeUnit.SECONDS);
+                ExtractedSignal eldenRing = findExtracted(extracted, "elden_ring", SignalIntent.SELF);
+                ExtractedSignal gaming = findExtracted(extracted, "gaming", SignalIntent.SELF);
+                assertNotNull(eldenRing);
+                assertNotNull(gaming);
+
+                assertTrue(eldenRing.valence() > gaming.valence());
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+        }
+    }
+
+    @Test
+    void extractSignalsFromPrompt_canonicalizesSlangAnimeTags() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            String question = "I could talk for hours about...";
+            String answer = "Jojo's bizarre adventure";
+
+            OpenAIJson.setTestOverride((system, user) -> {
+                if (system != null && system.contains("refine prompt-level signals")) {
+                    return "{\"signals\":[]}";
+                }
+                return """
+                        {"signals":[
+                          {"token":"weebself","intent":"self","valence":0.66,"intensity":0.31,"importance":0.22,"confidence":0.68},
+                          {"token":"shonenself","intent":"self","valence":0.64,"intensity":0.33,"importance":0.23,"confidence":0.67},
+                          {"token":"anime","intent":"self","valence":0.65,"intensity":0.32,"importance":0.24,"confidence":0.69}
+                        ]}
+                        """;
+            });
+            try {
+                List<ExtractedSignal> extracted = mgr.extractSignalsFromPrompt(question, answer).get(5, TimeUnit.SECONDS);
+                assertNotNull(findExtracted(extracted, "anime", SignalIntent.SELF));
+                assertNotNull(findExtracted(extracted, "weeb", SignalIntent.SELF));
+                assertNotNull(findExtracted(extracted, "shonen", SignalIntent.SELF));
+                assertNull(findExtracted(extracted, "weebself", SignalIntent.SELF));
+                assertNull(findExtracted(extracted, "shonenself", SignalIntent.SELF));
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+        }
+    }
+
+    @Test
+    void extractAndAppendSignalsFromPrompt_collapsesEquivalentPossessiveTokenVariants() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 9064L;
+            String question = "I could talk for hours about...";
+            String answer = "Jojo's bizarre adventure";
+            AtomicInteger pass = new AtomicInteger(0);
+
+            OpenAIJson.setTestOverride((system, user) -> {
+                if (system != null && system.contains("refine prompt-level signals")) {
+                    return "{\"signals\":[]}";
+                }
+                if (pass.getAndIncrement() == 0) {
+                    return """
+                            {"signals":[
+                              {"token":"jojos_bizarre_adventure","intent":"self","valence":0.76,"intensity":0.42,"importance":0.31,"confidence":0.80}
+                            ]}
+                            """;
+                }
+                return """
+                        {"signals":[
+                          {"token":"jojo_bizarre_adventure","intent":"self","valence":0.82,"intensity":0.48,"importance":0.35,"confidence":0.86}
+                        ]}
+                        """;
+            });
+            try {
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        question,
+                        answer,
+                        "private_prompt",
+                        "private#9064-a").get(5, TimeUnit.SECONDS);
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        question,
+                        answer,
+                        "private_prompt",
+                        "private#9064-b").get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord jojo = findRecord(stored, "jojo_bizarre_adventure", SignalIntent.SELF);
+            SignalRecord jojos = findRecord(stored, "jojos_bizarre_adventure", SignalIntent.SELF);
+            assertNotNull(jojo);
+            assertNotNull(jojos);
+            assertTrue(jojo.getCount() >= 1);
+            assertTrue(jojos.getCount() >= 1);
+        }
+    }
+
+    @Test
+    void extractAndAppendSignalsFromPrompt_collapsesEquivalentPossessiveTokenVariantsAcrossIntents() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 9065L;
+            String question = "I could talk for hours about...";
+            String answer = "Jojo's bizarre adventure";
+            AtomicInteger pass = new AtomicInteger(0);
+
+            OpenAIJson.setTestOverride((system, user) -> {
+                if (system != null && system.contains("refine prompt-level signals")) {
+                    return "{\"signals\":[]}";
+                }
+                if (pass.getAndIncrement() == 0) {
+                    return """
+                            {"signals":[
+                              {"token":"jojos_bizarre_adventure","intent":"self","valence":0.78,"intensity":0.44,"importance":0.32,"confidence":0.81}
+                            ]}
+                            """;
+                }
+                return """
+                        {"signals":[
+                          {"token":"jojo_bizarre_adventure","intent":"seeking","valence":0.74,"intensity":0.40,"importance":0.30,"confidence":0.79}
+                        ]}
+                        """;
+            });
+            try {
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        question,
+                        answer,
+                        "private_prompt",
+                        "private#9065-a").get(5, TimeUnit.SECONDS);
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        question,
+                        answer,
+                        "private_prompt",
+                        "private#9065-b").get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNull(findRecord(stored, "jojo_bizarre_adventure", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "jojo_bizarre_adventure", SignalIntent.SEEKING));
+            assertNotNull(findRecord(stored, "jojos_bizarre_adventure", SignalIntent.SELF));
+        }
+    }
+
+    @Test
+    void extractSignalsFromPrompt_collapsesEquivalentPossessiveTokenVariantsInExtraction() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            String question = "I could talk for hours about...";
+            String answer = "Jojo's bizarre adventure";
+
+            OpenAIJson.setTestOverride((system, user) -> {
+                if (system != null && system.contains("refine prompt-level signals")) {
+                    return "{\"signals\":[]}";
+                }
+                return """
+                        {"signals":[
+                          {"token":"jojos_bizarre_adventure","intent":"self","valence":0.74,"intensity":0.40,"importance":0.30,"confidence":0.79},
+                          {"token":"jojo_bizarre_adventure","intent":"self","valence":0.82,"intensity":0.48,"importance":0.35,"confidence":0.86}
+                        ]}
+                        """;
+            });
+            try {
+                List<ExtractedSignal> extracted = mgr.extractSignalsFromPrompt(question, answer).get(5, TimeUnit.SECONDS);
+                assertNotNull(findExtracted(extracted, "jojo_bizarre_adventure", SignalIntent.SELF));
+                assertNotNull(findExtracted(extracted, "jojos_bizarre_adventure", SignalIntent.SELF));
+                long canonicalCount = extracted.stream()
+                        .filter(sig -> sig != null
+                                && sig.intent() == SignalIntent.SELF
+                                && "jojo_bizarre_adventure".equals(sig.token()))
+                        .count();
+                assertEquals(1L, canonicalCount);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
         }
     }
 
@@ -530,6 +1054,429 @@ class CalypsoApiIntegrationTest {
     }
 
     @Test
+    void publicPromptReactions_reuseAnswerSignalsAndHonorStrengthWithoutExtraExtraction() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = 950L;
+            long travelTargetId = 951L;
+            long romanceTargetId = 952L;
+            long phdTargetId = 953L;
+
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), travelTargetId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), romanceTargetId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), phdTargetId).get(5, TimeUnit.SECONDS);
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"travel","intent":"self","valence":0.86,"intensity":0.52,"importance":0.44,"confidence":0.91}]}
+                    """);
+            PublicPromptAnswer travelAnswer;
+            try {
+                travelAnswer = mgr.postPublicPromptAnswer(travelTargetId, "prompt.life.goal", "Travel more often").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"romance_novels","intent":"self","valence":0.88,"intensity":0.54,"importance":0.48,"confidence":0.92}]}
+                    """);
+            PublicPromptAnswer romanceAnswer;
+            try {
+                romanceAnswer = mgr.postPublicPromptAnswer(romanceTargetId, "prompt.talk.hours",
+                        "my favorite romance novels").get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"phd","intent":"self","valence":0.83,"intensity":0.47,"importance":0.42,"confidence":0.93}]}
+                    """);
+            PublicPromptAnswer phdAnswer;
+            try {
+                phdAnswer = mgr.postPublicPromptAnswer(phdTargetId, "prompt.life.goal", "Get a PhD").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            AtomicInteger reactionLlmCalls = new AtomicInteger(0);
+            OpenAIJson.setTestOverride((system, user) -> {
+                reactionLlmCalls.incrementAndGet();
+                return "{\"signals\":[]}";
+            });
+            try {
+                mgr.postPublicPromptReaction(viewerId, travelAnswer.getAnswerId(), 3).get(5, TimeUnit.SECONDS);
+                mgr.postPublicPromptReaction(viewerId, romanceAnswer.getAnswerId(), -2).get(5, TimeUnit.SECONDS);
+                mgr.postPublicPromptReaction(viewerId, phdAnswer.getAnswerId(), 1).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+            assertEquals(0, reactionLlmCalls.get(),
+                    "Public prompt reactions should reuse answer tokens and avoid extra LLM extraction.");
+
+            SignalRecord travel = awaitSignal(mgr, viewerId, "travel", SignalIntent.SEEKING, 5000);
+            assertNotNull(travel);
+            assertTrue(travel.isSetValence());
+            assertTrue(travel.getValence() > 0.0);
+            assertTrue(Math.abs(travel.getValence() - 0.36) <= 0.12,
+                    "Strength 3 should stay strongest while using scaled reaction impact.");
+
+            SignalRecord romanceNovels = awaitSignal(mgr, viewerId, "romance_novels", SignalIntent.SEEKING, 5000);
+            assertNotNull(romanceNovels);
+            assertTrue(romanceNovels.isSetValence());
+            assertTrue(romanceNovels.getValence() < -0.20,
+                    "Negative reaction strengths should produce negative valence.");
+
+            String phdToken = "phd";
+            if (phdAnswer.isSetSignalTokens() && phdAnswer.getSignalTokens() != null) {
+                for (String token : phdAnswer.getSignalTokens()) {
+                    if (token != null && !token.isBlank()) {
+                        phdToken = token;
+                        break;
+                    }
+                }
+            }
+            SignalRecord phd = awaitSignal(mgr, viewerId, phdToken, SignalIntent.SEEKING, 5000);
+            assertNotNull(phd);
+            assertTrue(phd.isSetValence());
+            assertTrue(phd.getValence() > 0.0);
+            assertTrue(travel.getValence() > phd.getValence(),
+                    "Strong positive reactions should carry more valence than weak positive reactions.");
+
+            Signals stored = mgr.getSignals(viewerId, viewerId).get(5, TimeUnit.SECONDS);
+            assertNull(findRecord(stored, "travel", SignalIntent.SELF));
+            assertNull(findRecord(stored, "romance_novels", SignalIntent.SELF));
+            assertNull(findRecord(stored, phdToken, SignalIntent.SELF));
+        }
+    }
+
+    @Test
+    void publicPromptReactions_backfillMissingAnswerSignalsOnceThenReuseTokens() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = 9531L;
+            long targetId = 9532L;
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"jojo_bizarre_adventure","intent":"self","valence":0.91,"intensity":0.51,"importance":0.50,"confidence":0.93}]}
+                    """);
+            PublicPromptAnswer answer;
+            try {
+                answer = mgr.postPublicPromptAnswer(targetId, "prompt.talk.hours", "Jojo's bizarre adventure")
+                        .get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            // Simulate legacy rows that predate signal token persistence.
+            Depot answersDepot = ipc.clusterDepot(Core.class.getName(), "*publicPromptAnswerDepot");
+            PublicPromptAnswer tokenless = new PublicPromptAnswer(answer);
+            tokenless.unsetSignalTokens();
+            tokenless.setUpdatedAt(System.currentTimeMillis());
+            answersDepot.append(tokenless);
+
+            AtomicInteger backfillCalls = new AtomicInteger(0);
+            OpenAIJson.setTestOverride((system, user) -> {
+                backfillCalls.incrementAndGet();
+                return """
+                        {"signals":[{"token":"jojo_bizarre_adventure","intent":"self","valence":0.91,"intensity":0.51,"importance":0.50,"confidence":0.93}]}
+                        """;
+            });
+            try {
+                mgr.postPublicPromptReaction(viewerId, answer.getAnswerId(), 3).get(5, TimeUnit.SECONDS);
+                waitFor(() -> backfillCalls.get() > 0, 5000,
+                        "Reactions should backfill answer-level tokens when missing.");
+                waitFor(() -> {
+                    List<PublicPromptAnswer> mine = mgr.getMyPublicPromptAnswers(targetId).get(5, TimeUnit.SECONDS);
+                    for (PublicPromptAnswer row : mine) {
+                        if (row == null || row.getAnswerId() == null || !row.getAnswerId().equals(answer.getAnswerId())) {
+                            continue;
+                        }
+                        return row.isSetSignalTokens()
+                                && row.getSignalTokens() != null
+                                && !row.getSignalTokens().isEmpty();
+                    }
+                    return false;
+                }, 5000, "Backfill should persist answer tokens before subsequent reactions.");
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+            assertTrue(backfillCalls.get() > 0,
+                    "Reactions should backfill answer-level tokens when missing.");
+
+            AtomicInteger secondReactionCalls = new AtomicInteger(0);
+            OpenAIJson.setTestOverride((system, user) -> {
+                secondReactionCalls.incrementAndGet();
+                return "{\"signals\":[]}";
+            });
+            try {
+                mgr.postPublicPromptReaction(viewerId, answer.getAnswerId(), 2).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+            assertEquals(0, secondReactionCalls.get(),
+                    "After backfill, subsequent reactions should reuse stored answer tokens.");
+
+            SignalRecord jojo = awaitSignal(mgr, viewerId, "jojo_bizarre_adventure", SignalIntent.SEEKING, 5000);
+            assertNotNull(jojo);
+            assertTrue(jojo.isSetValence());
+            assertTrue(jojo.getValence() > 0.0);
+        }
+    }
+
+    @Test
+    void publicPromptReactions_frequencyAndStrengthShapeFinalValence() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = 9533L;
+            long travelTargetA = 9534L;
+            long travelTargetB = 9535L;
+            long travelTargetC = 9536L;
+            long clubTarget = 9537L;
+            long jojoTargetA = 9538L;
+            long jojoTargetB = 9539L;
+            long neutralTarget = 9540L;
+
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), travelTargetA).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), travelTargetB).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), travelTargetC).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), clubTarget).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), jojoTargetA).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), jojoTargetB).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), neutralTarget).get(5, TimeUnit.SECONDS);
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"travel","intent":"self","valence":0.84}]}
+                    """);
+            PublicPromptAnswer travelA;
+            try {
+                travelA = mgr.postPublicPromptAnswer(travelTargetA, "prompt.life.goal", "Travel more").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"travel","intent":"self","valence":0.82}]}
+                    """);
+            PublicPromptAnswer travelB;
+            try {
+                travelB = mgr.postPublicPromptAnswer(travelTargetB, "prompt.disappeared.year", "See more countries").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"travel","intent":"self","valence":0.80}]}
+                    """);
+            PublicPromptAnswer travelC;
+            try {
+                travelC = mgr.postPublicPromptAnswer(travelTargetC, "prompt.life.goal", "Travel nonstop").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"club","intent":"self","valence":0.82}]}
+                    """);
+            PublicPromptAnswer club;
+            try {
+                club = mgr.postPublicPromptAnswer(clubTarget, "prompt.ideal.sunday", "Clubbing with friends").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"jojos_bizarre_adventure","intent":"self","valence":0.92}]}
+                    """);
+            PublicPromptAnswer jojoA;
+            try {
+                jojoA = mgr.postPublicPromptAnswer(jojoTargetA, "prompt.talk.hours", "Jojo's bizarre adventure").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"jojos_bizarre_adventure","intent":"self","valence":0.90}]}
+                    """);
+            PublicPromptAnswer jojoB;
+            try {
+                jojoB = mgr.postPublicPromptAnswer(jojoTargetB, "prompt.talk.hours", "Jojo all day").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"kite_surfing","intent":"self","valence":0.88}]}
+                    """);
+            PublicPromptAnswer neutral;
+            try {
+                neutral = mgr.postPublicPromptAnswer(neutralTarget, "prompt.ideal.sunday", "Kite surfing").get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            mgr.postPublicPromptReaction(viewerId, travelA.getAnswerId(), 1).get(5, TimeUnit.SECONDS);
+            mgr.postPublicPromptReaction(viewerId, travelB.getAnswerId(), 1).get(5, TimeUnit.SECONDS);
+            mgr.postPublicPromptReaction(viewerId, travelC.getAnswerId(), 1).get(5, TimeUnit.SECONDS);
+            mgr.postPublicPromptReaction(viewerId, club.getAnswerId(), 1).get(5, TimeUnit.SECONDS);
+            mgr.postPublicPromptReaction(viewerId, jojoA.getAnswerId(), 3).get(5, TimeUnit.SECONDS);
+            mgr.postPublicPromptReaction(viewerId, jojoB.getAnswerId(), 3).get(5, TimeUnit.SECONDS);
+            mgr.postPublicPromptReaction(viewerId, neutral.getAnswerId(), PromptReaction.SKIP).get(5, TimeUnit.SECONDS);
+
+            SignalRecord travel = awaitSignal(mgr, viewerId, "travel", SignalIntent.SEEKING, 5000);
+            SignalRecord clubSignal = awaitSignal(mgr, viewerId, "club", SignalIntent.SEEKING, 5000);
+            SignalRecord jojo = awaitSignal(mgr, viewerId, "jojos_bizarre_adventure", SignalIntent.SEEKING, 5000);
+
+            assertNotNull(travel);
+            assertNotNull(clubSignal);
+            assertNotNull(jojo);
+            assertTrue(travel.isSetValence());
+            assertTrue(clubSignal.isSetValence());
+            assertTrue(jojo.isSetValence());
+            assertTrue(travel.getValence() > clubSignal.getValence(),
+                    "Repeated slight likes should outweigh a single slight like.");
+            assertTrue(jojo.getValence() > travel.getValence(),
+                    "Repeated strong likes should outweigh repeated slight likes.");
+
+            Signals stored = mgr.getSignals(viewerId, viewerId).get(5, TimeUnit.SECONDS);
+            assertNull(findRecord(stored, "kite_surfing", SignalIntent.SEEKING),
+                    "Neutral reactions should not create seeking signals.");
+        }
+    }
+
+    @Test
+    void getSignals_selfBootstrapsSignalsFromSeededPublicAnswers() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 9541L;
+
+            PublicPromptAnswer seeded = new PublicPromptAnswer();
+            seeded.setAnswerId(UUID.randomUUID().toString());
+            seeded.setAccountId(accountId);
+            seeded.setPromptId("prompt.talk.hours");
+            seeded.setBody("Jojo's bizarre adventure");
+            long now = System.currentTimeMillis();
+            seeded.setCreatedAt(now);
+            seeded.setUpdatedAt(now);
+            ipc.clusterDepot(Core.class.getName(), "*publicPromptAnswerDepot").append(seeded);
+
+            AtomicInteger bootstrapCalls = new AtomicInteger(0);
+            OpenAIJson.setTestOverride((system, user) -> {
+                bootstrapCalls.incrementAndGet();
+                return """
+                        {"signals":[{"token":"jojo_bizarre_adventure","intent":"self","valence":0.86}]}
+                        """;
+            });
+            Signals bootstrapped;
+            try {
+                bootstrapped = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            assertTrue(bootstrapCalls.get() > 0, "Self signal reads should bootstrap seeded public prompt answers.");
+            SignalRecord jojo = findRecord(bootstrapped, "jojo_bizarre_adventure", SignalIntent.SELF);
+            assertNotNull(jojo);
+            assertTrue(jojo.isSetValence());
+            assertTrue(Math.abs(jojo.getValence() - 0.86) <= 0.10);
+
+            List<PublicPromptAnswer> mine = mgr.getMyPublicPromptAnswers(accountId).get(5, TimeUnit.SECONDS);
+            assertFalse(mine.isEmpty());
+            assertTrue(mine.get(0).isSetSignalTokens());
+            assertTrue(mine.get(0).getSignalTokens().contains("jojo_bizarre_adventure"));
+        }
+    }
+
+    @Test
+    void promptSignalProfiles_areInjectedAcrossPromptPaths() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = 954L;
+            long targetId = 955L;
+
+            AtomicBoolean sawPrivateProfile = new AtomicBoolean(false);
+            AtomicBoolean sawPublicProfile = new AtomicBoolean(false);
+            AtomicBoolean sawReactionProfile = new AtomicBoolean(false);
+            AtomicInteger specificityCalls = new AtomicInteger(0);
+
+            OpenAIJson.setTestOverride((system, user) -> {
+                String safeSystem = system == null ? "" : system;
+                String safeUser = user == null ? "" : user;
+                if (safeSystem.contains("refine prompt-level signals")) {
+                    specificityCalls.incrementAndGet();
+                    return "{\"signals\":[]}";
+                }
+                if (safeUser.contains("prompt_id: \"private.hobbies\"")
+                        && safeUser.contains("Split into self hobbies and partner-shared hobby preferences")) {
+                    sawPrivateProfile.set(true);
+                    return """
+                            {"signals":[{"token":"strength_training","intent":"self","valence":0.82,"intensity":0.42,"importance":0.30,"confidence":0.90}]}
+                            """;
+                }
+                if (safeUser.contains("prompt_id: \"prompt.talk.hours\"")
+                        && safeUser.contains("Treat the named subject as explicit affinity")) {
+                    sawPublicProfile.set(true);
+                    return """
+                            {"signals":[{"token":"jojo_bizarre_adventure","intent":"self","valence":0.90,"intensity":0.50,"importance":0.50,"confidence":0.92}]}
+                            """;
+                }
+                if (safeUser.contains("prompt_id: \"prompt.hill.die.on\"")
+                        && !safeUser.contains("reaction=")) {
+                    return """
+                            {"signals":[{"token":"romance_novels","intent":"self","valence":0.72,"intensity":0.36,"importance":0.28,"confidence":0.82}]}
+                            """;
+                }
+                if (safeUser.contains("prompt_id: \"prompt.hill.die.on\"")
+                        && safeUser.contains("reaction=like")) {
+                    sawReactionProfile.set(true);
+                    return """
+                            {"signals":[{"token":"romance_novels","intent":"self","valence":0.70,"intensity":0.34,"importance":0.26,"confidence":0.76}]}
+                            """;
+                }
+                return "{\"signals\":[]}";
+            });
+            try {
+                mgr.extractAndAppendSignalsFromPrompt(
+                        viewerId,
+                        "private.hobbies",
+                        "What are your hobbies? Which hobbies would you like to share with your partner?",
+                        "lifting and hiking",
+                        "private_prompt",
+                        "private#profile-check").get(5, TimeUnit.SECONDS);
+
+                mgr.postPublicPromptAnswer(targetId, "prompt.talk.hours", "Jojo's bizarre adventure")
+                        .get(5, TimeUnit.SECONDS);
+
+                PublicPromptAnswer seed = mgr.postPublicPromptAnswer(targetId, "prompt.hill.die.on",
+                        "my favorite romance novels").get(5, TimeUnit.SECONDS);
+                mgr.postPublicPromptReaction(viewerId, seed.getAnswerId(), PromptReaction.LIKE).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            assertTrue(sawPrivateProfile.get(), "private prompt path should include profile hint payload");
+            assertTrue(sawPublicProfile.get(), "public prompt path should include profile hint payload");
+            assertFalse(sawReactionProfile.get(),
+                    "public prompt reactions should reuse answer tokens and avoid profile extraction calls");
+            SignalRecord reactionDerived = awaitSignal(mgr, viewerId, "romance_novels", SignalIntent.SEEKING, 5000);
+            assertNotNull(reactionDerived);
+            assertTrue(reactionDerived.isSetValence());
+            assertTrue(reactionDerived.getValence() > 0.0);
+            assertEquals(0, specificityCalls.get(),
+                    "profiled prompt extraction should run in single-pass mode without specificity enrichment calls");
+        }
+    }
+
+    @Test
     void publicPromptFeedSkipsDeletedAnswers() throws Exception {
         try (InProcessCluster ipc = newCluster()) {
             CalypsoApiManager mgr = newManager(ipc);
@@ -651,8 +1598,7 @@ class CalypsoApiIntegrationTest {
             desired.setToken("loves_hiking");
             desired.setIntent(SignalIntent.SEEKING);
             desired.setCount(3);
-            desired.setConfidence(0.95);
-            desired.setImportance(0.95);
+            desired.setValence(0.95);
             desired.setFirstSeen(now);
             desired.setLastSeen(now);
             desired.setSource("test");
@@ -701,6 +1647,12 @@ class CalypsoApiIntegrationTest {
             assertNotNull(facecards);
             assertFalse(facecards.isEmpty(), "Facecards should backfill from top-ranked candidates.");
             assertTrue(facecards.size() <= 20);
+            Object first = facecards.get(0);
+            assertTrue(first instanceof GetMatch);
+            GetMatch firstMatch = (GetMatch) first;
+            assertNotNull(firstMatch.scorerDebug, "Facecards should include scorer debug metadata.");
+            assertTrue(firstMatch.scorerDebug.containsKey("profileSignalBlend"));
+            assertTrue(firstMatch.scorerDebug.containsKey("finalScore"));
         }
     }
 
@@ -741,6 +1693,78 @@ class CalypsoApiIntegrationTest {
                 Object raw = pairReactionP.selectOne(Path.key(viewerId, targetB));
                 return raw instanceof Number && ((Number) raw).doubleValue() >= 4.0;
             }, 5000, "LIKE should apply positive pair reaction score.");
+        }
+    }
+
+    @Test
+    void facecardsTier3RerankCanPromoteLowerStage2Candidate() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = createAccount(mgr, "Tier3 Viewer", "+1555000955");
+            long targetA = createAccount(mgr, "Tier3 Target A", "+1555000956");
+            long targetB = createAccount(mgr, "Tier3 Target B", "+1555000957");
+
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetA).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetB).get(5, TimeUnit.SECONDS);
+
+            MatchReranker.setTestOverride(request -> {
+                MatchReranker.RerankResult result = new MatchReranker.RerankResult();
+                if (request == null || request.candidates == null || request.candidates.isEmpty()) {
+                    return result;
+                }
+                int n = Math.min(2, request.candidates.size());
+                for (int i = 0; i < n; i++) {
+                    MatchReranker.Candidate candidate = request.candidates.get(i);
+                    if (candidate == null || candidate.id == null || candidate.id.isBlank()) {
+                        continue;
+                    }
+                    MatchReranker.Decision decision = new MatchReranker.Decision();
+                    decision.id = candidate.id;
+                    decision.confidence = 1.0;
+                    if (i == 0) {
+                        decision.compatibility = 0.0;
+                        decision.hardBlocker = true;
+                        decision.reason = "Strong mismatch";
+                    } else {
+                        decision.compatibility = 1.0;
+                        decision.hardBlocker = false;
+                        decision.reason = "Strong overlap";
+                    }
+                    result.decisions.add(decision);
+                }
+                return result;
+            });
+
+            List<?> reranked;
+            try {
+                reranked = awaitFacecards(mgr, viewerId, 20, 20000);
+            } finally {
+                MatchReranker.clearTestOverride();
+            }
+
+            assertNotNull(reranked);
+            assertFalse(reranked.isEmpty());
+            int appliedCount = 0;
+            int adjustedCount = 0;
+            for (Object raw : reranked) {
+                if (!(raw instanceof GetMatch match)) {
+                    continue;
+                }
+                if (match == null || match.scorerDebug == null) {
+                    continue;
+                }
+                if (Boolean.TRUE.equals(match.scorerDebug.get("tier3Applied"))) {
+                    appliedCount++;
+                    double before = scoreFromDebug(match.scorerDebug, "scoreBeforeTier3", match.score);
+                    double after = scoreFromDebug(match.scorerDebug, "scoreAfterTier3", match.score);
+                    if (Math.abs(after - before) > 1e-9) {
+                        adjustedCount++;
+                    }
+                }
+            }
+            assertTrue(appliedCount >= 1, "Expected tier3 rerank metadata on at least one facecard.");
+            assertTrue(adjustedCount >= 1, "Expected tier3 rerank to change at least one facecard score.");
         }
     }
 
@@ -1090,6 +2114,21 @@ class CalypsoApiIntegrationTest {
         return filters;
     }
 
+    private ExtractedSignal findExtracted(List<ExtractedSignal> extracted, String token, SignalIntent intent) {
+        if (extracted == null || extracted.isEmpty())
+            return null;
+        for (ExtractedSignal signal : extracted) {
+            if (signal == null)
+                continue;
+            if (!Objects.equals(token, signal.token()))
+                continue;
+            SignalIntent signalIntent = signal.intent() == null ? SignalIntent.SELF : signal.intent();
+            if (Objects.equals(intent, signalIntent))
+                return signal;
+        }
+        return null;
+    }
+
     private SignalRecord findRecord(Signals stored, String token, SignalIntent intent) {
         if (stored == null || stored.getRecords() == null)
             return null;
@@ -1160,6 +2199,17 @@ class CalypsoApiIntegrationTest {
             }
         }
         return null;
+    }
+
+    private static double scoreFromDebug(Map<String, Object> scorerDebug, String key, double fallback) {
+        if (scorerDebug == null || key == null || key.isBlank()) {
+            return fallback;
+        }
+        Object raw = scorerDebug.get(key);
+        if (!(raw instanceof Number)) {
+            return fallback;
+        }
+        return ((Number) raw).doubleValue();
     }
 
     private void waitFor(Check condition, long timeoutMs, String message) throws Exception {

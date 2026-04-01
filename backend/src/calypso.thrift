@@ -142,9 +142,8 @@ struct SignalRecord {
   5: optional i32 count;
   6: optional string lastContext;
   7: optional SignalIntent intent;
-  8: optional double confidence;
-  9: optional double importance; // system inferred 0..1
  10: optional string sourceId; // pointer back to the originating entity
+  11: optional double valence; // -1..1, direction (dislike..like)
 }
 
 struct Signals {

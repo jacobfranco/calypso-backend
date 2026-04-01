@@ -658,8 +658,8 @@ public class CalypsoApiController {
         if (me == null || !me.equals(accountId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         }
-        PromptReaction reaction = payload == null ? null : payload.parsedReaction();
-        return Mono.fromFuture(manager.postPublicPromptReaction(accountId, answerId, reaction))
+        Integer strength = payload == null ? null : payload.parsedPublicPromptStrength();
+        return Mono.fromFuture(manager.postPublicPromptReaction(accountId, answerId, strength))
                 .map(ok -> Collections.<String, Object>emptyMap())
                 .onErrorMap(IllegalArgumentException.class,
                         ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));

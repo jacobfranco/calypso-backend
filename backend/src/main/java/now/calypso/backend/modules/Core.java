@@ -27,9 +27,13 @@ public class Core implements RamaModule {
       private static final double FOLLOWUP_MIN_NORMALIZED_SCORE = 0.60;
       private static final String ALL_ACCOUNTS_KEY = "all";
       private static final String FACECARD_REACTION_ANSWER_PREFIX = "facecard_target:";
+      private static final String PUBLIC_REACTION_STRENGTH_PROMPT_SUFFIX = "|reaction_strength:";
+      private static final int PUBLIC_REACTION_STRENGTH_MIN = -3;
+      private static final int PUBLIC_REACTION_STRENGTH_MAX = 3;
       private static final double FACECARD_PAIR_DELTA_LIKE = 6.0;
       private static final double FACECARD_PAIR_DELTA_DISLIKE = -14.0;
       private static final double FACECARD_PAIR_DELTA_SKIP = -1.0;
+      private static final double SIGNAL_PRESENT_EPSILON = 1.0e-6;
 
       // ---------------------------
       // Low-level helpers
@@ -136,13 +140,73 @@ public class Core implements RamaModule {
             return MIN_SCORE_BALANCED;
       }
 
+      private static double clampSigned(double value) {
+            if (Double.isNaN(value))
+                  return 0.0;
+            if (value < -1.0)
+                  return -1.0;
+            if (value > 1.0)
+                  return 1.0;
+            return value;
+      }
+
+      private static ParsedSignalToken parseTokenAndValence(SignalRecord record) {
+            if (record == null || !record.isSetToken() || record.getToken() == null)
+                  return null;
+            String token = record.getToken().trim().toLowerCase(Locale.ROOT);
+            if (token.isBlank())
+                  return null;
+            boolean explicitValence = record.isSetValence();
+            double valence = explicitValence ? clampSigned(record.getValence()) : 1.0;
+            boolean stripped;
+            do {
+                  stripped = false;
+                  if (token.startsWith("anti_") && token.length() > "anti_".length()) {
+                        if (!explicitValence)
+                              valence = -1.0;
+                        token = token.substring("anti_".length());
+                        stripped = true;
+                  } else if (token.startsWith("not_") && token.length() > "not_".length()) {
+                        if (!explicitValence)
+                              valence = -1.0;
+                        token = token.substring("not_".length());
+                        stripped = true;
+                  } else if (token.startsWith("no_") && token.length() > "no_".length()) {
+                        if (!explicitValence)
+                              valence = -1.0;
+                        token = token.substring("no_".length());
+                        stripped = true;
+                  } else if (token.startsWith("avoid_") && token.length() > "avoid_".length()) {
+                        if (!explicitValence)
+                              valence = -1.0;
+                        token = token.substring("avoid_".length());
+                        stripped = true;
+                  } else if (token.startsWith("exclude_") && token.length() > "exclude_".length()) {
+                        if (!explicitValence)
+                              valence = -1.0;
+                        token = token.substring("exclude_".length());
+                        stripped = true;
+                  }
+            } while (stripped);
+            token = token.trim();
+            if (token.isBlank())
+                  return null;
+            return new ParsedSignalToken(token, valence);
+      }
+
+      private static void accumulateSignalWeight(Map<String, Double> out, String token, double signedWeight) {
+            if (token == null || token.isBlank() || Math.abs(signedWeight) <= SIGNAL_PRESENT_EPSILON)
+                  return;
+            out.put(token, out.getOrDefault(token, 0.0) + signedWeight);
+      }
+
       private static Map<String, Double> toSignalWeights(Signals signals, boolean desired) {
             HashMap<String, Double> out = new HashMap<>();
             if (signals == null || !signals.isSetRecords() || signals.getRecords() == null) {
                   return out;
             }
             for (SignalRecord r : signals.getRecords()) {
-                  if (r == null || !r.isSetToken() || r.getToken() == null || r.getToken().isBlank())
+                  if (r == null)
                         continue;
                   SignalIntent intent = r.isSetIntent() ? r.getIntent() : null;
                   boolean keep;
@@ -153,14 +217,23 @@ public class Core implements RamaModule {
                   }
                   if (!keep)
                         continue;
-                  double count = r.isSetCount() ? Math.max(1.0, r.getCount()) : 1.0;
-                  double confidence = r.isSetConfidence() ? clamp01(r.getConfidence()) : 0.65;
-                  double importance = r.isSetImportance() ? clamp01(r.getImportance()) : 0.5;
-                  double weight = Math.log1p(count) * (0.6 + 0.4 * confidence) * (0.5 + 0.5 * importance);
-                  if (weight <= 0.0)
+
+                  ParsedSignalToken parsed = parseTokenAndValence(r);
+                  if (parsed == null)
                         continue;
-                  String token = r.getToken().trim();
-                  out.put(token, out.getOrDefault(token, 0.0) + weight);
+                  double valence = clampSigned(parsed.valence);
+                  double valenceMagnitude = Math.abs(valence);
+                  if (valenceMagnitude <= SIGNAL_PRESENT_EPSILON)
+                        continue;
+
+                  double count = r.isSetCount() ? Math.max(1.0, r.getCount()) : 1.0;
+                  double signedWeight = Math.signum(valence)
+                              * Math.log1p(count)
+                              * valenceMagnitude;
+                  if (Math.abs(signedWeight) <= SIGNAL_PRESENT_EPSILON)
+                        continue;
+
+                  accumulateSignalWeight(out, parsed.token, signedWeight);
             }
             return out;
       }
@@ -173,46 +246,59 @@ public class Core implements RamaModule {
             HashSet<String> keys = new HashSet<>();
             keys.addAll(a.keySet());
             keys.addAll(b.keySet());
-            double inter = 0.0;
+            double signedOverlap = 0.0;
             double union = 0.0;
             for (String k : keys) {
                   double av = a.getOrDefault(k, 0.0);
                   double bv = b.getOrDefault(k, 0.0);
-                  inter += Math.min(av, bv);
-                  union += Math.max(av, bv);
+                  double aAbs = Math.abs(av);
+                  double bAbs = Math.abs(bv);
+                  if (aAbs <= SIGNAL_PRESENT_EPSILON && bAbs <= SIGNAL_PRESENT_EPSILON)
+                        continue;
+                  union += Math.max(aAbs, bAbs);
+                  if (aAbs <= SIGNAL_PRESENT_EPSILON || bAbs <= SIGNAL_PRESENT_EPSILON)
+                        continue;
+                  double signAlign = Math.signum(av) * Math.signum(bv);
+                  signedOverlap += Math.min(aAbs, bAbs) * signAlign;
             }
-            if (union <= 0.0)
+            if (union <= SIGNAL_PRESENT_EPSILON)
                   return 0.0;
-            return clamp01(inter / union);
+            return clamp01(0.5 + (0.5 * (signedOverlap / union)));
       }
 
       private static double directionalCompatibility(Map<String, Double> desired, Map<String, Double> otherSelf) {
             if (desired == null || desired.isEmpty())
                   return 0.65;
             Map<String, Double> other = (otherSelf == null) ? Collections.emptyMap() : otherSelf;
-            double total = 0.0;
-            double satisfied = 0.0;
+            double totalDemand = 0.0;
+            double aligned = 0.0;
+            double conflicted = 0.0;
             for (Map.Entry<String, Double> entry : desired.entrySet()) {
                   String token = entry.getKey();
-                  double weight = entry.getValue() == null ? 0.0 : entry.getValue();
-                  if (token == null || token.isBlank() || weight <= 0.0)
+                  double desiredWeight = entry.getValue() == null ? 0.0 : entry.getValue();
+                  if (token == null || token.isBlank())
                         continue;
-                  total += weight;
-                  if (token.startsWith("anti_")) {
-                        String positive = token.substring("anti_".length());
-                        double otherWeight = other.getOrDefault(positive, 0.0);
-                        if (otherWeight <= 0.0)
-                              satisfied += weight;
+                  double demandAbs = Math.abs(desiredWeight);
+                  if (demandAbs <= SIGNAL_PRESENT_EPSILON)
                         continue;
-                  }
+                  totalDemand += demandAbs;
+
                   double otherWeight = other.getOrDefault(token, 0.0);
-                  if (otherWeight > 0.0) {
-                        satisfied += Math.min(weight, otherWeight);
+                  double otherAbs = Math.abs(otherWeight);
+                  if (otherAbs <= SIGNAL_PRESENT_EPSILON)
+                        continue;
+                  double overlap = Math.min(demandAbs, otherAbs);
+                  double alignment = Math.signum(desiredWeight) * Math.signum(otherWeight);
+                  if (alignment > 0) {
+                        aligned += overlap;
+                  } else if (alignment < 0) {
+                        conflicted += overlap;
                   }
             }
-            if (total <= 0.0)
+            if (totalDemand <= SIGNAL_PRESENT_EPSILON)
                   return 0.65;
-            return clamp01(satisfied / total);
+            double linear = (aligned - conflicted) / totalDemand;
+            return clamp01(0.5 + (0.5 * linear));
       }
 
       private static double computeUncertainty(Map<String, Double> desired, Map<String, Double> otherSelf) {
@@ -224,41 +310,73 @@ public class Core implements RamaModule {
             for (Map.Entry<String, Double> entry : desired.entrySet()) {
                   String token = entry.getKey();
                   double weight = entry.getValue() == null ? 0.0 : entry.getValue();
-                  if (token == null || token.isBlank() || weight <= 0.0 || token.startsWith("anti_"))
+                  if (token == null || token.isBlank())
                         continue;
-                  total += weight;
-                  if (other.getOrDefault(token, 0.0) <= 0.0) {
-                        missing += weight;
+                  double absWeight = Math.abs(weight);
+                  if (absWeight <= SIGNAL_PRESENT_EPSILON)
+                        continue;
+                  total += absWeight;
+                  if (Math.abs(other.getOrDefault(token, 0.0)) <= SIGNAL_PRESENT_EPSILON) {
+                        missing += absWeight;
                   }
             }
-            if (total <= 0.0)
+            if (total <= SIGNAL_PRESENT_EPSILON)
                   return 0.15;
             return clamp01(missing / total);
       }
 
-      private static String topMissingDesiredToken(Map<String, Double> desired, Map<String, Double> otherSelf) {
+      private static MissingDesiredSignal topMissingDesiredSignal(Map<String, Double> desired, Map<String, Double> otherSelf) {
             if (desired == null || desired.isEmpty())
                   return null;
             Map<String, Double> other = (otherSelf == null) ? Collections.emptyMap() : otherSelf;
             String bestToken = null;
-            double bestWeight = -1.0;
+            double bestWeightAbs = -1.0;
+            double bestValence = 1.0;
             for (Map.Entry<String, Double> entry : desired.entrySet()) {
                   String token = entry.getKey();
                   double weight = entry.getValue() == null ? 0.0 : entry.getValue();
-                  if (token == null || token.isBlank() || token.startsWith("anti_") || weight <= 0.0)
+                  if (token == null || token.isBlank())
                         continue;
-                  if (other.getOrDefault(token, 0.0) > 0.0)
+                  double absWeight = Math.abs(weight);
+                  if (absWeight <= SIGNAL_PRESENT_EPSILON)
                         continue;
-                  if (weight > bestWeight) {
-                        bestWeight = weight;
+                  if (Math.abs(other.getOrDefault(token, 0.0)) > SIGNAL_PRESENT_EPSILON)
+                        continue;
+                  if (absWeight > bestWeightAbs) {
+                        bestWeightAbs = absWeight;
                         bestToken = token;
+                        bestValence = Math.signum(weight) == 0.0 ? 1.0 : Math.signum(weight);
                   }
             }
-            return bestToken;
+            if (bestToken == null)
+                  return null;
+            return new MissingDesiredSignal(bestToken, bestValence, bestWeightAbs);
       }
 
-      private static double normalizedReactionScore(double reactionValue) {
-            return clamp01(0.6 + (reactionValue / 10.0));
+      private static final class ParsedSignalToken {
+            final String token;
+            final double valence;
+
+            ParsedSignalToken(String token, double valence) {
+                  this.token = token;
+                  this.valence = valence;
+            }
+      }
+
+      private static final class MissingDesiredSignal {
+            final String token;
+            final double valence;
+            final double absWeight;
+
+            MissingDesiredSignal(String token, double valence, double absWeight) {
+                  this.token = token;
+                  this.valence = valence;
+                  this.absWeight = absWeight;
+            }
+      }
+
+      private static double normalizedReactionScore(double pairReactionScore) {
+            return clamp01(0.5 + (pairReactionScore / 20.0));
       }
 
       private static double noveltyBoost(Map<?, ?> exposureMap, long targetId, long now) {
@@ -277,6 +395,69 @@ public class Core implements RamaModule {
                   return null;
             }
             return promptId.trim() + "::" + signalToken.trim();
+      }
+
+      private static int clampPublicReactionStrength(int strength) {
+            if (strength < PUBLIC_REACTION_STRENGTH_MIN) {
+                  return PUBLIC_REACTION_STRENGTH_MIN;
+            }
+            if (strength > PUBLIC_REACTION_STRENGTH_MAX) {
+                  return PUBLIC_REACTION_STRENGTH_MAX;
+            }
+            return strength;
+      }
+
+      private static int legacyReactionStrength(Integer reactionValue) {
+            if (reactionValue == null) {
+                  return 0;
+            }
+            if (reactionValue.intValue() == PromptReaction.LIKE.getValue()) {
+                  return 1;
+            }
+            if (reactionValue.intValue() == PromptReaction.DISLIKE.getValue()) {
+                  return -1;
+            }
+            return 0;
+      }
+
+      private static Integer parseEmbeddedPublicReactionStrength(String rawPromptId) {
+            if (rawPromptId == null || rawPromptId.isBlank()) {
+                  return null;
+            }
+            int idx = rawPromptId.lastIndexOf(PUBLIC_REACTION_STRENGTH_PROMPT_SUFFIX);
+            if (idx <= 0) {
+                  return null;
+            }
+            String suffix = rawPromptId.substring(idx + PUBLIC_REACTION_STRENGTH_PROMPT_SUFFIX.length()).trim();
+            if (suffix.isBlank()) {
+                  return null;
+            }
+            try {
+                  int parsed = Integer.parseInt(suffix);
+                  return clampPublicReactionStrength(parsed);
+            } catch (NumberFormatException ignored) {
+                  return null;
+            }
+      }
+
+      private static String basePromptIdFromReactionPromptId(String rawPromptId) {
+            if (rawPromptId == null || rawPromptId.isBlank()) {
+                  return rawPromptId;
+            }
+            int idx = rawPromptId.lastIndexOf(PUBLIC_REACTION_STRENGTH_PROMPT_SUFFIX);
+            if (idx <= 0) {
+                  return rawPromptId;
+            }
+            String prefix = rawPromptId.substring(0, idx).trim();
+            return prefix.isBlank() ? rawPromptId : prefix;
+      }
+
+      private static int resolvedPublicReactionStrength(String rawPromptId, Integer reactionValue) {
+            Integer embedded = parseEmbeddedPublicReactionStrength(rawPromptId);
+            if (embedded != null) {
+                  return clampPublicReactionStrength(embedded.intValue());
+            }
+            return legacyReactionStrength(reactionValue);
       }
 
       private static long parseFacecardTargetId(String answerId) {
@@ -320,57 +501,68 @@ public class Core implements RamaModule {
             double lifestyleBonus = CalypsoHelpers.computeLifestyleBonus(viewer, target);
             double politicsBonus = CalypsoHelpers.computePoliticsBonus(viewer, target);
             double religionBonus = CalypsoHelpers.computeReligionBonus(viewer, target);
-            double explicitNorm = clamp01((baseScore + lifestyleBonus + politicsBonus + religionBonus) / 120.0);
+            double filterPreferenceFit = clamp01((baseScore + lifestyleBonus + politicsBonus + religionBonus) / 120.0);
 
             Map<String, Double> viewerSelf = toSignalWeights(viewerSignals, false);
             Map<String, Double> viewerDesired = toSignalWeights(viewerSignals, true);
             Map<String, Double> targetSelf = toSignalWeights(targetSignals, false);
             Map<String, Double> targetDesired = toSignalWeights(targetSignals, true);
 
-            double desiredAB = directionalCompatibility(viewerDesired, targetSelf);
-            double desiredBA = directionalCompatibility(targetDesired, viewerSelf);
-            double latent = weightedJaccard(viewerSelf, targetSelf);
+            double viewerNeedsMetByTarget = directionalCompatibility(viewerDesired, targetSelf);
+            double targetNeedsMetByViewer = directionalCompatibility(targetDesired, viewerSelf);
+            double sharedSelfOverlap = weightedJaccard(viewerSelf, targetSelf);
 
-            double sSignal = clamp01(0.45 * desiredAB + 0.35 * desiredBA + 0.20 * latent);
-            double s = clamp01(0.55 * explicitNorm + 0.45 * sSignal);
-            double r = normalizedReactionScore(viewerToTargetReaction);
-            double p = clamp01(
-                        0.30 * desiredBA + 0.20 * normalizedReactionScore(targetToViewerReaction) + 0.50 * explicitNorm);
-            double n = noveltyBoost(exposureMap, targetId, now);
+            double signalAlignment = clamp01(
+                        0.45 * viewerNeedsMetByTarget + 0.35 * targetNeedsMetByViewer + 0.20 * sharedSelfOverlap);
+            double profileSignalBlend = clamp01(0.55 * filterPreferenceFit + 0.45 * signalAlignment);
+            double viewerReactionScore = normalizedReactionScore(viewerToTargetReaction);
+            double targetInterestScore = clamp01(
+                        0.30 * targetNeedsMetByViewer + 0.20 * normalizedReactionScore(targetToViewerReaction)
+                                    + 0.50 * filterPreferenceFit);
+            double noveltyScore = noveltyBoost(exposureMap, targetId, now);
 
-            double normalizedScore = clamp01(0.50 * s + 0.30 * r + 0.15 * p + 0.05 * n);
-            double finalScore = normalizedScore * 100.0;
+            double finalScore = clamp01(
+                        0.50 * profileSignalBlend + 0.30 * viewerReactionScore + 0.15 * targetInterestScore
+                                    + 0.05 * noveltyScore);
+            double finalScorePercent = finalScore * 100.0;
 
             String viewerMode = CalypsoHelpers.getModeSelfOrNull(viewer);
             double floor = modeFloor(viewerMode);
-            if (finalScore < floor) {
+            if (finalScorePercent < floor) {
                   out.put("candidate", null);
                   out.put("uncertainty", computeUncertainty(viewerDesired, targetSelf));
                   return out;
             }
 
-            MatchCandidate candidate = mkCandidate(targetId, finalScore, now);
+            MatchCandidate candidate = mkCandidate(targetId, finalScorePercent, now);
             ArrayList<String> reasons = new ArrayList<>();
-            reasons.add(String.format(Locale.ROOT, "s=%.3f", s));
-            reasons.add(String.format(Locale.ROOT, "r=%.3f", r));
-            reasons.add(String.format(Locale.ROOT, "p=%.3f", p));
-            reasons.add(String.format(Locale.ROOT, "n=%.3f", n));
+            reasons.add(String.format(Locale.ROOT, "filterPreferenceFit=%.3f", filterPreferenceFit));
+            reasons.add(String.format(Locale.ROOT, "viewerNeedsMetByTarget=%.3f", viewerNeedsMetByTarget));
+            reasons.add(String.format(Locale.ROOT, "targetNeedsMetByViewer=%.3f", targetNeedsMetByViewer));
+            reasons.add(String.format(Locale.ROOT, "sharedSelfOverlap=%.3f", sharedSelfOverlap));
+            reasons.add(String.format(Locale.ROOT, "signalAlignment=%.3f", signalAlignment));
+            reasons.add(String.format(Locale.ROOT, "profileSignalBlend=%.3f", profileSignalBlend));
+            reasons.add(String.format(Locale.ROOT, "viewerReactionScore=%.3f", viewerReactionScore));
+            reasons.add(String.format(Locale.ROOT, "targetInterestScore=%.3f", targetInterestScore));
+            reasons.add(String.format(Locale.ROOT, "noveltyScore=%.3f", noveltyScore));
+            reasons.add(String.format(Locale.ROOT, "finalScore=%.3f", finalScore));
             candidate.setReasons(reasons);
 
             double uncertainty = computeUncertainty(viewerDesired, targetSelf);
             out.put("candidate", candidate);
             out.put("uncertainty", uncertainty);
-            out.put("normalizedScore", normalizedScore);
+            out.put("normalizedScore", finalScore);
 
-            String missingToken = topMissingDesiredToken(viewerDesired, targetSelf);
-            boolean followupEligible = missingToken != null
-                        && normalizedScore >= FOLLOWUP_MIN_NORMALIZED_SCORE
+            MissingDesiredSignal missingSignal = topMissingDesiredSignal(viewerDesired, targetSelf);
+            boolean followupEligible = missingSignal != null
+                        && finalScore >= FOLLOWUP_MIN_NORMALIZED_SCORE
                         && uncertainty >= 0.35;
             if (followupEligible) {
                   HashMap<String, Object> followup = new HashMap<>();
                   followup.put("targetId", targetId);
-                  followup.put("missingToken", missingToken);
-                  followup.put("pairScore", finalScore);
+                  followup.put("missingToken", missingSignal.token);
+                  followup.put("missingValence", missingSignal.valence);
+                  followup.put("pairScore", finalScorePercent);
                   followup.put("uncertainty", uncertainty);
                   followup.put("eligibleAt", now);
                   out.put("followup", followup);
@@ -667,6 +859,12 @@ public class Core implements RamaModule {
                               return event.getReaction().getValue();
                         }, "*data")
                         .out("*reactionValue")
+                        .each((String rawPromptId) -> basePromptIdFromReactionPromptId(rawPromptId), "*promptId")
+                        .out("*normalizedPromptId")
+                        .each((String rawPromptId, Integer reactionValue) -> resolvedPublicReactionStrength(rawPromptId,
+                                    reactionValue),
+                                    "*promptId", "*reactionValue")
+                        .out("*reactionStrength")
                         .each((String answerId) -> parseFacecardTargetId(answerId), "*answerId")
                         .out("*facecardTargetIdL")
                         .each((Long targetId) -> targetId != null && targetId.longValue() >= 0L, "*facecardTargetIdL")
@@ -676,9 +874,10 @@ public class Core implements RamaModule {
                                                 .localTransform("$$viewerIdToReactedAnswerIds",
                                                             Path.key("*viewerIdL", "*answerId").termVal(true))
                                                 .localTransform("$$viewerIdToReactedPromptIds",
-                                                            Path.key("*viewerIdL", "*promptId").termVal(true))
+                                                            Path.key("*viewerIdL", "*normalizedPromptId").termVal(true))
                                                 .localTransform("$$viewerIdToReactionByAnswerId",
-                                                            Path.key("*viewerIdL", "*answerId").termVal("*reactionValue")),
+                                                            Path.key("*viewerIdL", "*answerId")
+                                                                        .termVal("*reactionStrength")),
                                     Block.create())
                         .ifTrue("*isFacecardReaction",
                                     Block.create()
@@ -698,31 +897,33 @@ public class Core implements RamaModule {
                                                             return new ArrayList<String>();
                                                       return answer.getSignalTokens();
                                                 }, "*answer").out("*tokens"))
-                        .each((Integer reactionValue, Boolean isFacecardReaction) -> {
+                        .each((Integer reactionStrength, Boolean isFacecardReaction) -> {
                               if (Boolean.TRUE.equals(isFacecardReaction))
                                     return 0.0;
-                              if (reactionValue != null && reactionValue.intValue() == PromptReaction.LIKE.getValue())
-                                    return 1.0;
-                              if (reactionValue != null
-                                          && reactionValue.intValue() == PromptReaction.DISLIKE.getValue())
-                                    return -1.0;
-                              return 0.0;
-                        }, "*reactionValue", "*isFacecardReaction").out("*delta")
-                        .each((Integer reactionValue, Boolean isFacecardReaction) -> {
-                              boolean facecard = Boolean.TRUE.equals(isFacecardReaction);
+                              if (reactionStrength == null)
+                                    return 0.0;
+                              return Math.max(-1.0,
+                                          Math.min(1.0, reactionStrength.doubleValue() / (double) PUBLIC_REACTION_STRENGTH_MAX));
+                        }, "*reactionStrength", "*isFacecardReaction").out("*delta")
+                        .each((Integer reactionValue, Integer reactionStrength, Boolean isFacecardReaction) -> {
+                              if (!Boolean.TRUE.equals(isFacecardReaction)) {
+                                    if (reactionStrength == null)
+                                          return 0.0;
+                                    return reactionStrength.doubleValue();
+                              }
                               if (reactionValue == null)
                                     return 0.0;
                               if (reactionValue.intValue() == PromptReaction.LIKE.getValue()) {
-                                    return facecard ? FACECARD_PAIR_DELTA_LIKE : 2.0;
+                                    return FACECARD_PAIR_DELTA_LIKE;
                               }
                               if (reactionValue.intValue() == PromptReaction.DISLIKE.getValue()) {
-                                    return facecard ? FACECARD_PAIR_DELTA_DISLIKE : -4.0;
+                                    return FACECARD_PAIR_DELTA_DISLIKE;
                               }
                               if (reactionValue.intValue() == PromptReaction.SKIP.getValue()) {
-                                    return facecard ? FACECARD_PAIR_DELTA_SKIP : -0.5;
+                                    return FACECARD_PAIR_DELTA_SKIP;
                               }
                               return 0.0;
-                        }, "*reactionValue", "*isFacecardReaction").out("*pairDelta")
+                        }, "*reactionValue", "*reactionStrength", "*isFacecardReaction").out("*pairDelta")
                         .each((Long targetIdL) -> targetIdL != null && targetIdL.longValue() >= 0L, "*targetIdL")
                         .out("*hasTarget")
                         .ifTrue("*hasTarget",
@@ -737,11 +938,11 @@ public class Core implements RamaModule {
                                                             Block.localTransform("$$viewerIdToTargetIdToFacecardReaction",
                                                                         Path.key("*viewerIdL", "*targetIdL")
                                                                                     .termVal("*reactionValue")))
-                                                .each((Boolean isFacecardReaction, Integer reactionValue) -> !Boolean.TRUE
+                                                .each((Boolean isFacecardReaction, Integer reactionStrength) -> !Boolean.TRUE
                                                             .equals(isFacecardReaction)
-                                                            && reactionValue != null
-                                                            && reactionValue.intValue() == PromptReaction.LIKE.getValue(),
-                                                            "*isFacecardReaction", "*reactionValue")
+                                                            && reactionStrength != null
+                                                            && reactionStrength.intValue() > 0,
+                                                            "*isFacecardReaction", "*reactionStrength")
                                                 .out("*shouldTrackPromptLike")
                                                 .ifTrue("*shouldTrackPromptLike",
                                                             Block.localTransform("$$viewerIdToTargetIdToPromptLikeSeen",
@@ -797,28 +998,26 @@ public class Core implements RamaModule {
                                                                         .localTransform("$$viewerIdToTasteByToken",
                                                                                     Path.key("*viewerIdL", "*token")
                                                                                                 .termVal("*nextTaste")))
-                                                .each((Integer reactionValue, String promptId, List<String> tokens,
+                                                .each((Integer reactionStrength, String normalizedPromptId, List<String> tokens,
                                                             Boolean isFacecardReaction) -> {
                                                       if (Boolean.TRUE.equals(isFacecardReaction))
                                                             return false;
-                                                      boolean reactsToSignal = reactionValue != null
-                                                                  && (reactionValue.intValue() == PromptReaction.LIKE
-                                                                                  .getValue()
-                                                                              || reactionValue.intValue() == PromptReaction.DISLIKE
-                                                                                              .getValue());
+                                                      boolean reactsToSignal = reactionStrength != null
+                                                                  && reactionStrength.intValue() != 0;
                                                       return reactsToSignal
-                                                                  && promptId != null
-                                                                  && !promptId.isBlank()
+                                                                  && normalizedPromptId != null
+                                                                  && !normalizedPromptId.isBlank()
                                                                   && tokens != null
                                                                   && !tokens.isEmpty();
-                                                }, "*reactionValue", "*promptId", "*tokens", "*isFacecardReaction")
+                                                }, "*reactionStrength", "*normalizedPromptId", "*tokens",
+                                                            "*isFacecardReaction")
                                                 .out("*shouldSuppressTokens")
                                                 .ifTrue("*shouldSuppressTokens",
                                                             Block.create()
                                                                         .each(Ops.EXPLODE, "*tokens").out("*token")
-                                                                        .each((String promptId, String token) -> suppressionKey(promptId,
-                                                                                    token),
-                                                                                    "*promptId", "*token")
+                                                                        .each((String normalizedPromptId, String token) -> suppressionKey(
+                                                                                    normalizedPromptId, token),
+                                                                                    "*normalizedPromptId", "*token")
                                                                         .out("*suppressionKey")
                                                                         .each((String key) -> key != null, "*suppressionKey")
                                                                         .out("*hasSuppressionKey")

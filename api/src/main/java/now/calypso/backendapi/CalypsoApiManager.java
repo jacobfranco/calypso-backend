@@ -24,6 +24,7 @@ import com.rpl.rama.cluster.ClusterManagerBase;
 
 import now.calypso.backendapi.agent.AgentResponder;
 import now.calypso.backendapi.agent.PrivatePromptTurnResponder;
+import now.calypso.backendapi.llm.MatchReranker;
 import now.calypso.backendapi.pojos.*;
 import now.calypso.backendapi.prompts.*;
 import now.calypso.backendapi.signals.*;
@@ -43,6 +44,8 @@ public class CalypsoApiManager {
     private final ConcurrentHashMap<Long, CompletableFuture<AgentSession>> agentSerialByAccount = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, CompletableFuture<?>> privatePromptSerialByAccount = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, CompletableFuture<?>> matchmakingFollowupSerialByAccount = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, CompletableFuture<Signals>> seedSignalBootstrapByAccount = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, CompletableFuture<PublicPromptAnswer>> publicPromptSignalBackfillByAnswerId = new ConcurrentHashMap<>();
 
     // Modules
     public static final String CORE_MODULE_NAME = Core.class.getName();
@@ -114,6 +117,23 @@ public class CalypsoApiManager {
     private static final double MATCH_AUTOPASS_EXPLORATORY = 66.0;
     private static final double MATCH_AUTOPASS_BALANCED = 72.0;
     private static final double MATCH_AUTOPASS_FOCUSED = 80.0;
+    private static final boolean MATCH_RERANK_ENABLED = !"false"
+            .equalsIgnoreCase(System.getenv("CALYPSO_MATCH_LLM_RERANK_ENABLED"));
+    private static final int MATCH_RERANK_POOL_MULTIPLIER = 3;
+    private static final int MATCH_RERANK_POOL_MIN = 12;
+    private static final int MATCH_RERANK_POOL_MAX = 48;
+    private static final int MATCH_RERANK_SIGNAL_LIMIT_VIEWER = 16;
+    private static final int MATCH_RERANK_SIGNAL_LIMIT_CANDIDATE = 12;
+    private static final double MATCH_RERANK_MAX_WEIGHT = 0.28;
+    private static final double MATCH_RERANK_BLOCKER_CAP = 0.82;
+    private static final double MATCH_RERANK_CONFIDENCE_MIN = 0.25;
+    private static final long MATCH_RERANK_TIMEOUT_MS = 4500L;
+    private static final double PUBLIC_REACTION_LIKE_VALENCE_FLOOR = 0.62;
+    private static final double PUBLIC_REACTION_DISLIKE_VALENCE_FLOOR = 0.72;
+    private static final double PUBLIC_REACTION_VALENCE_SCALE = 0.42;
+    private static final int PUBLIC_REACTION_STRENGTH_MIN = -3;
+    private static final int PUBLIC_REACTION_STRENGTH_MAX = 3;
+    private static final String PUBLIC_REACTION_STRENGTH_PROMPT_SUFFIX = "|reaction_strength:";
     private static final SecureRandom PHONE_CODE_RANDOM = new SecureRandom();
     private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
     private static final String SMS_FALLBACK_ENV = "CALYPSO_SMS_FALLBACK";
@@ -368,7 +388,128 @@ public class CalypsoApiManager {
     }
 
     public CompletableFuture<Signals> getSignals(long requesterId, long accountId) {
-        return getSignalsFromAccountId.invokeAsync(requesterId, accountId);
+        return getSignalsFromAccountId.invokeAsync(requesterId, accountId)
+                .thenApply(CalypsoApiManager::canonicalizeSignalSnapshot)
+                .thenCompose(snapshot -> maybeBootstrapSeedSignals(requesterId, accountId, snapshot));
+    }
+
+    private CompletableFuture<Signals> maybeBootstrapSeedSignals(long requesterId, long accountId, Signals snapshot) {
+        Signals canonical = canonicalizeSignalSnapshot(snapshot);
+        if (requesterId != accountId || hasSignalRecords(canonical)) {
+            return CompletableFuture.completedFuture(canonical);
+        }
+
+        CompletableFuture<Signals> inflight = seedSignalBootstrapByAccount.get(accountId);
+        if (inflight != null) {
+            return inflight.thenApply(result -> result == null ? canonical : result);
+        }
+
+        CompletableFuture<Signals> created = bootstrapSignalsFromSeededPublicAnswers(accountId, canonical)
+                .exceptionally(ex -> {
+                    LOG.warn("Seed signal bootstrap failed for account {}", accountId, ex);
+                    return canonical;
+                });
+        CompletableFuture<Signals> raced = seedSignalBootstrapByAccount.putIfAbsent(accountId, created);
+        if (raced != null) {
+            return raced.thenApply(result -> result == null ? canonical : result);
+        }
+        created.whenComplete((result, ex) -> seedSignalBootstrapByAccount.remove(accountId, created));
+        return created;
+    }
+
+    private CompletableFuture<Signals> bootstrapSignalsFromSeededPublicAnswers(long accountId, Signals fallback) {
+        return backfillPublicPromptSignalsForAccount(accountId, false).thenCompose(softPassChanged -> readSignalsSnapshot(
+                accountId, accountId).thenCompose(afterSoftPass -> {
+                    Signals softSnapshot = canonicalizeSignalSnapshot(afterSoftPass);
+                    if (hasSignalRecords(softSnapshot)) {
+                        return CompletableFuture.completedFuture(softSnapshot);
+                    }
+                    return backfillPublicPromptSignalsForAccount(accountId, true).thenCompose(hardPassChanged -> {
+                        if (!softPassChanged && !hardPassChanged) {
+                            return CompletableFuture.completedFuture(fallback);
+                        }
+                        return getSignalsFromAccountId.invokeAsync(accountId, accountId)
+                                .thenApply(CalypsoApiManager::canonicalizeSignalSnapshot)
+                                .thenApply(refreshed -> hasSignalRecords(refreshed) ? refreshed : fallback);
+                    });
+                }));
+    }
+
+    private CompletableFuture<Boolean> backfillPublicPromptSignalsForAccount(long accountId, boolean forceExtraction) {
+        return getMyPublicPromptAnswers.invokeAsync(accountId, accountId).thenCompose(answers -> {
+            if (answers == null || answers.isEmpty()) {
+                return CompletableFuture.completedFuture(false);
+            }
+            CompletableFuture<Boolean> chain = CompletableFuture.completedFuture(false);
+            for (PublicPromptAnswer answer : answers) {
+                chain = chain.thenCompose(changed -> backfillSignalsForPublicAnswer(answer, forceExtraction)
+                        .thenApply(backfilled -> changed || backfilled));
+            }
+            return chain;
+        });
+    }
+
+    private CompletableFuture<Boolean> backfillSignalsForPublicAnswer(PublicPromptAnswer answer, boolean forceExtraction) {
+        if (answer == null) {
+            return CompletableFuture.completedFuture(false);
+        }
+        String answerId = asTrimmedString(answer.getAnswerId());
+        String promptId = asTrimmedString(answer.getPromptId());
+        String promptText = PromptLibrary.publicTextById(promptId);
+        String body = clampPromptText(answer.getBody(), 800);
+        long ownerId = answer.isSetAccountId() ? answer.getAccountId() : 0L;
+        if (answerId == null || promptId == null || promptText == null || body == null || ownerId <= 0L) {
+            return CompletableFuture.completedFuture(false);
+        }
+
+        if (!forceExtraction) {
+            if (hasAnswerSignalTokens(answer)) {
+                return CompletableFuture.completedFuture(false);
+            }
+            return ensurePublicPromptAnswerSignalTokens(answer)
+                    .thenApply(updated -> updated != null && hasAnswerSignalTokens(updated))
+                    .exceptionally(ex -> {
+                        LOG.warn("Soft backfill failed for public answer {}", answerId, ex);
+                        return false;
+                    });
+        }
+
+        return extractAndAppendSignalsFromPrompt(
+                ownerId,
+                promptId,
+                promptText,
+                body,
+                "public_prompt",
+                answerId).exceptionally(ex -> {
+                    LOG.warn("Forced backfill extraction failed for public answer {}", answerId, ex);
+                    return List.of();
+                }).thenCompose(tokens -> {
+                    List<String> normalized = SignalNormalizer.normalizeTokens(tokens);
+                    if (normalized.isEmpty()) {
+                        return CompletableFuture.completedFuture(false);
+                    }
+                    if (hasAnswerSignalTokens(answer)) {
+                        return CompletableFuture.completedFuture(true);
+                    }
+                    PublicPromptAnswer updated = new PublicPromptAnswer(answer);
+                    updated.setSignalTokens(normalized);
+                    updated.setUpdatedAt(System.currentTimeMillis());
+                    return publicPromptAnswerDepot.appendAsync(updated)
+                            .handle((ignored, ex) -> {
+                                if (ex != null) {
+                                    LOG.warn("Forced backfill persisted owner signals but failed answer token update {}",
+                                            answerId, ex);
+                                }
+                                return true;
+                            });
+                });
+    }
+
+    private static boolean hasSignalRecords(Signals signals) {
+        return signals != null
+                && signals.isSetRecords()
+                && signals.getRecords() != null
+                && !signals.getRecords().isEmpty();
     }
 
     public CompletableFuture<AgentSession> getAgentSessionSnapshot(long accountId) {
@@ -462,15 +603,17 @@ public class CalypsoApiManager {
         return promptId != null && promptId.startsWith(MATCHMAKING_FOLLOWUP_PROMPT_PREFIX);
     }
 
-    private static String encodeMatchmakingFollowupPromptId(long viewerId, String missingToken, double pairScore,
-            double uncertainty) {
+    private static String encodeMatchmakingFollowupPromptId(long viewerId, String missingToken, double missingValence,
+            double pairScore, double uncertainty) {
         String token = SignalNormalizer.normalizeOne(missingToken);
         if (token == null) {
             token = "unknown";
         }
+        double clampedValence = Math.max(-1.0, Math.min(1.0, missingValence));
         return MATCHMAKING_FOLLOWUP_PROMPT_PREFIX
                 + "viewer=" + viewerId
                 + "&token=" + urlEncode(token)
+                + "&val=" + String.format(Locale.ROOT, "%.3f", clampedValence)
                 + "&score=" + String.format(Locale.ROOT, "%.3f", pairScore)
                 + "&unc=" + String.format(Locale.ROOT, "%.3f", uncertainty);
     }
@@ -525,28 +668,43 @@ public class CalypsoApiManager {
         }
     }
 
+    private static Double parseFollowupValence(String rawValence, String token) {
+        if (rawValence != null && !rawValence.isBlank()) {
+            double parsed = parseDouble(rawValence, 1.0);
+            return Math.max(-1.0, Math.min(1.0, parsed));
+        }
+        String normalized = SignalNormalizer.normalizeOne(token);
+        if (normalized != null && normalized.startsWith("anti_")) {
+            return -1.0;
+        }
+        return 1.0;
+    }
+
     private static String humanizeSignalToken(String token) {
         String normalized = SignalNormalizer.normalizeOne(token);
         if (normalized == null) {
             return "that";
         }
-        String phrase = normalized.replace("anti_", "not_").replace('_', ' ').trim();
+        String phrase = normalized.replace('_', ' ').trim();
         if (phrase.isBlank()) {
             return "that";
         }
         return phrase;
     }
 
-    private static String buildMatchmakingFollowupQuestion(String token) {
+    private static String buildMatchmakingFollowupQuestion(String token, Double missingValenceMaybe) {
         String normalized = SignalNormalizer.normalizeOne(token);
         if (normalized == null) {
             return "Quick matchmaking check: can you share a little more about your preferences here?";
         }
-        if (normalized.startsWith("anti_")) {
-            String phrase = humanizeSignalToken(normalized.substring("anti_".length()));
-            return "Quick matchmaking check: how do you feel about " + phrase + " in a partner?";
+        double missingValence = missingValenceMaybe == null ? 1.0 : missingValenceMaybe.doubleValue();
+        if (missingValence < 0.0 && normalized.startsWith("anti_") && normalized.length() > "anti_".length()) {
+            normalized = normalized.substring("anti_".length());
         }
         String phrase = humanizeSignalToken(normalized);
+        if (missingValence < 0.0) {
+            return "Quick matchmaking check: how much of a turn-off is " + phrase + " for you in a partner?";
+        }
         return "Quick matchmaking check: how important is " + phrase + " in your lifestyle or dating preferences?";
     }
 
@@ -907,6 +1065,7 @@ public class CalypsoApiManager {
 
                     CompletableFuture<List<String>> signalTokensFuture = extractAndAppendSignalsFromPrompt(
                             accountId,
+                            current.getPromptId(),
                             prompt.getText(),
                             normalizedBody,
                             normalizedConversation,
@@ -1010,7 +1169,8 @@ public class CalypsoApiManager {
             return CompletableFuture.completedFuture(null);
         }
         Map<String, String> fields = parseMatchmakingFollowupPromptFields(assignment.getPromptId());
-        String questionText = buildMatchmakingFollowupQuestion(fields.get("token"));
+        Double missingValence = parseFollowupValence(fields.get("val"), fields.get("token"));
+        String questionText = buildMatchmakingFollowupQuestion(fields.get("token"), missingValence);
         return getMatchmakingFollowupAnswerByInstanceId.invokeAsync(assignment.getInstanceId()).thenApply(answer -> {
             ActivePrivatePrompt out = new ActivePrivatePrompt();
             PrivatePromptAssignment sanitizedAssignment = new PrivatePromptAssignment(assignment);
@@ -1083,9 +1243,14 @@ public class CalypsoApiManager {
                     }
                     long viewerId = parseLong(asTrimmedString(picked.get("viewerId")), -1L);
                     String missingToken = asTrimmedString(picked.get("missingToken"));
+                    double missingValence = parseDouble(asTrimmedString(picked.get("missingValence")), 1.0);
                     double pairScore = parseDouble(asTrimmedString(picked.get("pairScore")), 0.0);
                     double uncertainty = parseDouble(asTrimmedString(picked.get("uncertainty")), 1.0);
-                    String encodedPromptId = encodeMatchmakingFollowupPromptId(viewerId, missingToken, pairScore,
+                    String encodedPromptId = encodeMatchmakingFollowupPromptId(
+                            viewerId,
+                            missingToken,
+                            missingValence,
+                            pairScore,
                             uncertainty);
 
                     PrivatePromptAssignment assignment = new PrivatePromptAssignment();
@@ -1155,7 +1320,8 @@ public class CalypsoApiManager {
         return serializeMatchmakingFollowupOp(accountId, () -> requireMutableMatchmakingFollowupAssignment(accountId,
                 instanceId).thenCompose(current -> {
                     Map<String, String> fields = parseMatchmakingFollowupPromptFields(current.getPromptId());
-                    String baseQuestion = buildMatchmakingFollowupQuestion(fields.get("token"));
+                    Double missingValence = parseFollowupValence(fields.get("val"), fields.get("token"));
+                    String baseQuestion = buildMatchmakingFollowupQuestion(fields.get("token"), missingValence);
                     String effectivePart = normalizedQuestionPart == null ? baseQuestion : normalizedQuestionPart;
                     PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
                             baseQuestion,
@@ -1185,7 +1351,8 @@ public class CalypsoApiManager {
                     long now = System.currentTimeMillis();
                     Map<String, String> fields = parseMatchmakingFollowupPromptFields(current.getPromptId());
                     long viewerId = parseLong(fields.get("viewer"), -1L);
-                    String question = buildMatchmakingFollowupQuestion(fields.get("token"));
+                    Double missingValence = parseFollowupValence(fields.get("val"), fields.get("token"));
+                    String question = buildMatchmakingFollowupQuestion(fields.get("token"), missingValence);
 
                     PrivatePromptAnswer answer = new PrivatePromptAnswer();
                     answer.setInstanceId(current.getInstanceId());
@@ -1196,6 +1363,7 @@ public class CalypsoApiManager {
 
                     CompletableFuture<List<String>> signalTokensFuture = extractAndAppendSignalsFromPrompt(
                             accountId,
+                            MATCHMAKING_FOLLOWUP_PROMPT_ID,
                             question,
                             normalizedBody,
                             normalizedConversation,
@@ -1269,17 +1437,19 @@ public class CalypsoApiManager {
 
     /** Read current signals for the owner (treat null as empty list). */
     private CompletableFuture<List<SignalRecord>> readCurrentSignalRecords(long accountId) {
-        return getSignals(accountId, accountId).thenApply(s -> {
-            List<SignalRecord> copy = new ArrayList<>();
-            if (s != null && s.getRecords() != null) {
-                for (SignalRecord record : s.getRecords()) {
-                    if (record != null) {
-                        copy.add(new SignalRecord(record));
+        return getSignalsFromAccountId.invokeAsync(accountId, accountId)
+                .thenApply(CalypsoApiManager::canonicalizeSignalSnapshot)
+                .thenApply(s -> {
+                    List<SignalRecord> copy = new ArrayList<>();
+                    if (s != null && s.getRecords() != null) {
+                        for (SignalRecord record : s.getRecords()) {
+                            if (record != null) {
+                                copy.add(new SignalRecord(record));
+                            }
+                        }
                     }
-                }
-            }
-            return copy;
-        });
+                    return copy;
+                });
     }
 
     private static LinkedHashMap<String, SignalRecord> toRecordMap(List<SignalRecord> records) {
@@ -1289,9 +1459,100 @@ public class CalypsoApiManager {
         for (SignalRecord r : records) {
             if (r == null || r.getToken() == null)
                 continue;
-            map.put(recordKey(r), r);
+            String normalizedToken = SignalNormalizer.normalizeOne(r.getToken());
+            if (normalizedToken == null || normalizedToken.isBlank())
+                continue;
+            r.setToken(normalizedToken);
+            SignalIntent intent = r.isSetIntent() ? r.getIntent() : null;
+            String key = recordKey(normalizedToken, intent);
+            SignalRecord existing = map.get(key);
+            if (existing != null) {
+                mergeSignalRecords(existing, r);
+                continue;
+            }
+            map.put(key, r);
         }
         return map;
+    }
+
+    private static Signals canonicalizeSignalSnapshot(Signals raw) {
+        if (raw == null || raw.getRecords() == null || raw.getRecords().isEmpty()) {
+            return raw;
+        }
+        ArrayList<SignalRecord> copied = new ArrayList<>(raw.getRecords().size());
+        for (SignalRecord record : raw.getRecords()) {
+            if (record != null) {
+                copied.add(new SignalRecord(record));
+            }
+        }
+        LinkedHashMap<String, SignalRecord> merged = toRecordMap(copied);
+        Signals out = new Signals(raw);
+        out.setRecords(new ArrayList<>(merged.values()));
+        return out;
+    }
+
+    private static void mergeSignalRecords(SignalRecord target, SignalRecord incoming) {
+        if (target == null || incoming == null) {
+            return;
+        }
+        int targetCount = target.isSetCount() ? Math.max(1, target.getCount()) : 1;
+        int incomingCount = incoming.isSetCount() ? Math.max(1, incoming.getCount()) : 1;
+        target.setCount(targetCount + incomingCount);
+
+        long targetFirst = target.isSetFirstSeen() ? target.getFirstSeen() : Long.MAX_VALUE;
+        long incomingFirst = incoming.isSetFirstSeen() ? incoming.getFirstSeen() : Long.MAX_VALUE;
+        long firstSeen = Math.min(targetFirst, incomingFirst);
+        if (firstSeen != Long.MAX_VALUE) {
+            target.setFirstSeen(firstSeen);
+        }
+
+        long targetTs = recordTimestamp(target);
+        long incomingTs = recordTimestamp(incoming);
+        long maxTs = Math.max(targetTs, incomingTs);
+        if (maxTs != Long.MIN_VALUE) {
+            target.setLastSeen(maxTs);
+        }
+
+        if (!target.isSetIntent() && incoming.isSetIntent()) {
+            target.setIntent(incoming.getIntent());
+        }
+
+        if (incomingTs >= targetTs) {
+            if (incoming.isSetSource()) {
+                target.setSource(incoming.getSource());
+            }
+            if (incoming.isSetSourceId()) {
+                target.setSourceId(incoming.getSourceId());
+            }
+            if (incoming.isSetLastContext()) {
+                target.setLastContext(incoming.getLastContext());
+            }
+            if (incoming.isSetIntent()) {
+                target.setIntent(incoming.getIntent());
+            }
+        }
+
+        if (incoming.isSetValence()) {
+            if (!target.isSetValence()
+                    || incomingTs > targetTs
+                    || (incomingTs == targetTs
+                            && Math.abs(incoming.getValence()) > Math.abs(target.getValence()))) {
+                target.setValence(incoming.getValence());
+            }
+        }
+    }
+
+    private static long recordTimestamp(SignalRecord record) {
+        if (record == null) {
+            return Long.MIN_VALUE;
+        }
+        if (record.isSetLastSeen()) {
+            return record.getLastSeen();
+        }
+        if (record.isSetFirstSeen()) {
+            return record.getFirstSeen();
+        }
+        return Long.MIN_VALUE;
     }
 
     private CompletableFuture<AgentSession> ensureAgentSession(long accountId) {
@@ -1410,6 +1671,16 @@ public class CalypsoApiManager {
         return source.trim();
     }
 
+    private static double clamp01(double value) {
+        if (Double.isNaN(value))
+            return 0.0;
+        if (value < 0.0)
+            return 0.0;
+        if (value > 1.0)
+            return 1.0;
+        return value;
+    }
+
     private static String normalizeSourceId(String sourceId) {
         if (sourceId == null)
             return null;
@@ -1435,6 +1706,191 @@ public class CalypsoApiManager {
         return trimmed.length() > limit ? trimmed.substring(0, limit) : trimmed;
     }
 
+    private static String publicPromptReactionQuestion(String promptText, PromptReaction reaction) {
+        String prompt = clampPromptText(promptText, 220);
+        if (reaction == PromptReaction.DISLIKE) {
+            return "Viewer DISLIKED someone else's answer to a public prompt. Infer partner preferences they want to avoid. Public prompt: "
+                    + (prompt == null ? "unknown" : prompt);
+        }
+        return "Viewer LIKED someone else's answer to a public prompt. Infer partner preferences they are attracted to. Public prompt: "
+                + (prompt == null ? "unknown" : prompt);
+    }
+
+    private static List<String> publicPromptReactionConversation(String promptId, String promptText,
+            PromptReaction reaction) {
+        String reactionLabel = reaction == null ? "unknown" : reaction.name().toLowerCase(Locale.ROOT);
+        String prompt = clampPromptText(promptText, 220);
+        ArrayList<String> out = new ArrayList<>();
+        out.add("user: this is a reaction to another person's public prompt answer");
+        out.add("user: reaction=" + reactionLabel);
+        if (promptId != null && !promptId.isBlank()) {
+            out.add("user: prompt_id=" + promptId.trim());
+        }
+        if (prompt != null) {
+            out.add("user: original public prompt was: " + prompt);
+        }
+        out.add("user: infer viewer's SEEKING preferences, and use atomic canonical concept tags");
+        return out;
+    }
+
+    private static String canonicalizePublicReactionToken(String rawToken) {
+        String token = SignalNormalizer.normalizeOne(rawToken);
+        if (token == null || token.isBlank()) {
+            return null;
+        }
+        return token;
+    }
+
+    private static Double reactionValence(Double valenceMaybe, PromptReaction reaction) {
+        boolean dislike = reaction == PromptReaction.DISLIKE;
+        double floor = dislike ? PUBLIC_REACTION_DISLIKE_VALENCE_FLOOR : PUBLIC_REACTION_LIKE_VALENCE_FLOOR;
+        double magnitude = floor;
+        if (valenceMaybe != null && Double.isFinite(valenceMaybe.doubleValue())) {
+            magnitude = Math.max(floor, Math.abs(clampSigned(valenceMaybe.doubleValue())));
+        }
+        return dislike ? -magnitude : magnitude;
+    }
+
+    private static double publicReactionSignalPriority(ExtractedSignal sig) {
+        if (sig == null) {
+            return Double.NEGATIVE_INFINITY;
+        }
+        double magnitude = Math.abs(clampSigned(sig.valence() == null ? 0.0 : sig.valence().doubleValue()));
+        double specificity = Math.max(0.0, tokenSegments(sig.token()) - 1) * 0.05;
+        return magnitude + specificity;
+    }
+
+    private static int tokenSegments(String token) {
+        if (token == null || token.isBlank()) {
+            return 0;
+        }
+        int segments = 1;
+        for (int i = 0; i < token.length(); i++) {
+            if (token.charAt(i) == '_') {
+                segments++;
+            }
+        }
+        return segments;
+    }
+
+    private static List<ExtractedSignal> suppressPublicReactionUmbrellas(List<ExtractedSignal> signals) {
+        if (signals == null || signals.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashMap<String, ExtractedSignal> byKey = new LinkedHashMap<>();
+        LinkedHashSet<String> tokens = new LinkedHashSet<>();
+        for (ExtractedSignal sig : signals) {
+            if (sig == null || sig.token() == null || sig.intent() == null) {
+                continue;
+            }
+            String key = sig.intent().name() + "|" + sig.token();
+            byKey.put(key, sig);
+            tokens.add(sig.token());
+        }
+        if (byKey.isEmpty()) {
+            return List.of();
+        }
+
+        LinkedHashSet<String> dropTokens = new LinkedHashSet<>();
+        for (String token : tokens) {
+            if (token == null || token.isBlank()) {
+                continue;
+            }
+            if (tokenSegments(token) != 1) {
+                continue;
+            }
+            for (String other : tokens) {
+                if (other == null || other.equals(token)) {
+                    continue;
+                }
+                if (other.startsWith(token + "_")) {
+                    dropTokens.add(token);
+                    break;
+                }
+            }
+        }
+        boolean hasSpecificReadingObject = tokens.stream().anyMatch(token -> token != null
+                && (token.endsWith("_novels")
+                        || token.endsWith("_books")
+                        || token.endsWith("_manga")
+                        || token.endsWith("_comics")));
+        if (hasSpecificReadingObject) {
+            dropTokens.add("reading");
+            dropTokens.add("books");
+        }
+
+        ArrayList<ExtractedSignal> out = new ArrayList<>();
+        for (ExtractedSignal sig : byKey.values()) {
+            if (sig == null || sig.token() == null) {
+                continue;
+            }
+            if (!dropTokens.contains(sig.token())) {
+                out.add(sig);
+            }
+        }
+        return out;
+    }
+
+    private static List<ExtractedSignal> normalizePublicPromptReactionSignals(List<ExtractedSignal> signals,
+            PromptReaction reaction) {
+        List<ExtractedSignal> sanitized = sanitizeSignals(signals);
+        if (sanitized.isEmpty()) {
+            return List.of();
+        }
+
+        LinkedHashMap<String, ExtractedSignal> deduped = new LinkedHashMap<>();
+        for (ExtractedSignal sig : sanitized) {
+            if (sig == null) {
+                continue;
+            }
+            String token = canonicalizePublicReactionToken(sig.token());
+            if (token == null || token.isBlank()) {
+                continue;
+            }
+            SignalIntent intent = sig.intent() == SignalIntent.META ? SignalIntent.META : SignalIntent.SEEKING;
+            ExtractedSignal normalized = ExtractedSignal.from(
+                    token,
+                    intent,
+                    reactionValence(sig.valence(), reaction));
+            if (normalized == null) {
+                continue;
+            }
+            String key = intent.name() + "|" + token;
+            ExtractedSignal existing = deduped.get(key);
+            if (existing == null || publicReactionSignalPriority(normalized) > publicReactionSignalPriority(existing)) {
+                deduped.put(key, normalized);
+            }
+        }
+        if (deduped.isEmpty()) {
+            return List.of();
+        }
+        return suppressPublicReactionUmbrellas(new ArrayList<>(deduped.values()));
+    }
+
+    private CompletableFuture<List<String>> extractAndAppendSignalsFromPublicPromptReaction(long viewerId,
+            String promptId, String promptText, String answerBody, PromptReaction reaction, String sourceId) {
+        if (reaction != PromptReaction.LIKE && reaction != PromptReaction.DISLIKE) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+        String prompt = clampPromptText(promptText, 220);
+        String answer = clampPromptText(answerBody, 800);
+        if (prompt == null || answer == null) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+        String question = publicPromptReactionQuestion(prompt, reaction);
+        List<String> conversation = publicPromptReactionConversation(promptId, prompt, reaction);
+        String context = "reaction=" + reaction.name().toLowerCase(Locale.ROOT) + " | prompt=" + prompt;
+        return extractSignalsFromPrompt(promptId, question, answer, conversation).thenCompose(rawSignals -> {
+            List<ExtractedSignal> normalized = normalizePublicPromptReactionSignals(rawSignals, reaction);
+            if (normalized.isEmpty()) {
+                return CompletableFuture.completedFuture(List.of());
+            }
+            List<String> tokens = tokens(normalized);
+            return persistSignals(viewerId, normalized, "public_prompt_reaction", sourceId, context)
+                    .thenApply(ok -> tokens);
+        });
+    }
+
     public CompletableFuture<PublicPromptAnswer> postPublicPromptAnswer(long accountId, String promptId, String body) {
         if (!PromptLibrary.isPublicPromptId(promptId))
             throw new IllegalArgumentException("Unknown public prompt: " + promptId);
@@ -1453,8 +1909,8 @@ public class CalypsoApiManager {
         base.setCreatedAt(now);
         base.setUpdatedAt(now);
 
-        CompletableFuture<List<String>> signals = extractAndAppendSignalsFromPrompt(accountId, promptText, normalized,
-                "public_prompt", base.getAnswerId())
+        CompletableFuture<List<String>> signals = extractAndAppendSignalsFromPrompt(accountId, promptId, promptText,
+                normalized, "public_prompt", base.getAnswerId())
                 .exceptionally(ex -> {
                     LOG.warn("Signal extraction failed for public prompt answer {}", base.getAnswerId(), ex);
                     return List.of();
@@ -1503,35 +1959,329 @@ public class CalypsoApiManager {
                 .thenApply(list -> list == null ? List.of() : list);
     }
 
+    private static Integer normalizePublicReactionStrength(Integer rawStrength) {
+        if (rawStrength == null) {
+            return null;
+        }
+        int value = rawStrength.intValue();
+        if (value < PUBLIC_REACTION_STRENGTH_MIN || value > PUBLIC_REACTION_STRENGTH_MAX) {
+            return null;
+        }
+        return value;
+    }
+
+    private static int strengthFromLegacyReaction(PromptReaction reaction) {
+        if (reaction == null) {
+            return 0;
+        }
+        switch (reaction) {
+            case LIKE:
+                return 1;
+            case DISLIKE:
+                return -1;
+            case SKIP:
+                return 0;
+            default:
+                return 0;
+        }
+    }
+
+    private static PromptReaction coarseReactionFromStrength(int strength) {
+        if (strength > 0) {
+            return PromptReaction.LIKE;
+        }
+        if (strength < 0) {
+            return PromptReaction.DISLIKE;
+        }
+        return PromptReaction.SKIP;
+    }
+
+    private static String encodePublicPromptIdWithStrength(String promptId, int strength) {
+        String base = promptId == null ? "" : promptId.trim();
+        if (base.isEmpty()) {
+            base = "unknown_public_prompt";
+        }
+        int clamped = Math.max(PUBLIC_REACTION_STRENGTH_MIN, Math.min(PUBLIC_REACTION_STRENGTH_MAX, strength));
+        return base + PUBLIC_REACTION_STRENGTH_PROMPT_SUFFIX + clamped;
+    }
+
+    private static boolean hasAnswerSignalTokens(PublicPromptAnswer answer) {
+        return answer != null
+                && answer.isSetSignalTokens()
+                && answer.getSignalTokens() != null
+                && !answer.getSignalTokens().isEmpty();
+    }
+
+    private CompletableFuture<PublicPromptAnswer> ensurePublicPromptAnswerSignalTokens(PublicPromptAnswer answer) {
+        if (answer == null || hasAnswerSignalTokens(answer)) {
+            return CompletableFuture.completedFuture(answer);
+        }
+        String answerId = answer.getAnswerId();
+        String promptId = answer.getPromptId();
+        String promptText = PromptLibrary.publicTextById(promptId);
+        String body = clampPromptText(answer.getBody(), 800);
+        if (answerId == null || answerId.isBlank() || promptText == null || body == null) {
+            return CompletableFuture.completedFuture(answer);
+        }
+
+        long ownerId = answer.isSetAccountId() ? answer.getAccountId() : 0L;
+        CompletableFuture<List<String>> extractedTokensFuture;
+        if (ownerId > 0L) {
+            extractedTokensFuture = extractAndAppendSignalsFromPrompt(
+                    ownerId,
+                    promptId,
+                    promptText,
+                    body,
+                    "public_prompt",
+                    answerId).exceptionally(ex -> {
+                        LOG.warn("Failed to backfill owner signals for answer {}", answerId, ex);
+                        return List.of();
+                    });
+        } else {
+            extractedTokensFuture = extractSignalsFromPrompt(promptId, promptText, body)
+                    .thenApply(CalypsoApiManager::tokens)
+                    .exceptionally(ex -> {
+                        LOG.warn("Failed to backfill prompt tokens for answer {}", answerId, ex);
+                        return List.of();
+                    });
+        }
+
+        return extractedTokensFuture.thenCompose(extracted -> {
+            List<String> normalizedTokens = SignalNormalizer.normalizeTokens(extracted);
+            if (normalizedTokens.isEmpty()) {
+                return CompletableFuture.completedFuture(answer);
+            }
+            PublicPromptAnswer updated = new PublicPromptAnswer(answer);
+            updated.setSignalTokens(normalizedTokens);
+            updated.setUpdatedAt(System.currentTimeMillis());
+            return publicPromptAnswerDepot.appendAsync(updated)
+                    .handle((ignored, ex) -> {
+                        if (ex != null) {
+                            LOG.warn("Failed to persist backfilled prompt tokens for answer {}", answerId, ex);
+                            return answer;
+                        }
+                        return updated;
+                    });
+        });
+    }
+
+    private CompletableFuture<PublicPromptAnswer> schedulePublicPromptAnswerSignalBackfill(PublicPromptAnswer answer) {
+        if (answer == null || hasAnswerSignalTokens(answer)) {
+            return CompletableFuture.completedFuture(answer);
+        }
+        String answerId = asTrimmedString(answer.getAnswerId());
+        if (answerId == null) {
+            return CompletableFuture.completedFuture(answer);
+        }
+        CompletableFuture<PublicPromptAnswer> inflight = publicPromptSignalBackfillByAnswerId.get(answerId);
+        if (inflight != null) {
+            return inflight;
+        }
+        CompletableFuture<PublicPromptAnswer> created = ensurePublicPromptAnswerSignalTokens(answer)
+                .exceptionally(ex -> {
+                    LOG.warn("Async prompt-token backfill failed for answer {}", answerId, ex);
+                    return answer;
+                });
+        CompletableFuture<PublicPromptAnswer> raced = publicPromptSignalBackfillByAnswerId.putIfAbsent(answerId,
+                created);
+        if (raced != null) {
+            return raced;
+        }
+        created.whenComplete((result, ex) -> publicPromptSignalBackfillByAnswerId.remove(answerId, created));
+        return created;
+    }
+
+    private CompletableFuture<List<ExtractedSignal>> publicReactionSignalsFromAnswer(PublicPromptAnswer answer,
+            int strength) {
+        if (!hasAnswerSignalTokens(answer)) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+        int bounded = Math.max(PUBLIC_REACTION_STRENGTH_MIN, Math.min(PUBLIC_REACTION_STRENGTH_MAX, strength));
+        double reactionScale = (bounded / (double) PUBLIC_REACTION_STRENGTH_MAX) * PUBLIC_REACTION_VALENCE_SCALE;
+        if (Math.abs(reactionScale) <= 1e-6) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+        double fallbackValence = reactionScale;
+        List<String> normalizedTokens = SignalNormalizer.normalizeTokens(answer.getSignalTokens());
+        if (normalizedTokens.isEmpty()) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+
+        return resolvePublicAnswerValenceByToken(answer, normalizedTokens).thenApply(baseValenceByToken -> {
+            LinkedHashMap<String, ExtractedSignal> deduped = new LinkedHashMap<>();
+            for (String token : normalizedTokens) {
+                if (token == null || token.isBlank()) {
+                    continue;
+                }
+                Double baseValenceMaybe = baseValenceByToken.get(token);
+                double signalValence = baseValenceMaybe == null
+                        ? fallbackValence
+                        : clampSigned(baseValenceMaybe.doubleValue() * reactionScale);
+                ExtractedSignal signal = ExtractedSignal.from(token, SignalIntent.SEEKING, signalValence);
+                if (signal == null || signal.token() == null || signal.token().isBlank()) {
+                    continue;
+                }
+                String key = signal.intent().name() + "|" + signal.token();
+                deduped.putIfAbsent(key, signal);
+            }
+            if (deduped.isEmpty()) {
+                return List.of();
+            }
+            return new ArrayList<>(deduped.values());
+        });
+    }
+
+    private CompletableFuture<Map<String, Double>> resolvePublicAnswerValenceByToken(PublicPromptAnswer answer,
+            List<String> normalizedTokens) {
+        if (answer == null || normalizedTokens == null || normalizedTokens.isEmpty()) {
+            return CompletableFuture.completedFuture(Map.of());
+        }
+        long ownerId = answer.isSetAccountId() ? answer.getAccountId() : 0L;
+        if (ownerId <= 0L) {
+            return CompletableFuture.completedFuture(Map.of());
+        }
+        String answerId = asTrimmedString(answer.getAnswerId());
+        HashSet<String> wanted = new HashSet<>(normalizedTokens);
+        if (wanted.isEmpty()) {
+            return CompletableFuture.completedFuture(Map.of());
+        }
+
+        return readSignalsSnapshot(ownerId, ownerId).thenApply(snapshot -> {
+            if (!hasSignalRecords(snapshot)) {
+                return Map.of();
+            }
+
+            HashMap<String, Double> valenceByToken = new HashMap<>();
+            HashMap<String, Integer> priorityByToken = new HashMap<>();
+            HashMap<String, Long> timestampByToken = new HashMap<>();
+
+            for (SignalRecord record : snapshot.getRecords()) {
+                if (record == null) {
+                    continue;
+                }
+                ParsedSignalToken parsed = parseSignalTokenAndValence(record);
+                if (parsed == null || parsed.token == null) {
+                    continue;
+                }
+                String normalizedToken = SignalNormalizer.normalizeOne(parsed.token);
+                if (normalizedToken == null || normalizedToken.isBlank() || !wanted.contains(normalizedToken)) {
+                    continue;
+                }
+                double valence = clampSigned(parsed.valence);
+                if (Math.abs(valence) <= 1e-6) {
+                    continue;
+                }
+
+                int priority = 0;
+                if (record.isSetSource() && "public_prompt".equals(record.getSource())) {
+                    priority += 1;
+                }
+                if (answerId != null && record.isSetSourceId() && answerId.equals(record.getSourceId())) {
+                    priority += 2;
+                }
+                SignalIntent intent = record.isSetIntent() ? record.getIntent() : null;
+                if (intent == null || intent == SignalIntent.SELF || intent == SignalIntent.BOTH) {
+                    priority += 1;
+                }
+                long timestamp = recordTimestamp(record);
+
+                Integer existingPriority = priorityByToken.get(normalizedToken);
+                Double existingValence = valenceByToken.get(normalizedToken);
+                Long existingTimestamp = timestampByToken.get(normalizedToken);
+                boolean shouldReplace = existingPriority == null
+                        || priority > existingPriority.intValue()
+                        || (priority == existingPriority.intValue()
+                                && (existingValence == null
+                                        || Math.abs(valence) > Math.abs(existingValence.doubleValue()) + 1e-9))
+                        || (priority == existingPriority.intValue()
+                                && existingValence != null
+                                && Math.abs(Math.abs(valence) - Math.abs(existingValence.doubleValue())) <= 1e-9
+                                && timestamp > (existingTimestamp == null ? Long.MIN_VALUE : existingTimestamp));
+                if (!shouldReplace) {
+                    continue;
+                }
+                priorityByToken.put(normalizedToken, Integer.valueOf(priority));
+                valenceByToken.put(normalizedToken, Double.valueOf(valence));
+                timestampByToken.put(normalizedToken, Long.valueOf(timestamp));
+            }
+            return valenceByToken;
+        });
+    }
+
+    private CompletableFuture<List<String>> appendSignalsFromPublicPromptReactionTokens(long viewerId,
+            PublicPromptAnswer answer, int strength, String sourceId) {
+        return publicReactionSignalsFromAnswer(answer, strength).thenCompose(signals -> {
+            if (signals.isEmpty()) {
+                return CompletableFuture.completedFuture(List.of());
+            }
+            String promptId = answer == null ? null : answer.getPromptId();
+            String context = "reaction_strength=" + strength + " | prompt_id="
+                    + (promptId == null ? "unknown" : promptId);
+            return persistSignals(viewerId, signals, "public_prompt_reaction", sourceId, context)
+                    .thenApply(ok -> tokens(signals));
+        });
+    }
+
     public CompletableFuture<Boolean> postPublicPromptReaction(long viewerId, String answerId,
             PromptReaction reaction) {
-        if (reaction == null)
+        if (reaction == null) {
             throw new IllegalArgumentException("Reaction required.");
+        }
+        return postPublicPromptReaction(viewerId, answerId, strengthFromLegacyReaction(reaction));
+    }
+
+    public CompletableFuture<Boolean> postPublicPromptReaction(long viewerId, String answerId,
+            Integer reactionStrength) {
+        Integer normalizedStrength = normalizePublicReactionStrength(reactionStrength);
+        if (normalizedStrength == null) {
+            throw new IllegalArgumentException("Reaction strength must be between -3 and 3.");
+        }
+        int strength = normalizedStrength.intValue();
         return getPublicPromptAnswerById.invokeAsync(answerId).thenCompose(answer -> {
-            if (answer == null)
+            if (answer == null) {
                 throw new IllegalArgumentException("Unknown answer: " + answerId);
+            }
+            PublicPromptAnswer normalizedAnswer = answer;
             PublicPromptReactionEvent event = new PublicPromptReactionEvent();
             event.setViewerAccountId(viewerId);
             event.setAnswerId(answerId);
-            event.setPromptId(answer.getPromptId());
-            event.setReaction(reaction);
+            event.setPromptId(encodePublicPromptIdWithStrength(normalizedAnswer.getPromptId(), strength));
+            event.setReaction(coarseReactionFromStrength(strength));
             event.setReactedAt(System.currentTimeMillis());
             CompletableFuture<Void> persist = publicPromptReactionDepot.appendAsync(event).thenApply(res -> null);
-            if (reaction == PromptReaction.LIKE || reaction == PromptReaction.DISLIKE) {
-                String promptText = PromptLibrary.publicTextById(answer.getPromptId());
-                if (promptText != null) {
-                    persist.thenCompose(v -> extractAndAppendSignalsFromPrompt(
-                            viewerId,
-                            promptText,
-                            answer.getBody(),
-                            "public_prompt_reaction",
-                            answerId)).exceptionally(ex -> {
-                                LOG.warn("Signal extraction failed for public prompt reaction viewer={} answer={}",
-                                        viewerId, answerId, ex);
-                                return List.of();
-                            });
-                }
+            if (strength == 0) {
+                return persist.thenApply(v -> true);
             }
+            if (hasAnswerSignalTokens(normalizedAnswer)) {
+                return persist.thenCompose(v -> appendSignalsFromPublicPromptReactionTokens(
+                        viewerId,
+                        normalizedAnswer,
+                        strength,
+                        answerId).exceptionally(ex -> {
+                            LOG.warn("Signal append failed for public prompt reaction viewer={} answer={}",
+                                    viewerId, answerId, ex);
+                            return List.of();
+                        })).thenApply(v -> true);
+            }
+
+            // Non-blocking path for legacy/tokenless answers: persist reaction immediately and
+            // append derived seeking signals once answer tokens are backfilled.
+            persist.thenCompose(v -> schedulePublicPromptAnswerSignalBackfill(normalizedAnswer)
+                    .thenCompose(backfilled -> {
+                        PublicPromptAnswer effective = backfilled == null ? normalizedAnswer : backfilled;
+                        if (!hasAnswerSignalTokens(effective)) {
+                            return CompletableFuture.completedFuture(List.of());
+                        }
+                        return appendSignalsFromPublicPromptReactionTokens(
+                                viewerId,
+                                effective,
+                                strength,
+                                answerId);
+                    }).exceptionally(ex -> {
+                        LOG.warn("Async signal append failed for public prompt reaction viewer={} answer={}",
+                                viewerId, answerId, ex);
+                        return List.of();
+                    }));
             return persist.thenApply(v -> true);
         });
     }
@@ -1650,31 +2400,55 @@ public class CalypsoApiManager {
                     v -> readCurrentSignalRecords(accountId).thenCompose(current -> {
                         LinkedHashMap<String, SignalRecord> map = toRecordMap(current);
                         for (ExtractedSignal sig : sanitized) {
-                            String key = recordKey(sig.token(), sig.intent());
+                            SignalIntent intent = sig.intent();
+                            String token = SignalNormalizer.normalizeOne(sig.token());
+                            if (token == null || token.isBlank()) {
+                                continue;
+                            }
+                            String key = recordKey(token, intent);
                             SignalRecord record = map.get(key);
+                            int priorCount = record == null ? 0 : (record.isSetCount() ? Math.max(1, record.getCount()) : 1);
+                            int nextCount;
                             if (record == null) {
                                 record = new SignalRecord();
-                                record.setToken(sig.token());
+                                record.setToken(token);
                                 record.setFirstSeen(now);
-                                record.setCount(1);
+                                nextCount = 1;
                             } else {
-                                record.setCount(record.isSetCount() ? record.getCount() + 1 : 1);
+                                nextCount = record.isSetCount() ? record.getCount() + 1 : 1;
                                 if (!record.isSetFirstSeen())
                                     record.setFirstSeen(now);
+                                if (record.getToken() == null || record.getToken().isBlank()) {
+                                    record.setToken(token);
+                                }
                             }
+                            record.setCount(nextCount);
                             record.setSource(normalizedSource);
                             if (normalizedSourceId != null)
                                 record.setSourceId(normalizedSourceId);
                             record.setLastSeen(now);
                             if (context != null)
                                 record.setLastContext(context);
-                            if (sig.intent() != null)
-                                record.setIntent(sig.intent());
-                            if (sig.confidence() != null)
-                                record.setConfidence(sig.confidence());
-                            if (sig.importance() != null)
-                                record.setImportance(sig.importance());
-                            map.put(key, record);
+                            if (intent != null)
+                                record.setIntent(intent);
+                            if (sig.valence() != null) {
+                                double incomingValence = clampSigned(sig.valence());
+                                if (priorCount > 0 && record.isSetValence()) {
+                                    double previousValence = clampSigned(record.getValence());
+                                    double blended = blendStoredValence(previousValence, incomingValence, priorCount);
+                                    record.setValence(blended);
+                                } else {
+                                    record.setValence(incomingValence);
+                                }
+                            }
+                            String finalKey = recordKey(record);
+                            if (finalKey == null) {
+                                continue;
+                            }
+                            if (!finalKey.equals(key)) {
+                                map.remove(key);
+                            }
+                            map.put(finalKey, record);
                         }
                         Signals updated = new Signals();
                         updated.setAccountId(accountId);
@@ -1699,13 +2473,24 @@ public class CalypsoApiManager {
     }
 
     public CompletableFuture<List<ExtractedSignal>> extractSignalsFromPrompt(String question, String answer) {
-        return extractSignalsFromPrompt(question, answer, List.of());
+        return extractSignalsFromPrompt(null, question, answer, List.of());
     }
 
     public CompletableFuture<List<ExtractedSignal>> extractSignalsFromPrompt(String question, String answer,
             List<String> conversationLines) {
+        return extractSignalsFromPrompt(null, question, answer, conversationLines);
+    }
+
+    public CompletableFuture<List<ExtractedSignal>> extractSignalsFromPrompt(String promptId, String question,
+            String answer) {
+        return extractSignalsFromPrompt(promptId, question, answer, List.of());
+    }
+
+    public CompletableFuture<List<ExtractedSignal>> extractSignalsFromPrompt(String promptId, String question,
+            String answer, List<String> conversationLines) {
         return CompletableFuture.supplyAsync(
-                () -> SignalExtractor.extractFromPromptAnswer(openAI, question, answer, conversationLines, Set.of()));
+                () -> SignalExtractor.extractFromPromptAnswer(openAI, promptId, question, answer, conversationLines,
+                        Set.of()));
     }
 
     /**
@@ -1734,14 +2519,24 @@ public class CalypsoApiManager {
 
     public CompletableFuture<List<String>> extractAndAppendSignalsFromPrompt(long accountId, String question,
             String answer, String source, String sourceId) {
-        return extractAndAppendSignalsFromPrompt(accountId, question, answer, List.of(), source, sourceId);
+        return extractAndAppendSignalsFromPrompt(accountId, null, question, answer, List.of(), source, sourceId);
     }
 
     public CompletableFuture<List<String>> extractAndAppendSignalsFromPrompt(long accountId, String question,
             String answer, List<String> conversationLines, String source, String sourceId) {
+        return extractAndAppendSignalsFromPrompt(accountId, null, question, answer, conversationLines, source, sourceId);
+    }
+
+    public CompletableFuture<List<String>> extractAndAppendSignalsFromPrompt(long accountId, String promptId,
+            String question, String answer, String source, String sourceId) {
+        return extractAndAppendSignalsFromPrompt(accountId, promptId, question, answer, List.of(), source, sourceId);
+    }
+
+    public CompletableFuture<List<String>> extractAndAppendSignalsFromPrompt(long accountId, String promptId,
+            String question, String answer, List<String> conversationLines, String source, String sourceId) {
         List<String> normalizedConversation = clampConversationLines(conversationLines, 40, 320);
         final String context = normalizedConversation.isEmpty() ? answer : String.join(" | ", normalizedConversation);
-        return extractSignalsFromPrompt(question, answer, normalizedConversation).thenCompose(signals -> {
+        return extractSignalsFromPrompt(promptId, question, answer, normalizedConversation).thenCompose(signals -> {
             if (signals.isEmpty())
                 return CompletableFuture.completedFuture(List.of());
             List<String> tokens = tokens(signals);
@@ -1752,12 +2547,12 @@ public class CalypsoApiManager {
     private static List<String> tokens(List<ExtractedSignal> signals) {
         if (signals == null || signals.isEmpty())
             return List.of();
-        List<String> out = new ArrayList<>(signals.size());
+        LinkedHashSet<String> unique = new LinkedHashSet<>();
         for (ExtractedSignal sig : signals) {
             if (sig != null && sig.token() != null)
-                out.add(sig.token());
+                unique.add(sig.token());
         }
-        return out;
+        return new ArrayList<>(unique);
     }
 
     private CompletableFuture<Void> requestRefill(long viewerId, int targetSize) {
@@ -1789,6 +2584,65 @@ public class CalypsoApiManager {
         return MATCH_AUTOPASS_BALANCED;
     }
 
+    private static double clampSigned(double value) {
+        if (Double.isNaN(value)) {
+            return 0.0;
+        }
+        if (value < -1.0) {
+            return -1.0;
+        }
+        if (value > 1.0) {
+            return 1.0;
+        }
+        return value;
+    }
+
+    private static double blendStoredValence(double previousValence, double incomingValence, int priorCount) {
+        double prev = clampSigned(previousValence);
+        double inc = clampSigned(incomingValence);
+        if (Math.abs(prev) <= 1e-6) {
+            return inc;
+        }
+        double prevSign = Math.signum(prev);
+        double incSign = Math.signum(inc);
+        if (Math.abs(inc) <= 1e-6) {
+            return prev;
+        }
+        if (prevSign == incSign) {
+            double prevMagnitude = Math.abs(prev);
+            double incomingMagnitude = Math.abs(inc);
+            double countBoost = Math.min(1.0, Math.log1p(Math.max(1, priorCount)) / 2.2);
+            double lift = (1.0 - prevMagnitude) * incomingMagnitude * (0.22 + (0.18 * countBoost));
+            double reinforcedMagnitude = Math.min(1.0, prevMagnitude + lift);
+            return clampSigned(prevSign * reinforcedMagnitude);
+        }
+
+        // Opposing evidence should soften confidently but not erase immediately.
+        double previousWeight = Math.max(1.0, Math.log1p(Math.max(1, priorCount)));
+        double incomingWeight = 1.0 + (Math.abs(inc) * 1.5);
+        double blended = ((prev * previousWeight) + (inc * incomingWeight)) / (previousWeight + incomingWeight);
+        return clampSigned(blended);
+    }
+
+    private static int rerankPoolLimit(int requestedLimit) {
+        int clamped = clampMatchLimit(requestedLimit);
+        int pool = Math.max(clamped, clamped * MATCH_RERANK_POOL_MULTIPLIER);
+        pool = Math.max(pool, MATCH_RERANK_POOL_MIN);
+        pool = Math.min(pool, MATCH_RERANK_POOL_MAX);
+        return Math.max(clamped, pool);
+    }
+
+    private static List<GetMatch> limitMatches(List<GetMatch> matches, int limit) {
+        if (matches == null || matches.isEmpty()) {
+            return List.of();
+        }
+        int clamped = clampMatchLimit(limit);
+        if (matches.size() <= clamped) {
+            return matches;
+        }
+        return new ArrayList<>(matches.subList(0, clamped));
+    }
+
     private static Double scoreFromHeap(Object rawHeap, long targetAccountId) {
         if (!(rawHeap instanceof List<?> heap))
             return null;
@@ -1801,6 +2655,56 @@ public class CalypsoApiManager {
             }
         }
         return null;
+    }
+
+    private static void putFiniteMetric(Map<String, Object> out, String key, Double value) {
+        if (out == null || key == null || key.isBlank() || value == null || !Double.isFinite(value.doubleValue())) {
+            return;
+        }
+        out.put(key, value.doubleValue());
+    }
+
+    private static Map<String, Object> scorerDebugFromCandidate(MatchCandidate candidate) {
+        if (candidate == null || !candidate.isSetReasons() || candidate.getReasons() == null
+                || candidate.getReasons().isEmpty()) {
+            return null;
+        }
+        HashMap<String, Double> metrics = new HashMap<>();
+        for (String reason : candidate.getReasons()) {
+            if (reason == null || reason.isBlank()) {
+                continue;
+            }
+            int sep = reason.indexOf('=');
+            if (sep <= 0 || sep >= reason.length() - 1) {
+                continue;
+            }
+            String key = reason.substring(0, sep).trim();
+            String rawValue = reason.substring(sep + 1).trim();
+            if (key.isBlank() || rawValue.isBlank()) {
+                continue;
+            }
+            try {
+                double parsed = Double.parseDouble(rawValue);
+                if (Double.isFinite(parsed)) {
+                    metrics.put(key, parsed);
+                }
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        if (metrics.isEmpty()) {
+            return null;
+        }
+
+        HashMap<String, Object> out = new HashMap<>();
+        for (Map.Entry<String, Double> entry : metrics.entrySet()) {
+            String key = entry.getKey();
+            Double value = entry.getValue();
+            if (key == null || key.isBlank()) {
+                continue;
+            }
+            putFiniteMetric(out, key, value);
+        }
+        return out.isEmpty() ? null : out;
     }
 
     private static List<MatchCandidate> normalizeHeap(Object rawHeap, int limit) {
@@ -1831,7 +2735,7 @@ public class CalypsoApiManager {
     private static boolean isLikeReaction(Object raw) {
         if (!(raw instanceof Number))
             return false;
-        return ((Number) raw).intValue() == PromptReaction.LIKE.getValue();
+        return ((Number) raw).intValue() > 0;
     }
 
     private static List<String> likedAnswerIds(Object rawByAnswer) {
@@ -1846,7 +2750,7 @@ public class CalypsoApiManager {
             if (!(entry.getValue() instanceof Number reactionValue)) {
                 continue;
             }
-            if (reactionValue.intValue() == PromptReaction.LIKE.getValue()) {
+            if (reactionValue.intValue() > 0) {
                 out.add(answerId);
             }
         }
@@ -1879,6 +2783,318 @@ public class CalypsoApiManager {
         } catch (RuntimeException ignored) {
             return -1L;
         }
+    }
+
+    private static Map<String, Object> copyScorerDebug(GetMatch match) {
+        HashMap<String, Object> out = new HashMap<>();
+        if (match != null && match.scorerDebug != null) {
+            out.putAll(match.scorerDebug);
+        }
+        return out;
+    }
+
+    private static String intentLabel(SignalIntent intent) {
+        if (intent == null) {
+            return "self";
+        }
+        switch (intent) {
+            case SELF:
+                return "self";
+            case SEEKING:
+                return "seeking";
+            case BOTH:
+                return "both";
+            case META:
+                return "meta";
+            default:
+                return "self";
+        }
+    }
+
+    private static ParsedSignalToken parseSignalTokenAndValence(SignalRecord record) {
+        if (record == null || !record.isSetToken() || record.getToken() == null) {
+            return null;
+        }
+        String token = record.getToken().trim().toLowerCase(Locale.ROOT);
+        if (token.isBlank()) {
+            return null;
+        }
+        boolean explicitValence = record.isSetValence();
+        double valence = explicitValence ? clampSigned(record.getValence()) : 1.0;
+
+        boolean stripped;
+        do {
+            stripped = false;
+            if (token.startsWith("anti_") && token.length() > "anti_".length()) {
+                if (!explicitValence) {
+                    valence = -1.0;
+                }
+                token = token.substring("anti_".length());
+                stripped = true;
+            } else if (token.startsWith("not_") && token.length() > "not_".length()) {
+                if (!explicitValence) {
+                    valence = -1.0;
+                }
+                token = token.substring("not_".length());
+                stripped = true;
+            } else if (token.startsWith("no_") && token.length() > "no_".length()) {
+                if (!explicitValence) {
+                    valence = -1.0;
+                }
+                token = token.substring("no_".length());
+                stripped = true;
+            } else if (token.startsWith("avoid_") && token.length() > "avoid_".length()) {
+                if (!explicitValence) {
+                    valence = -1.0;
+                }
+                token = token.substring("avoid_".length());
+                stripped = true;
+            } else if (token.startsWith("exclude_") && token.length() > "exclude_".length()) {
+                if (!explicitValence) {
+                    valence = -1.0;
+                }
+                token = token.substring("exclude_".length());
+                stripped = true;
+            }
+        } while (stripped);
+
+        token = token.trim();
+        if (token.isBlank()) {
+            return null;
+        }
+        return new ParsedSignalToken(token, clampSigned(valence));
+    }
+
+    private static double signalStrength(SignalRecord record, double valenceMagnitude) {
+        if (record == null) {
+            return 0.0;
+        }
+        double count = record.isSetCount() ? Math.max(1.0, record.getCount()) : 1.0;
+        return Math.log1p(count)
+                * Math.max(0.0, valenceMagnitude);
+    }
+
+    private static List<MatchReranker.Signal> toRerankSignals(Signals signals, int limit) {
+        if (signals == null || !signals.isSetRecords() || signals.getRecords() == null || signals.getRecords().isEmpty()) {
+            return List.of();
+        }
+        HashMap<String, SignalFeature> merged = new HashMap<>();
+        for (SignalRecord record : signals.getRecords()) {
+            if (record == null) {
+                continue;
+            }
+            ParsedSignalToken parsed = parseSignalTokenAndValence(record);
+            if (parsed == null) {
+                continue;
+            }
+            double valenceMagnitude = Math.abs(parsed.valence);
+            if (valenceMagnitude <= 1e-6) {
+                continue;
+            }
+            SignalIntent intent = record.isSetIntent() ? record.getIntent() : SignalIntent.SELF;
+            String intentKey = intentLabel(intent);
+            double strength = signalStrength(record, valenceMagnitude);
+            if (strength <= 1e-6) {
+                continue;
+            }
+            String key = intentKey + "|" + parsed.token;
+            SignalFeature prev = merged.get(key);
+            if (prev == null) {
+                merged.put(key, new SignalFeature(parsed.token, intentKey, parsed.valence, strength));
+                continue;
+            }
+            double combinedWeight = prev.weight + strength;
+            double combinedValence = 0.0;
+            if (combinedWeight > 1e-6) {
+                combinedValence = ((prev.valence * prev.weight) + (parsed.valence * strength)) / combinedWeight;
+            }
+            prev.weight = combinedWeight;
+            prev.valence = clampSigned(combinedValence);
+        }
+
+        if (merged.isEmpty()) {
+            return List.of();
+        }
+        List<SignalFeature> ordered = new ArrayList<>(merged.values());
+        ordered.sort((a, b) -> {
+            int byWeight = Double.compare(b.weight, a.weight);
+            if (byWeight != 0) {
+                return byWeight;
+            }
+            return a.token.compareTo(b.token);
+        });
+        int top = Math.min(Math.max(1, limit), ordered.size());
+        double maxWeight = Math.max(ordered.get(0).weight, 1e-6);
+        ArrayList<MatchReranker.Signal> out = new ArrayList<>(top);
+        for (int i = 0; i < top; i++) {
+            SignalFeature feature = ordered.get(i);
+            MatchReranker.Signal signal = new MatchReranker.Signal();
+            signal.token = feature.token;
+            signal.intent = feature.intent;
+            signal.weight = clamp01(feature.weight / maxWeight);
+            signal.valence = clampSigned(feature.valence);
+            out.add(signal);
+        }
+        return out;
+    }
+
+    private CompletableFuture<Signals> readSignalsSnapshot(long requesterId, long accountId) {
+        return getSignalsFromAccountId.invokeAsync(requesterId, accountId)
+                .thenApply(CalypsoApiManager::canonicalizeSignalSnapshot)
+                .completeOnTimeout(null, 2, TimeUnit.SECONDS)
+                .exceptionally(ex -> null);
+    }
+
+    private CompletableFuture<List<GetMatch>> applyTier3Rerank(long viewerId,
+            List<GetMatch> stage2,
+            int limit,
+            String surface) {
+        List<GetMatch> limitedStage2 = limitMatches(stage2, limit);
+        if (!MATCH_RERANK_ENABLED || stage2 == null || stage2.isEmpty()) {
+            return CompletableFuture.completedFuture(limitedStage2);
+        }
+
+        CompletableFuture<Signals> viewerSignalsFuture = readSignalsSnapshot(viewerId, viewerId);
+        HashMap<Long, CompletableFuture<Signals>> targetSignalFutures = new HashMap<>();
+        for (GetMatch candidate : stage2) {
+            long targetId = parseTargetAccountId(candidate);
+            if (targetId < 0L || targetId == viewerId || targetSignalFutures.containsKey(targetId)) {
+                continue;
+            }
+            targetSignalFutures.put(targetId, readSignalsSnapshot(viewerId, targetId));
+        }
+
+        ArrayList<CompletableFuture<?>> waits = new ArrayList<>();
+        waits.add(viewerSignalsFuture);
+        waits.addAll(targetSignalFutures.values());
+        CompletableFuture<Void> all = CompletableFuture.allOf(waits.toArray(new CompletableFuture[0]));
+        return all.thenApply(ignored -> {
+            Signals viewerSignals = viewerSignalsFuture.join();
+            HashMap<Long, Signals> targetSignalsById = new HashMap<>();
+            for (Map.Entry<Long, CompletableFuture<Signals>> entry : targetSignalFutures.entrySet()) {
+                Signals snapshot = entry.getValue().join();
+                if (snapshot != null) {
+                    targetSignalsById.put(entry.getKey(), snapshot);
+                }
+            }
+
+            MatchReranker.RerankRequest request = new MatchReranker.RerankRequest();
+            request.surface = surface;
+            request.viewerSignals = toRerankSignals(viewerSignals, MATCH_RERANK_SIGNAL_LIMIT_VIEWER);
+            for (GetMatch candidate : stage2) {
+                if (candidate == null || candidate.account == null || candidate.account.id == null
+                        || candidate.account.id.isBlank()) {
+                    continue;
+                }
+                long targetId = parseTargetAccountId(candidate);
+                if (targetId < 0L || targetId == viewerId) {
+                    continue;
+                }
+                MatchReranker.Candidate entry = new MatchReranker.Candidate();
+                entry.id = candidate.account.id;
+                entry.stage2Normalized = clamp01(candidate.score / 100.0);
+                entry.signals = toRerankSignals(targetSignalsById.get(targetId), MATCH_RERANK_SIGNAL_LIMIT_CANDIDATE);
+                request.candidates.add(entry);
+            }
+            if (request.candidates.isEmpty()) {
+                return limitedStage2;
+            }
+
+            MatchReranker.RerankResult result = MatchReranker.rerank(openAI, request);
+            if (result == null || result.decisions == null || result.decisions.isEmpty()) {
+                return limitedStage2;
+            }
+            HashMap<String, MatchReranker.Decision> decisionById = new HashMap<>();
+            for (MatchReranker.Decision decision : result.decisions) {
+                if (decision == null || decision.id == null || decision.id.isBlank()) {
+                    continue;
+                }
+                decisionById.put(decision.id.trim(), decision);
+            }
+            if (decisionById.isEmpty()) {
+                return limitedStage2;
+            }
+
+            ArrayList<GetMatch> reranked = new ArrayList<>(stage2.size());
+            for (GetMatch candidate : stage2) {
+                if (candidate == null || candidate.account == null || candidate.account.id == null
+                        || candidate.account.id.isBlank()) {
+                    continue;
+                }
+                double stage2Norm = clamp01(candidate.score / 100.0);
+                MatchReranker.Decision decision = decisionById.get(candidate.account.id.trim());
+                if (decision == null) {
+                    reranked.add(candidate);
+                    continue;
+                }
+
+                double compatibility = clamp01(
+                        decision.compatibility == null ? 0.5 : decision.compatibility.doubleValue());
+                double confidence = clamp01(
+                        decision.confidence == null ? 0.5 : decision.confidence.doubleValue());
+                double appliedWeight = MATCH_RERANK_MAX_WEIGHT * Math.max(MATCH_RERANK_CONFIDENCE_MIN, confidence);
+                double blendedNorm = clamp01((stage2Norm * (1.0 - appliedWeight)) + (compatibility * appliedWeight));
+                if (Boolean.TRUE.equals(decision.hardBlocker)) {
+                    blendedNorm = Math.min(blendedNorm, stage2Norm * MATCH_RERANK_BLOCKER_CAP);
+                }
+                blendedNorm = clamp01(blendedNorm);
+                double finalScore = blendedNorm * 100.0;
+
+                Map<String, Object> debug = copyScorerDebug(candidate);
+                debug.put("tier2Score", candidate.score);
+                debug.put("tier2Normalized", stage2Norm);
+                debug.put("tier3Compatibility", compatibility);
+                debug.put("tier3Confidence", confidence);
+                debug.put("tier3AppliedWeight", appliedWeight);
+                debug.put("tier3HardBlocker", Boolean.TRUE.equals(decision.hardBlocker));
+                debug.put("tier3Applied", true);
+                if (decision.reason != null && !decision.reason.isBlank()) {
+                    debug.put("tier3Reason", decision.reason.trim());
+                }
+                debug.put("scoreBeforeTier3", candidate.score);
+                debug.put("scoreAfterTier3", finalScore);
+                reranked.add(new GetMatch(candidate.account, finalScore, candidate.computedAt, debug));
+            }
+
+            reranked.sort((a, b) -> {
+                int byScore = Double.compare(b.score, a.score);
+                if (byScore != 0) {
+                    return byScore;
+                }
+                return Long.compare(b.computedAt, a.computedAt);
+            });
+            return limitMatches(reranked, limit);
+        }).completeOnTimeout(limitedStage2, MATCH_RERANK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to apply tier3 rerank for account {}", viewerId, ex);
+                    return limitedStage2;
+                });
+    }
+
+    private CompletableFuture<List<GetMatch>> recordServedExposure(long viewerId, List<GetMatch> served) {
+        if (served == null || served.isEmpty()) {
+            return CompletableFuture.completedFuture(served == null ? List.of() : served);
+        }
+        ArrayList<Long> targetIds = new ArrayList<>(served.size());
+        for (GetMatch match : served) {
+            long targetId = parseTargetAccountId(match);
+            if (targetId >= 0L) {
+                targetIds.add(targetId);
+            }
+        }
+        if (targetIds.isEmpty()) {
+            return CompletableFuture.completedFuture(served);
+        }
+        ServedPairs sp = new ServedPairs();
+        sp.setAccountId(viewerId);
+        sp.setTargetIds(targetIds);
+        sp.setServedAt(System.currentTimeMillis());
+        return matchesServeDepot.appendAsync(sp)
+                .thenApply(ignored -> served)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to record served exposure for account {}", viewerId, ex);
+                    return served;
+                });
     }
 
     private CompletableFuture<List<GetMatch>> loadRankedCandidates(long requesterId, long viewerId, int limit,
@@ -1921,7 +3137,8 @@ public class CalypsoApiManager {
                     MatchCandidate c = byId.get(aw.accountId);
                     if (c == null)
                         continue;
-                    out.add(new GetMatch(new GetAccount(aw), c.getStage0Score(), c.getComputedAt()));
+                    out.add(new GetMatch(new GetAccount(aw), c.getStage0Score(), c.getComputedAt(),
+                            scorerDebugFromCandidate(c)));
                     servedIds.add(aw.accountId);
                 }
 
@@ -1978,7 +3195,7 @@ public class CalypsoApiManager {
                                 continue;
                             }
                             out.add(new GetMatch(new GetAccount(accountWithId), candidate.getStage0Score(),
-                                    candidate.getComputedAt()));
+                                    candidate.getComputedAt(), scorerDebugFromCandidate(candidate)));
                         }
                         return out;
                     });
@@ -2123,7 +3340,7 @@ public class CalypsoApiManager {
             }
 
             double mutualScore = Math.min(viewerToTargetScore, targetToViewerScore.doubleValue());
-            return new GetMatch(ranked.account, mutualScore, ranked.computedAt);
+            return new GetMatch(ranked.account, mutualScore, ranked.computedAt, ranked.scorerDebug);
         }).exceptionally(ex -> {
             LOG.warn("Failed to evaluate mutual match {} -> {}", viewerId, targetId, ex);
             return null;
@@ -2132,6 +3349,7 @@ public class CalypsoApiManager {
 
     public CompletableFuture<List<GetMatch>> getMatches(long requesterId, long viewerId, int limit) {
         int clamped = clampMatchLimit(limit);
+        int fetchLimit = rerankPoolLimit(clamped);
         int refillTarget = Math.max(80, clamped * 3);
         requestRefill(viewerId, refillTarget).exceptionally(ex -> {
             LOG.warn("Failed to enqueue match refill for account {} (target size {})", viewerId, refillTarget, ex);
@@ -2143,7 +3361,7 @@ public class CalypsoApiManager {
                 .completeOnTimeout(null, 3, TimeUnit.SECONDS)
                 .exceptionally(ex -> null);
 
-        return loadRawRankedCandidates(viewerId, clamped)
+        return loadRawRankedCandidates(viewerId, fetchLimit)
                 .thenCompose(ranked -> viewerFiltersFuture.thenCompose(viewerFilters -> {
                     String viewerMode = CalypsoHelpers.getModeSelfOrNull(viewerFilters);
                     if (ranked == null || ranked.isEmpty()) {
@@ -2163,7 +3381,7 @@ public class CalypsoApiManager {
                             }
                         }
                         return out;
-                    });
+                    }).thenCompose(out -> applyTier3Rerank(viewerId, out, clamped, "matches"));
                 }))
                 .completeOnTimeout(List.<GetMatch>of(), 10, TimeUnit.SECONDS)
                 .exceptionally(ex -> {
@@ -2174,6 +3392,7 @@ public class CalypsoApiManager {
 
     public CompletableFuture<List<GetMatch>> getFacecards(long requesterId, long viewerId, int limit) {
         int clamped = clampMatchLimit(limit);
+        int fetchLimit = rerankPoolLimit(clamped);
         int refillTarget = Math.max(120, clamped * 6);
         requestRefill(viewerId, refillTarget)
                 .exceptionally(ex -> {
@@ -2181,12 +3400,38 @@ public class CalypsoApiManager {
                             ex);
                     return null;
                 });
-        return loadRankedCandidates(requesterId, viewerId, clamped, true)
+        return loadRankedCandidates(requesterId, viewerId, fetchLimit, false)
+                .thenCompose(stage2 -> applyTier3Rerank(viewerId, stage2, clamped, "facecards"))
+                .thenCompose(reranked -> recordServedExposure(viewerId, reranked))
                 .completeOnTimeout(List.<GetMatch>of(), 8, TimeUnit.SECONDS)
                 .exceptionally(ex -> {
                     LOG.warn("Failed to load facecards for account {}", viewerId, ex);
                     return List.<GetMatch>of();
                 });
+    }
+
+    private static final class ParsedSignalToken {
+        final String token;
+        final double valence;
+
+        private ParsedSignalToken(String token, double valence) {
+            this.token = token;
+            this.valence = valence;
+        }
+    }
+
+    private static final class SignalFeature {
+        final String token;
+        final String intent;
+        double valence;
+        double weight;
+
+        private SignalFeature(String token, String intent, double valence, double weight) {
+            this.token = token;
+            this.intent = intent;
+            this.valence = valence;
+            this.weight = weight;
+        }
     }
 
 }

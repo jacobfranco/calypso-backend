@@ -17,9 +17,8 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
   private static final org.apache.thrift.protocol.TField COUNT_FIELD_DESC = new org.apache.thrift.protocol.TField("count", org.apache.thrift.protocol.TType.I32, (short)5);
   private static final org.apache.thrift.protocol.TField LAST_CONTEXT_FIELD_DESC = new org.apache.thrift.protocol.TField("lastContext", org.apache.thrift.protocol.TType.STRING, (short)6);
   private static final org.apache.thrift.protocol.TField INTENT_FIELD_DESC = new org.apache.thrift.protocol.TField("intent", org.apache.thrift.protocol.TType.I32, (short)7);
-  private static final org.apache.thrift.protocol.TField CONFIDENCE_FIELD_DESC = new org.apache.thrift.protocol.TField("confidence", org.apache.thrift.protocol.TType.DOUBLE, (short)8);
-  private static final org.apache.thrift.protocol.TField IMPORTANCE_FIELD_DESC = new org.apache.thrift.protocol.TField("importance", org.apache.thrift.protocol.TType.DOUBLE, (short)9);
   private static final org.apache.thrift.protocol.TField SOURCE_ID_FIELD_DESC = new org.apache.thrift.protocol.TField("sourceId", org.apache.thrift.protocol.TType.STRING, (short)10);
+  private static final org.apache.thrift.protocol.TField VALENCE_FIELD_DESC = new org.apache.thrift.protocol.TField("valence", org.apache.thrift.protocol.TType.DOUBLE, (short)11);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new SignalRecordStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new SignalRecordTupleSchemeFactory();
@@ -35,9 +34,8 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
    * @see SignalIntent
    */
   public @org.apache.thrift.annotation.Nullable SignalIntent intent; // optional
-  public double confidence; // optional
-  public double importance; // optional
   public @org.apache.thrift.annotation.Nullable java.lang.String sourceId; // optional
+  public double valence; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
@@ -52,9 +50,8 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
      * @see SignalIntent
      */
     INTENT((short)7, "intent"),
-    CONFIDENCE((short)8, "confidence"),
-    IMPORTANCE((short)9, "importance"),
-    SOURCE_ID((short)10, "sourceId");
+    SOURCE_ID((short)10, "sourceId"),
+    VALENCE((short)11, "valence");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -84,12 +81,10 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
           return LAST_CONTEXT;
         case 7: // INTENT
           return INTENT;
-        case 8: // CONFIDENCE
-          return CONFIDENCE;
-        case 9: // IMPORTANCE
-          return IMPORTANCE;
         case 10: // SOURCE_ID
           return SOURCE_ID;
+        case 11: // VALENCE
+          return VALENCE;
         default:
           return null;
       }
@@ -136,10 +131,9 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
   private static final int __FIRSTSEEN_ISSET_ID = 0;
   private static final int __LASTSEEN_ISSET_ID = 1;
   private static final int __COUNT_ISSET_ID = 2;
-  private static final int __CONFIDENCE_ISSET_ID = 3;
-  private static final int __IMPORTANCE_ISSET_ID = 4;
+  private static final int __VALENCE_ISSET_ID = 3;
   private byte __isset_bitfield = 0;
-  private static final _Fields[] optionals = {_Fields.SOURCE,_Fields.FIRST_SEEN,_Fields.LAST_SEEN,_Fields.COUNT,_Fields.LAST_CONTEXT,_Fields.INTENT,_Fields.CONFIDENCE,_Fields.IMPORTANCE,_Fields.SOURCE_ID};
+  private static final _Fields[] optionals = {_Fields.SOURCE,_Fields.FIRST_SEEN,_Fields.LAST_SEEN,_Fields.COUNT,_Fields.LAST_CONTEXT,_Fields.INTENT,_Fields.SOURCE_ID,_Fields.VALENCE};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
@@ -157,12 +151,10 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
     tmpMap.put(_Fields.INTENT, new org.apache.thrift.meta_data.FieldMetaData("intent", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.EnumMetaData(org.apache.thrift.protocol.TType.ENUM, SignalIntent.class)));
-    tmpMap.put(_Fields.CONFIDENCE, new org.apache.thrift.meta_data.FieldMetaData("confidence", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
-        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.DOUBLE)));
-    tmpMap.put(_Fields.IMPORTANCE, new org.apache.thrift.meta_data.FieldMetaData("importance", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
-        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.DOUBLE)));
     tmpMap.put(_Fields.SOURCE_ID, new org.apache.thrift.meta_data.FieldMetaData("sourceId", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
+    tmpMap.put(_Fields.VALENCE, new org.apache.thrift.meta_data.FieldMetaData("valence", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.DOUBLE)));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(SignalRecord.class, metaDataMap);
   }
@@ -197,11 +189,10 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
     if (other.isSetIntent()) {
       this.intent = other.intent;
     }
-    this.confidence = other.confidence;
-    this.importance = other.importance;
     if (other.isSetSourceId()) {
       this.sourceId = other.sourceId;
     }
+    this.valence = other.valence;
   }
 
   @Override
@@ -221,11 +212,9 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
     this.count = 0;
     this.lastContext = null;
     this.intent = null;
-    setConfidenceIsSet(false);
-    this.confidence = 0.0;
-    setImportanceIsSet(false);
-    this.importance = 0.0;
     this.sourceId = null;
+    setValenceIsSet(false);
+    this.valence = 0.0;
   }
 
   @org.apache.thrift.annotation.Nullable
@@ -405,52 +394,6 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
     }
   }
 
-  public double getConfidence() {
-    return this.confidence;
-  }
-
-  public SignalRecord setConfidence(double confidence) {
-    this.confidence = confidence;
-    setConfidenceIsSet(true);
-    return this;
-  }
-
-  public void unsetConfidence() {
-    __isset_bitfield = org.apache.thrift.EncodingUtils.clearBit(__isset_bitfield, __CONFIDENCE_ISSET_ID);
-  }
-
-  /** Returns true if field confidence is set (has been assigned a value) and false otherwise */
-  public boolean isSetConfidence() {
-    return org.apache.thrift.EncodingUtils.testBit(__isset_bitfield, __CONFIDENCE_ISSET_ID);
-  }
-
-  public void setConfidenceIsSet(boolean value) {
-    __isset_bitfield = org.apache.thrift.EncodingUtils.setBit(__isset_bitfield, __CONFIDENCE_ISSET_ID, value);
-  }
-
-  public double getImportance() {
-    return this.importance;
-  }
-
-  public SignalRecord setImportance(double importance) {
-    this.importance = importance;
-    setImportanceIsSet(true);
-    return this;
-  }
-
-  public void unsetImportance() {
-    __isset_bitfield = org.apache.thrift.EncodingUtils.clearBit(__isset_bitfield, __IMPORTANCE_ISSET_ID);
-  }
-
-  /** Returns true if field importance is set (has been assigned a value) and false otherwise */
-  public boolean isSetImportance() {
-    return org.apache.thrift.EncodingUtils.testBit(__isset_bitfield, __IMPORTANCE_ISSET_ID);
-  }
-
-  public void setImportanceIsSet(boolean value) {
-    __isset_bitfield = org.apache.thrift.EncodingUtils.setBit(__isset_bitfield, __IMPORTANCE_ISSET_ID, value);
-  }
-
   @org.apache.thrift.annotation.Nullable
   public java.lang.String getSourceId() {
     return this.sourceId;
@@ -474,6 +417,29 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
     if (!value) {
       this.sourceId = null;
     }
+  }
+
+  public double getValence() {
+    return this.valence;
+  }
+
+  public SignalRecord setValence(double valence) {
+    this.valence = valence;
+    setValenceIsSet(true);
+    return this;
+  }
+
+  public void unsetValence() {
+    __isset_bitfield = org.apache.thrift.EncodingUtils.clearBit(__isset_bitfield, __VALENCE_ISSET_ID);
+  }
+
+  /** Returns true if field valence is set (has been assigned a value) and false otherwise */
+  public boolean isSetValence() {
+    return org.apache.thrift.EncodingUtils.testBit(__isset_bitfield, __VALENCE_ISSET_ID);
+  }
+
+  public void setValenceIsSet(boolean value) {
+    __isset_bitfield = org.apache.thrift.EncodingUtils.setBit(__isset_bitfield, __VALENCE_ISSET_ID, value);
   }
 
   @Override
@@ -535,27 +501,19 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       }
       break;
 
-    case CONFIDENCE:
-      if (value == null) {
-        unsetConfidence();
-      } else {
-        setConfidence((java.lang.Double)value);
-      }
-      break;
-
-    case IMPORTANCE:
-      if (value == null) {
-        unsetImportance();
-      } else {
-        setImportance((java.lang.Double)value);
-      }
-      break;
-
     case SOURCE_ID:
       if (value == null) {
         unsetSourceId();
       } else {
         setSourceId((java.lang.String)value);
+      }
+      break;
+
+    case VALENCE:
+      if (value == null) {
+        unsetValence();
+      } else {
+        setValence((java.lang.Double)value);
       }
       break;
 
@@ -587,14 +545,11 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
     case INTENT:
       return getIntent();
 
-    case CONFIDENCE:
-      return getConfidence();
-
-    case IMPORTANCE:
-      return getImportance();
-
     case SOURCE_ID:
       return getSourceId();
+
+    case VALENCE:
+      return getValence();
 
     }
     throw new java.lang.IllegalStateException();
@@ -622,12 +577,10 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       return isSetLastContext();
     case INTENT:
       return isSetIntent();
-    case CONFIDENCE:
-      return isSetConfidence();
-    case IMPORTANCE:
-      return isSetImportance();
     case SOURCE_ID:
       return isSetSourceId();
+    case VALENCE:
+      return isSetValence();
     }
     throw new java.lang.IllegalStateException();
   }
@@ -708,30 +661,21 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
         return false;
     }
 
-    boolean this_present_confidence = true && this.isSetConfidence();
-    boolean that_present_confidence = true && that.isSetConfidence();
-    if (this_present_confidence || that_present_confidence) {
-      if (!(this_present_confidence && that_present_confidence))
-        return false;
-      if (this.confidence != that.confidence)
-        return false;
-    }
-
-    boolean this_present_importance = true && this.isSetImportance();
-    boolean that_present_importance = true && that.isSetImportance();
-    if (this_present_importance || that_present_importance) {
-      if (!(this_present_importance && that_present_importance))
-        return false;
-      if (this.importance != that.importance)
-        return false;
-    }
-
     boolean this_present_sourceId = true && this.isSetSourceId();
     boolean that_present_sourceId = true && that.isSetSourceId();
     if (this_present_sourceId || that_present_sourceId) {
       if (!(this_present_sourceId && that_present_sourceId))
         return false;
       if (!this.sourceId.equals(that.sourceId))
+        return false;
+    }
+
+    boolean this_present_valence = true && this.isSetValence();
+    boolean that_present_valence = true && that.isSetValence();
+    if (this_present_valence || that_present_valence) {
+      if (!(this_present_valence && that_present_valence))
+        return false;
+      if (this.valence != that.valence)
         return false;
     }
 
@@ -770,17 +714,13 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
     if (isSetIntent())
       hashCode = hashCode * 8191 + intent.getValue();
 
-    hashCode = hashCode * 8191 + ((isSetConfidence()) ? 131071 : 524287);
-    if (isSetConfidence())
-      hashCode = hashCode * 8191 + org.apache.thrift.TBaseHelper.hashCode(confidence);
-
-    hashCode = hashCode * 8191 + ((isSetImportance()) ? 131071 : 524287);
-    if (isSetImportance())
-      hashCode = hashCode * 8191 + org.apache.thrift.TBaseHelper.hashCode(importance);
-
     hashCode = hashCode * 8191 + ((isSetSourceId()) ? 131071 : 524287);
     if (isSetSourceId())
       hashCode = hashCode * 8191 + sourceId.hashCode();
+
+    hashCode = hashCode * 8191 + ((isSetValence()) ? 131071 : 524287);
+    if (isSetValence())
+      hashCode = hashCode * 8191 + org.apache.thrift.TBaseHelper.hashCode(valence);
 
     return hashCode;
   }
@@ -863,32 +803,22 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
         return lastComparison;
       }
     }
-    lastComparison = java.lang.Boolean.compare(isSetConfidence(), other.isSetConfidence());
-    if (lastComparison != 0) {
-      return lastComparison;
-    }
-    if (isSetConfidence()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.confidence, other.confidence);
-      if (lastComparison != 0) {
-        return lastComparison;
-      }
-    }
-    lastComparison = java.lang.Boolean.compare(isSetImportance(), other.isSetImportance());
-    if (lastComparison != 0) {
-      return lastComparison;
-    }
-    if (isSetImportance()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.importance, other.importance);
-      if (lastComparison != 0) {
-        return lastComparison;
-      }
-    }
     lastComparison = java.lang.Boolean.compare(isSetSourceId(), other.isSetSourceId());
     if (lastComparison != 0) {
       return lastComparison;
     }
     if (isSetSourceId()) {
       lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.sourceId, other.sourceId);
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+    }
+    lastComparison = java.lang.Boolean.compare(isSetValence(), other.isSetValence());
+    if (lastComparison != 0) {
+      return lastComparison;
+    }
+    if (isSetValence()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.valence, other.valence);
       if (lastComparison != 0) {
         return lastComparison;
       }
@@ -972,18 +902,6 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       }
       first = false;
     }
-    if (isSetConfidence()) {
-      if (!first) sb.append(", ");
-      sb.append("confidence:");
-      sb.append(this.confidence);
-      first = false;
-    }
-    if (isSetImportance()) {
-      if (!first) sb.append(", ");
-      sb.append("importance:");
-      sb.append(this.importance);
-      first = false;
-    }
     if (isSetSourceId()) {
       if (!first) sb.append(", ");
       sb.append("sourceId:");
@@ -992,6 +910,12 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       } else {
         sb.append(this.sourceId);
       }
+      first = false;
+    }
+    if (isSetValence()) {
+      if (!first) sb.append(", ");
+      sb.append("valence:");
+      sb.append(this.valence);
       first = false;
     }
     sb.append(")");
@@ -1100,26 +1024,18 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 8: // CONFIDENCE
-            if (schemeField.type == org.apache.thrift.protocol.TType.DOUBLE) {
-              struct.confidence = iprot.readDouble();
-              struct.setConfidenceIsSet(true);
-            } else { 
-              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
-            }
-            break;
-          case 9: // IMPORTANCE
-            if (schemeField.type == org.apache.thrift.protocol.TType.DOUBLE) {
-              struct.importance = iprot.readDouble();
-              struct.setImportanceIsSet(true);
-            } else { 
-              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
-            }
-            break;
           case 10: // SOURCE_ID
             if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
               struct.sourceId = iprot.readString();
               struct.setSourceIdIsSet(true);
+            } else { 
+              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+            }
+            break;
+          case 11: // VALENCE
+            if (schemeField.type == org.apache.thrift.protocol.TType.DOUBLE) {
+              struct.valence = iprot.readDouble();
+              struct.setValenceIsSet(true);
             } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
@@ -1181,22 +1097,17 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
           oprot.writeFieldEnd();
         }
       }
-      if (struct.isSetConfidence()) {
-        oprot.writeFieldBegin(CONFIDENCE_FIELD_DESC);
-        oprot.writeDouble(struct.confidence);
-        oprot.writeFieldEnd();
-      }
-      if (struct.isSetImportance()) {
-        oprot.writeFieldBegin(IMPORTANCE_FIELD_DESC);
-        oprot.writeDouble(struct.importance);
-        oprot.writeFieldEnd();
-      }
       if (struct.sourceId != null) {
         if (struct.isSetSourceId()) {
           oprot.writeFieldBegin(SOURCE_ID_FIELD_DESC);
           oprot.writeString(struct.sourceId);
           oprot.writeFieldEnd();
         }
+      }
+      if (struct.isSetValence()) {
+        oprot.writeFieldBegin(VALENCE_FIELD_DESC);
+        oprot.writeDouble(struct.valence);
+        oprot.writeFieldEnd();
       }
       oprot.writeFieldStop();
       oprot.writeStructEnd();
@@ -1236,16 +1147,13 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       if (struct.isSetIntent()) {
         optionals.set(5);
       }
-      if (struct.isSetConfidence()) {
+      if (struct.isSetSourceId()) {
         optionals.set(6);
       }
-      if (struct.isSetImportance()) {
+      if (struct.isSetValence()) {
         optionals.set(7);
       }
-      if (struct.isSetSourceId()) {
-        optionals.set(8);
-      }
-      oprot.writeBitSet(optionals, 9);
+      oprot.writeBitSet(optionals, 8);
       if (struct.isSetSource()) {
         oprot.writeString(struct.source);
       }
@@ -1264,14 +1172,11 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       if (struct.isSetIntent()) {
         oprot.writeI32(struct.intent.getValue());
       }
-      if (struct.isSetConfidence()) {
-        oprot.writeDouble(struct.confidence);
-      }
-      if (struct.isSetImportance()) {
-        oprot.writeDouble(struct.importance);
-      }
       if (struct.isSetSourceId()) {
         oprot.writeString(struct.sourceId);
+      }
+      if (struct.isSetValence()) {
+        oprot.writeDouble(struct.valence);
       }
     }
 
@@ -1280,7 +1185,7 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       struct.token = iprot.readString();
       struct.setTokenIsSet(true);
-      java.util.BitSet incoming = iprot.readBitSet(9);
+      java.util.BitSet incoming = iprot.readBitSet(8);
       if (incoming.get(0)) {
         struct.source = iprot.readString();
         struct.setSourceIsSet(true);
@@ -1306,16 +1211,12 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
         struct.setIntentIsSet(true);
       }
       if (incoming.get(6)) {
-        struct.confidence = iprot.readDouble();
-        struct.setConfidenceIsSet(true);
-      }
-      if (incoming.get(7)) {
-        struct.importance = iprot.readDouble();
-        struct.setImportanceIsSet(true);
-      }
-      if (incoming.get(8)) {
         struct.sourceId = iprot.readString();
         struct.setSourceIdIsSet(true);
+      }
+      if (incoming.get(7)) {
+        struct.valence = iprot.readDouble();
+        struct.setValenceIsSet(true);
       }
     }
   }

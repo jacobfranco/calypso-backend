@@ -18,10 +18,13 @@ import com.openai.models.responses.ResponseOutputText;
 
 import now.calypso.backend.data.AgentSession;
 import now.calypso.backend.data.AgentMessage;
+import now.calypso.backendapi.llm.OpenAIModelRouter;
 
 public final class AgentResponder {
     private static final Logger LOG = LoggerFactory.getLogger(AgentResponder.class);
     private static final AtomicReference<Function<AgentSession, String>> TEST_OVERRIDE = new AtomicReference<>();
+    private static final String MODEL_ENV = "CALYPSO_MODEL_AGENT";
+    private static final String MODEL_DEFAULT = "gpt-5.4-mini";
 
     private AgentResponder() {
     }
@@ -45,18 +48,30 @@ public final class AgentResponder {
             List<AgentMessage> messages = (session == null || session.getMessages() == null)
                     ? List.of()
                     : session.getMessages();
-            ResponseCreateParams params = ResponseCreateParams.builder()
-                    .model(ChatModel.GPT_4_1_MINI)
-                    .instructions(AgentPrompts.systemPrompt())
-                    .input(AgentPrompts.buildUserInput(messages))
-                    .temperature(0.65)
-                    .maxOutputTokens(400L)
-                    .build();
-            Response resp = client.responses().create(params);
-            String text = collectOutputText(resp);
-            if (text == null || text.isBlank())
-                return AgentPrompts.fallbackResponse();
-            return text.trim();
+            Exception lastError = null;
+            for (ChatModel model : OpenAIModelRouter.modelChain(MODEL_ENV, MODEL_DEFAULT)) {
+                try {
+                    ResponseCreateParams params = ResponseCreateParams.builder()
+                            .model(model)
+                            .instructions(AgentPrompts.systemPrompt())
+                            .input(AgentPrompts.buildUserInput(messages))
+                            .temperature(0.65)
+                            .maxOutputTokens(400L)
+                            .build();
+                    Response resp = client.responses().create(params);
+                    String text = collectOutputText(resp);
+                    if (text == null || text.isBlank())
+                        continue;
+                    return text.trim();
+                } catch (Exception ex) {
+                    lastError = ex;
+                    LOG.warn("Agent generation failed with model {}. Trying fallback if available.", model.asString(), ex);
+                }
+            }
+            if (lastError != null) {
+                LOG.warn("Agent generation exhausted model chain; returning fallback response.");
+            }
+            return AgentPrompts.fallbackResponse();
         } catch (Exception ex) {
             LOG.warn("Agent response generation failed; returning fallback.", ex);
             return AgentPrompts.fallbackResponse();

@@ -21,10 +21,14 @@ import com.openai.models.responses.ResponseOutputItem;
 import com.openai.models.responses.ResponseOutputMessage;
 import com.openai.models.responses.ResponseOutputText;
 
+import now.calypso.backendapi.llm.OpenAIModelRouter;
+
 public final class PrivatePromptTurnResponder {
     private static final Logger LOG = LoggerFactory.getLogger(PrivatePromptTurnResponder.class);
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final AtomicReference<Function<TurnInput, TurnResult>> TEST_OVERRIDE = new AtomicReference<>();
+    private static final String MODEL_ENV = "CALYPSO_MODEL_PRIVATE_TURN";
+    private static final String MODEL_DEFAULT = "gpt-5.4-mini";
 
     private static final String SYSTEM_PROMPT = """
             You are Calypso's private matchmaking prompt guide.
@@ -35,7 +39,10 @@ public final class PrivatePromptTurnResponder {
 
             Rules:
             - agentMessage must be 1-2 short sentences.
-            - Sound natural and conversational (e.g., "Okay cool.").
+            - Sound warm, genuine, and conversational.
+            - Use a subtle young-adult / lightly Gen Z voice without trying too hard.
+            - No emojis and no heavy internet slang.
+            - Avoid slang like "rizz", "no cap", "bro", "mid", "slay", "bestie", or "fr fr".
             - If the user's latest message is too vague, too short, or unclear, ask for a little more detail and set needsMoreDetail=true.
             - If the user gives an ambiguous category (for example "games"), ask a quick clarifier
               (for example board games vs video games) and set needsMoreDetail=true.
@@ -71,16 +78,32 @@ public final class PrivatePromptTurnResponder {
             return fallback(input.userMessage);
         }
         try {
-            ResponseCreateParams params = ResponseCreateParams.builder()
-                    .model(ChatModel.GPT_4_1_MINI)
-                    .instructions(SYSTEM_PROMPT)
-                    .input(buildUserInput(input))
-                    .temperature(0.55)
-                    .maxOutputTokens(220L)
-                    .build();
-            Response resp = client.responses().create(params);
-            TurnResult parsed = parseTurnResult(collectOutputText(resp));
-            return sanitizeResult(parsed, input);
+            Exception lastError = null;
+            for (ChatModel model : OpenAIModelRouter.modelChain(MODEL_ENV, MODEL_DEFAULT)) {
+                try {
+                    ResponseCreateParams params = ResponseCreateParams.builder()
+                            .model(model)
+                            .instructions(SYSTEM_PROMPT)
+                            .input(buildUserInput(input))
+                            .temperature(0.55)
+                            .maxOutputTokens(220L)
+                            .build();
+                    Response resp = client.responses().create(params);
+                    TurnResult parsed = parseTurnResult(collectOutputText(resp));
+                    if (parsed == null) {
+                        continue;
+                    }
+                    return sanitizeResult(parsed, input);
+                } catch (Exception ex) {
+                    lastError = ex;
+                    LOG.warn("Private turn generation failed with model {}. Trying fallback if available.",
+                            model.asString(), ex);
+                }
+            }
+            if (lastError != null) {
+                LOG.warn("Private turn generation exhausted model chain; using fallback response.");
+            }
+            return fallback(input.userMessage);
         } catch (Exception ex) {
             LOG.warn("Private prompt turn generation failed; using fallback response.", ex);
             return fallback(input.userMessage);
@@ -131,7 +154,7 @@ public final class PrivatePromptTurnResponder {
             return null;
         String userText = input.userMessage.toLowerCase(Locale.ROOT);
         if (mentionsGenericGames(userText) && !mentionsSpecificGameType(userText)) {
-            return new TurnResult("Nice. Do you mean board games, video games, or both?", true);
+            return new TurnResult("Got you. Do you mean board games, video games, or both?", true);
         }
         return null;
     }
@@ -223,10 +246,10 @@ public final class PrivatePromptTurnResponder {
     private static TurnResult fallback(String userMessage) {
         if (isTooShort(userMessage)) {
             return new TurnResult(
-                    "Okay cool. Can you share a little more detail so I can match you better?",
+                    "Got it. Can you share a little more detail so I can match you better?",
                     true);
         }
-        return new TurnResult("Okay cool, that's helpful. Anything else you'd add?", false);
+        return new TurnResult("That helps a lot. Anything else you'd add?", false);
     }
 
     private static boolean isTooShort(String text) {

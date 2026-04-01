@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openai.client.OpenAIClient;
 
@@ -20,11 +19,10 @@ public final class SignalExtractor {
 
     // Tunables
     private static final int CHUNK_MAX_CHARS = 800;
-    private static final int PER_CALL_MAX = 12; // ask model for up to 12 per call
-    private static final int PER_CHUNK_PASSES = 3; // try a few times until saturation
-    private static final int PER_PROMPT_PASSES = 2; // allow richer extraction from prompt QA pairs
+    private static final int PER_CALL_MAX = 12;
+    private static final int PER_CHUNK_PASSES = 3;
     private static final int SPECIFICITY_ENRICH_MAX = 4;
-    private static final int GLOBAL_SOFT_CAP = 200; // safety stop
+    private static final int GLOBAL_SOFT_CAP = 200;
 
     private SignalExtractor() {
     }
@@ -41,7 +39,7 @@ public final class SignalExtractor {
                 List<String> already = tokens(acc.values());
                 List<ExtractedSignal> raw = call(openAI, SignalPrompts.FREEFORM_SYSTEM_PROMPT,
                         SignalPrompts.freeformUserPrompt(c, already),
-                        Math.min(PER_CALL_MAX, GLOBAL_SOFT_CAP - acc.size()), already);
+                        Math.min(PER_CALL_MAX, GLOBAL_SOFT_CAP - acc.size()));
 
                 boolean any = merge(acc, raw);
                 if (!any)
@@ -51,7 +49,7 @@ public final class SignalExtractor {
                 break;
         }
 
-        return new ArrayList<>(acc.values());
+        return cleanupSpecificityConflicts(new ArrayList<>(acc.values()));
     }
 
     public static List<ExtractedSignal> extractFromAgentConversation(OpenAIClient openAI, List<String> conversation,
@@ -59,47 +57,79 @@ public final class SignalExtractor {
         if (conversation == null || conversation.isEmpty())
             return List.of();
         Collection<String> normalizedAlreadyHave = normalizeAlreadyHave(alreadyHave);
+        List<String> normalizedConversation = normalizeConversation(conversation);
         LinkedHashMap<String, ExtractedSignal> acc = new LinkedHashMap<>();
         List<ExtractedSignal> raw = call(openAI, SignalPrompts.AGENT_CHAT_SYSTEM_PROMPT,
-                SignalPrompts.agentChatUserPrompt(conversation, normalizedAlreadyHave),
-                PER_CALL_MAX, normalizedAlreadyHave);
+                SignalPrompts.agentChatUserPrompt(normalizedConversation, normalizedAlreadyHave),
+                PER_CALL_MAX);
         merge(acc, raw);
-        return filtered(acc.values(), normalizedAlreadyHave);
+        return cleanupSpecificityConflicts(filtered(acc.values(), normalizedAlreadyHave));
     }
 
     public static List<ExtractedSignal> extractFromPromptAnswer(OpenAIClient openAI, String question, String answer,
             Collection<String> alreadyHave) {
-        return extractFromPromptAnswer(openAI, question, answer, List.of(), alreadyHave);
+        return extractFromPromptAnswer(openAI, null, question, answer, List.of(), alreadyHave);
+    }
+
+    public static List<ExtractedSignal> extractFromPromptAnswer(OpenAIClient openAI, String promptId, String question,
+            String answer, Collection<String> alreadyHave) {
+        return extractFromPromptAnswer(openAI, promptId, question, answer, List.of(), alreadyHave);
     }
 
     public static List<ExtractedSignal> extractFromPromptAnswer(OpenAIClient openAI, String question, String answer,
             Collection<String> conversationLines, Collection<String> alreadyHave) {
+        return extractFromPromptAnswer(openAI, null, question, answer, conversationLines, alreadyHave);
+    }
+
+    public static List<ExtractedSignal> extractFromPromptAnswer(OpenAIClient openAI, String promptId, String question,
+            String answer, Collection<String> conversationLines, Collection<String> alreadyHave) {
         if ((question == null || question.isBlank()) && (answer == null || answer.isBlank()))
             return List.of();
+
+        PromptSignalProfiles.PromptSignalProfile profile = PromptSignalProfiles.forPromptId(promptId);
+        String profileHint = profile.extractionHint();
         Collection<String> normalizedAlreadyHave = normalizeAlreadyHave(alreadyHave);
         List<String> normalizedConversation = normalizeConversation(conversationLines);
+
         LinkedHashMap<String, ExtractedSignal> acc = new LinkedHashMap<>();
-        for (int i = 0; i < PER_PROMPT_PASSES; i++) {
+        int promptPasses = profile.promptPasses();
+        int maxPerCall = Math.min(PER_CALL_MAX, profile.maxSignals());
+        for (int i = 0; i < promptPasses; i++) {
             ArrayList<String> already = new ArrayList<>(normalizedAlreadyHave);
             already.addAll(tokens(acc.values()));
             List<ExtractedSignal> raw = call(openAI, SignalPrompts.PROMPT_RESPONSE_SYSTEM_PROMPT,
-                    SignalPrompts.promptResponseUserPrompt(question, answer, normalizedConversation, already),
-                    PER_CALL_MAX, already);
+                    SignalPrompts.promptResponseUserPrompt(promptId, profileHint, question, answer,
+                            normalizedConversation, already),
+                    maxPerCall);
             boolean any = merge(acc, raw);
             if (!any)
                 break;
         }
+
         List<ExtractedSignal> filtered = filtered(acc.values(), normalizedAlreadyHave);
         List<ExtractedSignal> adjusted = applyPromptContextAdjustments(question, answer, normalizedConversation, filtered);
-        return enrichPromptSpecificity(openAI, question, answer, normalizedConversation, normalizedAlreadyHave, adjusted);
+        List<ExtractedSignal> enriched = profile.runSpecificityPass()
+                ? enrichPromptSpecificity(openAI, promptId, profileHint, question, answer, normalizedConversation,
+                        normalizedAlreadyHave, adjusted, Math.min(SPECIFICITY_ENRICH_MAX, profile.maxSignals()))
+                : cleanupSpecificityConflicts(adjusted);
+        // Re-apply context guards after enrichment so specificity pass cannot reintroduce
+        // broad negatives that should be suppressed for the current prompt framing.
+        List<ExtractedSignal> finalAdjusted = applyPromptContextAdjustments(
+                question,
+                answer,
+                normalizedConversation,
+                enriched);
+        return cleanupSpecificityConflicts(finalAdjusted);
     }
 
     private static List<String> chunk(String text, int maxChars) {
-        text = text.trim();
-        if (text.length() <= maxChars)
-            return List.of(text);
+        String trimmed = text == null ? "" : text.trim();
+        if (trimmed.isEmpty())
+            return List.of();
+        if (trimmed.length() <= maxChars)
+            return List.of(trimmed);
         List<String> out = new ArrayList<>();
-        String[] sentences = text.split("(?<=[.!?])\\s+");
+        String[] sentences = trimmed.split("(?<=[.!?])\\s+");
         StringBuilder buf = new StringBuilder();
         for (String s : sentences) {
             if (buf.length() + s.length() + 1 > maxChars) {
@@ -139,14 +169,10 @@ public final class SignalExtractor {
     }
 
     /**
-     * Merge signals into acc with deterministic intent semantics:
+     * Merge normalized signals into acc, keyed by intent+token.
      *
-     * - BOTH dominates: if BOTH|token exists, drop SELF|token and SEEKING|token.
-     * - If SELF and SEEKING both exist for a token (and BOTH does not), collapse
-     * them into BOTH.
-     * - If a SELF/SEEKING entry arrives but BOTH|token already exists, ignore it.
-     *
-     * This prevents model "hedging" and keeps one concept per token.
+     * BOTH is expanded into SELF + SEEKING so each side can evolve independently
+     * over time.
      */
     private static boolean merge(LinkedHashMap<String, ExtractedSignal> acc, List<ExtractedSignal> raw) {
         boolean any = false;
@@ -158,78 +184,42 @@ public final class SignalExtractor {
                 continue;
 
             String token = sig.token();
-            SignalIntent intent = sig.intent();
-
-            String bothKey = key(token, SignalIntent.BOTH);
-            String selfKey = key(token, SignalIntent.SELF);
-            String seekingKey = key(token, SignalIntent.SEEKING);
-
-            // 1) If model emits BOTH, it dominates.
+            SignalIntent intent = sig.intent() == null ? SignalIntent.SELF : sig.intent();
             if (intent == SignalIntent.BOTH) {
-                boolean removed = (acc.remove(selfKey) != null) | (acc.remove(seekingKey) != null);
-                if (!acc.containsKey(bothKey)) {
-                    acc.put(bothKey, sig);
-                    any = true;
-                } else if (removed) {
-                    any = true;
-                }
+                any |= putSignal(acc, token, SignalIntent.SELF, sig);
+                any |= putSignal(acc, token, SignalIntent.SEEKING, sig);
                 continue;
             }
-
-            // If BOTH already exists, ignore any other intent for same token.
-            if (acc.containsKey(bothKey)) {
-                continue;
-            }
-
-            // 2) Normal insert for non-BOTH
-            String k = key(token, intent);
-            if (!acc.containsKey(k)) {
-                acc.put(k, sig);
-                any = true;
-            }
-
-            // 3) Optional upgrade: if we now have BOTH self+seeking, collapse to BOTH.
-            // Only for SELF+SEEKING. META should not participate.
-            if (intent == SignalIntent.SELF || intent == SignalIntent.SEEKING) {
-                ExtractedSignal selfSig = acc.get(selfKey);
-                ExtractedSignal seekingSig = acc.get(seekingKey);
-
-                if (selfSig != null && seekingSig != null) {
-                    Double combinedConfidence = minNonNull(selfSig.confidence(), seekingSig.confidence());
-                    Double combinedImportance = maxNonNull(selfSig.importance(), seekingSig.importance());
-
-                    // Remove the two and replace with BOTH
-                    acc.remove(selfKey);
-                    acc.remove(seekingKey);
-
-                    ExtractedSignal bothSig = ExtractedSignal.from(token, SignalIntent.BOTH,
-                            combinedConfidence, combinedImportance);
-
-                    if (bothSig != null) {
-                        acc.put(bothKey, bothSig);
-                        any = true;
-                    }
-                }
-            }
+            any |= putSignal(acc, token, intent, sig);
         }
 
         return any;
     }
 
-    private static Double minNonNull(Double a, Double b) {
-        if (a == null)
-            return b;
-        if (b == null)
-            return a;
-        return Math.min(a.doubleValue(), b.doubleValue());
+    private static boolean putSignal(LinkedHashMap<String, ExtractedSignal> acc, String token, SignalIntent intent,
+            ExtractedSignal source) {
+        if (token == null || token.isBlank() || intent == null || source == null)
+            return false;
+        String signalKey = key(token, intent);
+        ExtractedSignal out = source.intent() == intent
+                ? source
+                : ExtractedSignal.from(token, intent, source.valence());
+        if (out == null)
+            return false;
+
+        ExtractedSignal exactExisting = acc.get(signalKey);
+        if (exactExisting == null || signalPriority(out) > signalPriority(exactExisting)) {
+            acc.put(signalKey, out);
+            return true;
+        }
+        return false;
     }
 
-    private static Double maxNonNull(Double a, Double b) {
-        if (a == null)
-            return b;
-        if (b == null)
-            return a;
-        return Math.max(a.doubleValue(), b.doubleValue());
+    private static double signalPriority(ExtractedSignal sig) {
+        if (sig == null) {
+            return Double.NEGATIVE_INFINITY;
+        }
+        return Math.abs(clampSigned(sig.valence() == null ? 0.0 : sig.valence().doubleValue()));
     }
 
     private static List<String> normalizeConversation(Collection<String> conversationLines) {
@@ -255,18 +245,86 @@ public final class SignalExtractor {
     private static List<ExtractedSignal> applyPromptContextAdjustments(String question, String answer,
             Collection<String> conversationLines, List<ExtractedSignal> signals) {
         List<ExtractedSignal> adjusted = (signals == null) ? List.of() : signals;
-        String combined = combinedLowerText(question, answer, conversationLines);
+        adjusted = applyExplicitAnswerFocusBoost(question, answer, adjusted);
         if (isNegativePreferenceContext(question, answer, conversationLines)) {
-            adjusted = applyNegativePreferenceAdjustments(adjusted, combined);
+            adjusted = applyNegativePreferenceAdjustments(adjusted);
+            adjusted = suppressBroadNegativeUmbrellas(question, answer, conversationLines, adjusted);
         }
-        adjusted = applyGoalContextExpansions(question, answer, conversationLines, adjusted);
-        adjusted = applySundayContextExpansions(question, answer, conversationLines, adjusted);
-        adjusted = applyCommunityContextExpansions(question, answer, conversationLines, adjusted);
         return cleanupSpecificityConflicts(adjusted);
     }
 
-    private static List<ExtractedSignal> enrichPromptSpecificity(OpenAIClient openAI, String question, String answer,
-            Collection<String> conversationLines, Collection<String> alreadyHave, List<ExtractedSignal> baseSignals) {
+    private static List<ExtractedSignal> applyExplicitAnswerFocusBoost(String question, String answer,
+            List<ExtractedSignal> signals) {
+        if (signals == null || signals.isEmpty()) {
+            return List.of();
+        }
+        double floor = explicitAnswerValenceFloor(question);
+        if (floor <= 0.0) {
+            return signals;
+        }
+        String normalizedAnswer = SignalNormalizer.normalizeOne(answer);
+        if (normalizedAnswer == null || normalizedAnswer.isBlank()) {
+            return signals;
+        }
+        ArrayList<ExtractedSignal> out = new ArrayList<>(signals.size());
+        for (ExtractedSignal sig : signals) {
+            if (sig == null || sig.token() == null) {
+                continue;
+            }
+            if (!isExplicitAnswerToken(sig.token(), normalizedAnswer)) {
+                out.add(sig);
+                continue;
+            }
+            double baseValence = clampSigned(sig.valence() == null ? 0.0 : sig.valence().doubleValue());
+            if (baseValence <= 0.0) {
+                out.add(sig);
+                continue;
+            }
+            double boosted = Math.max(baseValence, floor);
+            ExtractedSignal normalized = ExtractedSignal.from(sig.token(), sig.intent(), boosted);
+            out.add(normalized == null ? sig : normalized);
+        }
+        return out;
+    }
+
+    private static boolean isExplicitAnswerToken(String token, String normalizedAnswer) {
+        if (token == null || token.isBlank() || normalizedAnswer == null || normalizedAnswer.isBlank()) {
+            return false;
+        }
+        if (token.equals(normalizedAnswer)) {
+            return true;
+        }
+        String paddedToken = "_" + token + "_";
+        String paddedAnswer = "_" + normalizedAnswer + "_";
+        if (paddedToken.contains(paddedAnswer) || paddedAnswer.contains(paddedToken)) {
+            return true;
+        }
+        // Be tolerant to possessive/plural drift in explicit entity tokens
+        // (e.g., jojo_bizarre_adventure vs jojos_bizarre_adventure).
+        String singularishToken = paddedToken.replaceAll("([a-z0-9])s_", "$1_");
+        String singularishAnswer = paddedAnswer.replaceAll("([a-z0-9])s_", "$1_");
+        return singularishToken.contains(singularishAnswer) || singularishAnswer.contains(singularishToken);
+    }
+
+    private static double explicitAnswerValenceFloor(String question) {
+        if (question == null || question.isBlank()) {
+            return 0.0;
+        }
+        String q = question.toLowerCase(Locale.ROOT);
+        if (q.contains("yap") && q.contains("hours")) {
+            return 0.90;
+        }
+        if (q.contains("talk for hours")
+                || (q.contains("could talk") && q.contains("hours"))
+                || q.contains("rabbit hole")) {
+            return 0.84;
+        }
+        return 0.0;
+    }
+
+    private static List<ExtractedSignal> enrichPromptSpecificity(OpenAIClient openAI, String promptId,
+            String promptProfileHint, String question, String answer, Collection<String> conversationLines,
+            Collection<String> alreadyHave, List<ExtractedSignal> baseSignals, int maxExtraSignals) {
         LinkedHashMap<String, ExtractedSignal> acc = new LinkedHashMap<>();
         if (baseSignals != null && !baseSignals.isEmpty()) {
             merge(acc, baseSignals);
@@ -277,9 +335,9 @@ public final class SignalExtractor {
         }
         existing.addAll(tokens(acc.values()));
         List<ExtractedSignal> extra = call(openAI, SignalPrompts.PROMPT_SPECIFICITY_SYSTEM_PROMPT,
-                SignalPrompts.promptSpecificityUserPrompt(question, answer, conversationLines,
+                SignalPrompts.promptSpecificityUserPrompt(promptId, promptProfileHint, question, answer, conversationLines,
                         currentSignalsForPrompt(acc.values()), existing),
-                SPECIFICITY_ENRICH_MAX, existing);
+                Math.max(1, maxExtraSignals));
         merge(acc, extra);
         return cleanupSpecificityConflicts(new ArrayList<>(acc.values()));
     }
@@ -297,148 +355,34 @@ public final class SignalExtractor {
         return out;
     }
 
-    private static List<ExtractedSignal> applyNegativePreferenceAdjustments(List<ExtractedSignal> signals,
-            String combinedText) {
+    private static List<ExtractedSignal> applyNegativePreferenceAdjustments(List<ExtractedSignal> signals) {
         if (signals == null || signals.isEmpty())
             return List.of();
         LinkedHashMap<String, ExtractedSignal> adjusted = new LinkedHashMap<>();
-        boolean hasPositiveCreatorCaveat = hasPositiveSocialCreatorCaveat(combinedText);
         for (ExtractedSignal sig : signals) {
             if (sig == null || sig.token() == null)
                 continue;
-            SignalIntent intent = sig.intent();
-            if (intent == null)
-                intent = SignalIntent.SELF;
 
+            SignalIntent intent = sig.intent() == null ? SignalIntent.SELF : sig.intent();
             if (intent == SignalIntent.META) {
                 merge(adjusted, List.of(sig));
                 continue;
             }
-
             SignalIntent adjustedIntent = intent == SignalIntent.BOTH ? SignalIntent.SEEKING : intent;
             if (adjustedIntent == SignalIntent.SELF) {
                 adjustedIntent = SignalIntent.SEEKING;
             }
 
-            String token = sig.token();
-            if (hasPositiveCreatorCaveat && tokenLooksLikeSocialMediaCreator(token)) {
-                continue;
+            String token = canonicalizePreferenceToken(sig.token());
+            Double adjustedValence = forceNegativeValence(sig.valence());
+            ExtractedSignal normalized = ExtractedSignal.from(token, adjustedIntent, adjustedValence);
+            if (normalized != null) {
+                merge(adjusted, List.of(normalized));
             }
-            if (shouldForceNegativeToken(token)) {
-                token = canonicalizeNegativeToken("anti_" + token);
-            } else {
-                token = canonicalizeNegativeToken(token);
-            }
-            addAdjustedSignal(adjusted, token, adjustedIntent, sig.confidence(),
-                    bumpImportanceForExclusion(sig.importance()));
         }
         if (adjusted.isEmpty())
             return signals;
         return new ArrayList<>(adjusted.values());
-    }
-
-    private static List<ExtractedSignal> applyGoalContextExpansions(String question, String answer,
-            Collection<String> conversationLines, List<ExtractedSignal> signals) {
-        if (signals == null)
-            signals = List.of();
-        String questionText = normalizeText(question);
-        String combined = combinedLowerText(question, answer, conversationLines);
-        boolean goalContext = isGoalContext(questionText, combined);
-        boolean appBuild = mentionsAppBuilding(combined);
-        if (!goalContext && !appBuild)
-            return signals;
-
-        LinkedHashMap<String, ExtractedSignal> adjusted = new LinkedHashMap<>();
-        merge(adjusted, signals);
-
-        if (appBuild) {
-            addAdjustedSignal(adjusted, "app_builder", SignalIntent.SELF, 0.90, goalContext ? 0.82 : 0.75);
-            if (mentionsSoftwareCraft(combined)) {
-                addAdjustedSignal(adjusted, "software_builder", SignalIntent.SELF, 0.84, 0.74);
-            }
-            if (mentionsStartupContext(combined)) {
-                addAdjustedSignal(adjusted, "entrepreneurial_mindset", SignalIntent.SELF, 0.80, 0.76);
-            }
-        }
-
-        if (goalContext && (appBuild || mentionsStartupContext(combined)) && !containsToken(adjusted, "ambitious")) {
-            addAdjustedSignal(adjusted, "ambitious", SignalIntent.SELF, 0.76, 0.68);
-        }
-
-        return new ArrayList<>(adjusted.values());
-    }
-
-    private static List<ExtractedSignal> applySundayContextExpansions(String question, String answer,
-            Collection<String> conversationLines, List<ExtractedSignal> signals) {
-        if (signals == null)
-            signals = List.of();
-        String questionText = normalizeText(question);
-        String combined = combinedLowerText(question, answer, conversationLines);
-        boolean sundayContext = questionText.contains("ideal sunday")
-                || questionText.contains("sunday looks like")
-                || combined.contains("ideal sunday");
-        boolean sleepIn = mentionsSleepIn(combined);
-        boolean nfl = mentionsNfl(combined);
-        if (!sundayContext && !sleepIn && !nfl) {
-            return signals;
-        }
-
-        LinkedHashMap<String, ExtractedSignal> adjusted = new LinkedHashMap<>();
-        merge(adjusted, signals);
-        if (sleepIn) {
-            addAdjustedSignal(adjusted, "sleeping_in", SignalIntent.SELF, 0.88, 0.67);
-        }
-        if (nfl) {
-            addAdjustedSignal(adjusted, "nfl_fan", SignalIntent.SELF, 0.91, 0.78);
-            if (!containsToken(adjusted, "sports_fan")) {
-                addAdjustedSignal(adjusted, "sports_fan", SignalIntent.SELF, 0.78, 0.66);
-            }
-        }
-        return new ArrayList<>(adjusted.values());
-    }
-
-    private static List<ExtractedSignal> applyCommunityContextExpansions(String question, String answer,
-            Collection<String> conversationLines, List<ExtractedSignal> signals) {
-        if (signals == null)
-            signals = List.of();
-        String questionText = normalizeText(question);
-        String combined = combinedLowerText(question, answer, conversationLines);
-        boolean communityContext = questionText.contains("communities")
-                || questionText.contains("scene")
-                || questionText.contains("at home in");
-        boolean gymMention = containsAny(combined, " gym", "gym ", "the gym", "fitness center", "workout");
-        boolean greekMention = containsAny(combined, "frat", "fraternity", "sorority", "greek life");
-        if (!communityContext && !gymMention && !greekMention) {
-            return signals;
-        }
-
-        LinkedHashMap<String, ExtractedSignal> adjusted = new LinkedHashMap<>();
-        merge(adjusted, signals);
-        if (gymMention) {
-            addAdjustedSignal(adjusted, "gym_regular", SignalIntent.SELF, 0.88, 0.74);
-        }
-        if (greekMention) {
-            addAdjustedSignal(adjusted, "greek_life_alumni", SignalIntent.SELF, 0.85, 0.72);
-        }
-        return new ArrayList<>(adjusted.values());
-    }
-
-    private static void addAdjustedSignal(LinkedHashMap<String, ExtractedSignal> adjusted, String token,
-            SignalIntent intent, Double confidence, Double importance) {
-        ExtractedSignal normalized = ExtractedSignal.from(token, intent, confidence, importance);
-        if (normalized != null) {
-            merge(adjusted, List.of(normalized));
-        }
-    }
-
-    private static boolean containsToken(LinkedHashMap<String, ExtractedSignal> signalsByKey, String token) {
-        if (signalsByKey == null || signalsByKey.isEmpty() || token == null)
-            return false;
-        for (ExtractedSignal sig : signalsByKey.values()) {
-            if (sig != null && token.equals(sig.token()))
-                return true;
-        }
-        return false;
     }
 
     private static List<ExtractedSignal> cleanupSpecificityConflicts(List<ExtractedSignal> signals) {
@@ -446,91 +390,84 @@ public final class SignalExtractor {
             return List.of();
         LinkedHashMap<String, ExtractedSignal> adjusted = new LinkedHashMap<>();
         merge(adjusted, signals);
-        if (containsToken(adjusted, "app_builder")) {
-            removeToken(adjusted, "builder");
-        }
-        if (containsToken(adjusted, "sleeping_in")) {
-            removeToken(adjusted, "relaxed_morning");
-        }
-        removePositiveCounterpartsOfNegativeTokens(adjusted);
         return new ArrayList<>(adjusted.values());
     }
 
-    private static void removePositiveCounterpartsOfNegativeTokens(
-            LinkedHashMap<String, ExtractedSignal> adjusted) {
-        if (adjusted == null || adjusted.isEmpty())
-            return;
-        LinkedHashSet<String> positiveTokensToDrop = new LinkedHashSet<>();
-        for (ExtractedSignal sig : adjusted.values()) {
-            if (sig == null || sig.token() == null)
-                continue;
-            String token = sig.token();
-            if (token.startsWith("anti_") && token.length() > "anti_".length()) {
-                positiveTokensToDrop.add(token.substring("anti_".length()));
-            }
-        }
-        if (positiveTokensToDrop.isEmpty())
-            return;
-        for (String token : positiveTokensToDrop) {
-            removeToken(adjusted, token);
-        }
+    private static Double forceNegativeValence(Double currentValence) {
+        if (currentValence == null)
+            return -0.9;
+        double v = currentValence.doubleValue();
+        if (v < 0.0)
+            return v;
+        double magnitude = Math.max(0.65, Math.abs(v));
+        return -magnitude;
     }
 
-    private static void removeToken(LinkedHashMap<String, ExtractedSignal> adjusted, String token) {
-        if (adjusted == null || adjusted.isEmpty() || token == null)
-            return;
-        ArrayList<String> keysToRemove = new ArrayList<>();
-        for (Map.Entry<String, ExtractedSignal> entry : adjusted.entrySet()) {
-            ExtractedSignal sig = entry.getValue();
-            if (sig != null && token.equals(sig.token())) {
-                keysToRemove.add(entry.getKey());
-            }
-        }
-        for (String key : keysToRemove) {
-            adjusted.remove(key);
-        }
-    }
-
-    private static Double bumpImportanceForExclusion(Double existing) {
-        if (existing == null)
-            return 0.72;
-        return Math.max(existing.doubleValue(), 0.72);
-    }
-
-    private static boolean shouldForceNegativeToken(String token) {
-        if (token == null || token.isBlank())
-            return false;
-        return !(token.startsWith("anti_")
-                || token.startsWith("not_")
-                || token.startsWith("no_")
-                || token.startsWith("avoid_")
-                || token.startsWith("exclude_"));
-    }
-
-    private static String canonicalizeNegativeToken(String token) {
+    private static String canonicalizePreferenceToken(String token) {
         if (token == null || token.isBlank())
             return token;
-        if (token.startsWith("anti_not_")) {
-            return "anti_" + token.substring("anti_not_".length());
+        String normalized = SignalNormalizer.normalizeOne(token);
+        if (normalized == null || normalized.isBlank()) {
+            return token;
         }
-        if (token.startsWith("not_")) {
-            return "anti_" + token.substring("not_".length());
+        String out = normalized;
+        boolean stripped;
+        do {
+            stripped = false;
+            if (out.startsWith("anti_") && out.length() > "anti_".length()) {
+                out = out.substring("anti_".length());
+                stripped = true;
+            } else if (out.startsWith("not_") && out.length() > "not_".length()) {
+                out = out.substring("not_".length());
+                stripped = true;
+            } else if (out.startsWith("no_") && out.length() > "no_".length()) {
+                out = out.substring("no_".length());
+                stripped = true;
+            } else if (out.startsWith("avoid_") && out.length() > "avoid_".length()) {
+                out = out.substring("avoid_".length());
+                stripped = true;
+            } else if (out.startsWith("exclude_") && out.length() > "exclude_".length()) {
+                out = out.substring("exclude_".length());
+                stripped = true;
+            }
+            if (stripped) {
+                String renormalized = SignalNormalizer.normalizeOne(out);
+                out = renormalized == null ? out : renormalized;
+            }
+        } while (stripped);
+        if (out.isBlank()) {
+            return normalized;
         }
-        return token;
+        return out;
     }
 
-    private static boolean tokenLooksLikeSocialMediaCreator(String token) {
-        if (token == null || token.isBlank())
-            return false;
-        String t = token.toLowerCase(Locale.ROOT);
-        return t.contains("creator") && t.contains("social");
-    }
-
-    private static boolean hasPositiveSocialCreatorCaveat(String combinedText) {
-        if (combinedText == null || combinedText.isBlank())
-            return false;
-        return combinedText.contains("creator")
-                && containsAny(combinedText, "cool", "good", "fine", "unless", "ironically cool");
+    private static List<ExtractedSignal> suppressBroadNegativeUmbrellas(String question, String answer,
+            Collection<String> conversationLines, List<ExtractedSignal> signals) {
+        if (signals == null || signals.isEmpty()) {
+            return List.of();
+        }
+        String context = combinedLowerText(question, answer, conversationLines);
+        boolean explicitBroadSocial = containsAny(context,
+                "social",
+                "socializing",
+                "socialising",
+                "socialize",
+                "socialise",
+                "friend",
+                "friends");
+        ArrayList<ExtractedSignal> out = new ArrayList<>();
+        for (ExtractedSignal sig : signals) {
+            if (sig == null || sig.token() == null) {
+                continue;
+            }
+            String token = sig.token();
+            if (!explicitBroadSocial
+                    && ("socializing".equals(token) || "socializing_with_friends".equals(token))) {
+                continue;
+            }
+            out.add(sig);
+        }
+        return out;
     }
 
     private static boolean isNegativePreferenceContext(String question, String answer, Collection<String> conversation) {
@@ -546,44 +483,8 @@ public final class SignalExtractor {
                 || text.contains("do not like")
                 || text.contains("can't stand")
                 || text.contains("cannot stand")
-                || text.contains("avoid");
-    }
-
-    private static boolean isGoalContext(String questionText, String combinedText) {
-        String question = questionText == null ? "" : questionText;
-        if (question.contains("life goal")
-                || question.contains("goal of mine")
-                || question.contains("goal")) {
-            return true;
-        }
-        return combinedText.contains("my goal")
-                || combinedText.contains("life goal")
-                || combinedText.contains("goal of mine");
-    }
-
-    private static boolean mentionsAppBuilding(String text) {
-        if (text == null || text.isBlank())
-            return false;
-        boolean hasBuildVerb = containsAny(text, "build", "building", "built", "make", "making", "create", "creating",
-                "ship", "shipping", "launch", "launching");
-        boolean hasAppTarget = containsAny(text, "app", "application", "platform", "saas", "product", "startup");
-        return hasBuildVerb && hasAppTarget;
-    }
-
-    private static boolean mentionsSoftwareCraft(String text) {
-        return containsAny(text, "code", "coding", "developer", "software", "engineer", "programming");
-    }
-
-    private static boolean mentionsStartupContext(String text) {
-        return containsAny(text, "startup", "company", "business", "founder", "entrepreneur", "venture");
-    }
-
-    private static boolean mentionsSleepIn(String text) {
-        return containsAny(text, "sleep in", "sleeping in", "wake up late", "waking up late", "sleep late");
-    }
-
-    private static boolean mentionsNfl(String text) {
-        return containsAny(text, " nfl", "nfl ", "nfl", "football sunday", "watch football");
+                || text.contains("avoid")
+                || text.contains("dislike");
     }
 
     private static String combinedLowerText(String question, String answer, Collection<String> conversation) {
@@ -601,15 +502,15 @@ public final class SignalExtractor {
         return buf.toString().toLowerCase(Locale.ROOT);
     }
 
-    private static String normalizeText(String text) {
-        return text == null ? "" : text.toLowerCase(Locale.ROOT);
-    }
-
-    private static boolean containsAny(String text, String... needles) {
-        if (text == null || text.isBlank() || needles == null || needles.length == 0)
+    private static boolean containsAny(String haystack, String... needles) {
+        if (haystack == null || haystack.isBlank() || needles == null || needles.length == 0) {
             return false;
+        }
         for (String needle : needles) {
-            if (needle != null && !needle.isBlank() && text.contains(needle)) {
+            if (needle == null || needle.isBlank()) {
+                continue;
+            }
+            if (haystack.contains(needle)) {
                 return true;
             }
         }
@@ -618,14 +519,13 @@ public final class SignalExtractor {
 
     @SuppressWarnings("unchecked")
     private static List<ExtractedSignal> call(OpenAIClient openAI, String systemPrompt, String userPrompt,
-            int maxSignals, Collection<String> alreadyHave) {
+            int maxSignals) {
         try {
             String system = maybeFormat(systemPrompt, maxSignals);
             String raw = OpenAIJson.call(openAI, system, userPrompt);
-            Map<String, Object> parsed = JSON.readValue(raw, new TypeReference<>() {
-            });
-            Object arr = parsed.get("signals");
-            if (!(arr instanceof List<?> list))
+            Object payload = parseSignalsPayload(raw);
+            List<?> list = signalsArray(payload);
+            if (list.isEmpty())
                 return List.of();
 
             List<ExtractedSignal> out = new ArrayList<>();
@@ -640,21 +540,77 @@ public final class SignalExtractor {
         }
     }
 
+    private static Object parseSignalsPayload(String raw) throws Exception {
+        if (raw == null || raw.isBlank()) {
+            return Map.of();
+        }
+        String trimmed = raw.trim();
+        try {
+            return JSON.readValue(trimmed, Object.class);
+        } catch (Exception first) {
+            String extracted = extractLikelyJson(trimmed);
+            if (extracted == null) {
+                throw first;
+            }
+            return JSON.readValue(extracted, Object.class);
+        }
+    }
+
+    private static List<?> signalsArray(Object payload) {
+        if (payload == null) {
+            return List.of();
+        }
+        if (payload instanceof List<?> list) {
+            return list;
+        }
+        if (!(payload instanceof Map<?, ?> map)) {
+            return List.of();
+        }
+        Object arr = map.get("signals");
+        if (arr instanceof List<?> list) {
+            return list;
+        }
+        Object single = map.get("signal");
+        if (single instanceof List<?> list) {
+            return list;
+        }
+        if (single != null) {
+            return List.of(single);
+        }
+        return List.of();
+    }
+
+    private static String extractLikelyJson(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        int objectStart = raw.indexOf('{');
+        int objectEnd = raw.lastIndexOf('}');
+        if (objectStart >= 0 && objectEnd > objectStart) {
+            return raw.substring(objectStart, objectEnd + 1);
+        }
+        int arrayStart = raw.indexOf('[');
+        int arrayEnd = raw.lastIndexOf(']');
+        if (arrayStart >= 0 && arrayEnd > arrayStart) {
+            String arrayJson = raw.substring(arrayStart, arrayEnd + 1);
+            return "{\"signals\":" + arrayJson + "}";
+        }
+        return null;
+    }
+
     private static ExtractedSignal parseSignal(Object raw) {
         if (raw == null)
             return null;
         if (raw instanceof Map<?, ?> map) {
             Object tokenObj = map.get("token");
             Object intentObj = map.get("intent");
-            Object confidenceObj = map.get("confidence");
-            Object importanceObj = map.get("importance");
+            Object valenceObj = map.get("valence");
             String token = tokenObj == null ? null : String.valueOf(tokenObj);
             SignalIntent intent = parseIntent(intentObj);
-            Double confidence = parseConfidence(confidenceObj);
-            Double importance = parseImportance(importanceObj);
-            return ExtractedSignal.from(token, intent, confidence, importance);
+            Double valence = parseValence(valenceObj);
+            return ExtractedSignal.from(token, intent, valence);
         }
-        return ExtractedSignal.from(String.valueOf(raw), SignalIntent.SELF, null);
+        return ExtractedSignal.from(String.valueOf(raw), SignalIntent.SELF, 1.0);
     }
 
     private static SignalIntent parseIntent(Object raw) {
@@ -672,7 +628,12 @@ public final class SignalExtractor {
         }
     }
 
-    private static Double parseConfidence(Object raw) {
+    private static Double parseValence(Object raw) {
+        Double parsed = parseNumeric(raw);
+        return clampSigned(parsed);
+    }
+
+    private static Double parseNumeric(Object raw) {
         if (raw == null)
             return null;
         try {
@@ -682,14 +643,17 @@ public final class SignalExtractor {
         }
     }
 
-    private static Double parseImportance(Object raw) {
-        if (raw == null)
+    private static Double clampSigned(Double value) {
+        if (value == null)
             return null;
-        try {
-            return Double.valueOf(String.valueOf(raw));
-        } catch (NumberFormatException ex) {
+        double c = value.doubleValue();
+        if (Double.isNaN(c))
             return null;
-        }
+        if (c < -1.0)
+            c = -1.0;
+        if (c > 1.0)
+            c = 1.0;
+        return c;
     }
 
     private static String maybeFormat(String template, int maxSignals) {
@@ -706,8 +670,7 @@ public final class SignalExtractor {
 
     /**
      * Returns a de-duplicated list of tokens (ignoring intent) to reduce prompt
-     * size
-     * and make "already_have" stable.
+     * size and keep "already_have" stable.
      */
     private static List<String> tokens(Collection<ExtractedSignal> signals) {
         if (signals == null || signals.isEmpty())
