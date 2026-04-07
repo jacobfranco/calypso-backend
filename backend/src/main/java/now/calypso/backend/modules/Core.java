@@ -151,9 +151,20 @@ public class Core implements RamaModule {
       }
 
       private static ParsedSignalToken parseTokenAndValence(SignalRecord record) {
-            if (record == null || !record.isSetToken() || record.getToken() == null)
+            if (record == null)
                   return null;
-            String token = record.getToken().trim().toLowerCase(Locale.ROOT);
+            String tokenSource = null;
+            if (record.isSetCanonicalToken() && record.getCanonicalToken() != null
+                        && !record.getCanonicalToken().isBlank()) {
+                  tokenSource = record.getCanonicalToken();
+            } else if (record.isSetToken() && record.getToken() != null && !record.getToken().isBlank()) {
+                  tokenSource = record.getToken();
+            } else if (record.isSetRawToken() && record.getRawToken() != null && !record.getRawToken().isBlank()) {
+                  tokenSource = record.getRawToken();
+            }
+            if (tokenSource == null)
+                  return null;
+            String token = tokenSource.trim().toLowerCase(Locale.ROOT);
             if (token.isBlank())
                   return null;
             boolean explicitValence = record.isSetValence();
@@ -1425,6 +1436,27 @@ public class Core implements RamaModule {
                         .localSelect("$$answerIdToPublicPromptAnswer", Path.key("*answerId")).out("*answer")
                         .originPartition();
 
+            topologies.query("getPublicPromptAnswerIdsByPromptId", "*promptId").out("*answerIds")
+                        .hashPartition("*promptId")
+                        .localSelect("$$promptIdToAnswerIds", Path.key("*promptId")).out("*answerIdMap")
+                        .each((Map<?, ?> map) -> {
+                              if (map == null || map.isEmpty()) {
+                                    return new ArrayList<String>();
+                              }
+                              LinkedHashSet<String> deduped = new LinkedHashSet<>();
+                              for (Object key : map.keySet()) {
+                                    if (key == null) {
+                                          continue;
+                                    }
+                                    String id = key.toString().trim();
+                                    if (!id.isBlank()) {
+                                          deduped.add(id);
+                                    }
+                              }
+                              return new ArrayList<>(deduped);
+                        }, "*answerIdMap").out("*answerIds")
+                        .originPartition();
+
             topologies.query("getPublicPromptSelection", "*requesterId", "*accountId").out("*selection")
                         .each((Number n) -> n == null ? 0L : n.longValue(), "*accountId").out("*accountIdL")
                         .hashPartition("*accountIdL")
@@ -1888,6 +1920,23 @@ public class Core implements RamaModule {
                         .hashPartition("*accountId")
                         .localSelect("$$accountIdToSignals", Path.key("*accountId")).out("*signals")
                         .originPartition();
+
+            topologies.query("getSignalAccountIds").out("*accountIds")
+                        .allPartition()
+                        .localSelect("$$accountIdToSignals", Path.mapKeys()).out("*accountId")
+                        .originPartition()
+                        .agg(Agg.list("*accountId")).out("*grouped")
+                        .each((RamaFunction1<List<Long>, List<Long>>) grouped -> {
+                              LinkedHashSet<Long> deduped = new LinkedHashSet<>();
+                              if (grouped != null) {
+                                    for (Long id : grouped) {
+                                          if (id != null && id >= 0L) {
+                                                deduped.add(id);
+                                          }
+                                    }
+                              }
+                              return new ArrayList<>(deduped);
+                        }, "*grouped").out("*accountIds");
       }
 
       @Override

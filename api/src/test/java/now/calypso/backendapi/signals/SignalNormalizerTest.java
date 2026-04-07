@@ -55,4 +55,11 @@ class SignalNormalizerTest {
         assertEquals("weeb", SignalNormalizer.normalizeOne("weebself"));
         assertEquals("anime", SignalNormalizer.normalizeOne("anime_seeking"));
     }
+
+    @Test
+    void normalizeOne_prefersMappedRhsWhenTokenContainsArrowNotation() {
+        assertEquals("club", SignalNormalizer.normalizeOne("clubbing -> club"));
+        assertEquals("travel", SignalNormalizer.normalizeOne("traveling => travel"));
+        assertEquals("anime", SignalNormalizer.normalizeOne("otaku → anime"));
+    }
 }

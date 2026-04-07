@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -63,6 +64,8 @@ import now.calypso.backendapi.pojos.PostAccount;
 import now.calypso.backendapi.pojos.PostFilters;
 import now.calypso.backendapi.prompts.PromptLibrary;
 import now.calypso.backendapi.signals.ExtractedSignal;
+import now.calypso.backendapi.signals.SignalConceptRegistry;
+import now.calypso.backendapi.signals.SignalNormalizer;
 
 class CalypsoApiIntegrationTest {
     private static final int PRIVATE_PROMPT_DAILY_SPAWN_HOUR = 20;
@@ -445,9 +448,9 @@ class CalypsoApiIntegrationTest {
             }
 
             Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
-            assertNotNull(findRecord(stored, "jojo_bizarre_adventure", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "jojo_bizarre_adventure", SignalIntent.SEEKING));
-            assertNull(findRecord(stored, "jojo_bizarre_adventure", SignalIntent.BOTH));
+            assertNotNull(findRecord(stored, "jojos_bizarre_adventure", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "jojos_bizarre_adventure", SignalIntent.SEEKING));
+            assertNull(findRecord(stored, "jojos_bizarre_adventure", SignalIntent.BOTH));
         }
     }
 
@@ -526,22 +529,24 @@ class CalypsoApiIntegrationTest {
             }
 
             Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
-            SignalRecord jojo = findRecord(stored, "jojo_bizarre_adventure", SignalIntent.SELF);
+            SignalRecord jojo = findRecord(stored, "jojos_bizarre_adventure", SignalIntent.SELF);
             SignalRecord anime = findRecord(stored, "anime", SignalIntent.SELF);
             SignalRecord manga = findRecord(stored, "manga", SignalIntent.SELF);
             SignalRecord animeFan = findRecord(stored, "anime_fan", SignalIntent.SELF);
             assertNotNull(jojo);
             assertNotNull(anime);
             assertNotNull(manga);
-            assertNotNull(animeFan);
+            assertNull(animeFan);
 
             assertTrue(jojo.isSetValence());
             assertTrue(anime.isSetValence());
             assertTrue(manga.isSetValence());
-            assertTrue(animeFan.isSetValence());
             assertTrue(jojo.getValence() > anime.getValence());
             assertTrue(jojo.getValence() > manga.getValence());
-            assertTrue(jojo.getValence() > animeFan.getValence());
+            assertTrue(jojo.isSetCanonicalToken());
+            assertEquals("jojos_bizarre_adventure", jojo.getCanonicalToken());
+            assertTrue(jojo.isSetRawToken());
+            assertEquals("jojo_bizarre_adventure", jojo.getRawToken());
         }
     }
 
@@ -603,7 +608,7 @@ class CalypsoApiIntegrationTest {
             }
 
             Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
-            SignalRecord jojo = findRecord(stored, "jojo_bizarre_adventure", SignalIntent.SELF);
+            SignalRecord jojo = findRecord(stored, "jojos_bizarre_adventure", SignalIntent.SELF);
             assertNotNull(jojo);
             assertTrue(jojo.isSetValence());
             assertTrue(jojo.getValence() >= 0.72);
@@ -720,10 +725,9 @@ class CalypsoApiIntegrationTest {
             Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
             SignalRecord jojo = findRecord(stored, "jojo_bizarre_adventure", SignalIntent.SELF);
             SignalRecord jojos = findRecord(stored, "jojos_bizarre_adventure", SignalIntent.SELF);
-            assertNotNull(jojo);
+            assertNull(jojo);
             assertNotNull(jojos);
-            assertTrue(jojo.getCount() >= 1);
-            assertTrue(jojos.getCount() >= 1);
+            assertTrue(jojos.getCount() >= 2);
         }
     }
 
@@ -772,8 +776,9 @@ class CalypsoApiIntegrationTest {
 
             Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
             assertNull(findRecord(stored, "jojo_bizarre_adventure", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "jojo_bizarre_adventure", SignalIntent.SEEKING));
+            assertNull(findRecord(stored, "jojo_bizarre_adventure", SignalIntent.SEEKING));
             assertNotNull(findRecord(stored, "jojos_bizarre_adventure", SignalIntent.SELF));
+            assertNotNull(findRecord(stored, "jojos_bizarre_adventure", SignalIntent.SEEKING));
         }
     }
 
@@ -1218,7 +1223,7 @@ class CalypsoApiIntegrationTest {
             assertEquals(0, secondReactionCalls.get(),
                     "After backfill, subsequent reactions should reuse stored answer tokens.");
 
-            SignalRecord jojo = awaitSignal(mgr, viewerId, "jojo_bizarre_adventure", SignalIntent.SEEKING, 5000);
+            SignalRecord jojo = awaitSignal(mgr, viewerId, "jojos_bizarre_adventure", SignalIntent.SEEKING, 5000);
             assertNotNull(jojo);
             assertTrue(jojo.isSetValence());
             assertTrue(jojo.getValence() > 0.0);
@@ -1384,7 +1389,7 @@ class CalypsoApiIntegrationTest {
             }
 
             assertTrue(bootstrapCalls.get() > 0, "Self signal reads should bootstrap seeded public prompt answers.");
-            SignalRecord jojo = findRecord(bootstrapped, "jojo_bizarre_adventure", SignalIntent.SELF);
+            SignalRecord jojo = findRecord(bootstrapped, "jojos_bizarre_adventure", SignalIntent.SELF);
             assertNotNull(jojo);
             assertTrue(jojo.isSetValence());
             assertTrue(Math.abs(jojo.getValence() - 0.86) <= 0.10);
@@ -1393,6 +1398,304 @@ class CalypsoApiIntegrationTest {
             assertFalse(mine.isEmpty());
             assertTrue(mine.get(0).isSetSignalTokens());
             assertTrue(mine.get(0).getSignalTokens().contains("jojo_bizarre_adventure"));
+        }
+    }
+
+    @Test
+    void promoteSignalConcept_retroactivelyMigratesStoredSignalRecords() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 9542L;
+            String rawAlias = "clubbing_special_case";
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"clubbing_special_case","intent":"self","valence":0.84}]}
+                    """);
+            try {
+                mgr.extractAndAppendSignals(accountId, "seed alias", "private_prompt", "private#9542", "ctx")
+                        .get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            PState signalPState = ipc.clusterPState(Core.class.getName(), "$$accountIdToSignals");
+            Signals before = signalPState.selectOne(Path.key(accountId));
+            assertNotNull(findRecord(before, rawAlias, SignalIntent.SELF));
+            assertNull(findRecord(before, "club", SignalIntent.SELF));
+
+            assertTrue(mgr.promoteSignalConcept(rawAlias, "club").get(10, TimeUnit.SECONDS));
+
+            waitFor(() -> {
+                Signals afterWait = signalPState.selectOne(Path.key(accountId));
+                SignalRecord club = findRecord(afterWait, "club", SignalIntent.SELF);
+                return club != null
+                        && club.isSetCanonicalToken()
+                        && "club".equals(club.getCanonicalToken());
+            }, 5000, "Promotion should retroactively migrate matching stored signals.");
+
+            Signals after = signalPState.selectOne(Path.key(accountId));
+            assertNull(findRecord(after, rawAlias, SignalIntent.SELF));
+            SignalRecord club = findRecord(after, "club", SignalIntent.SELF);
+            assertNotNull(club);
+            assertTrue(club.isSetRawToken());
+            assertEquals(rawAlias, club.getRawToken());
+        }
+    }
+
+    @Test
+    void promoteSignalConcept_backfillsStrictSourceCandidatesForRequestingAccounts() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 9543L;
+            String rawAlias = "amsterdam_city_token";
+            String canonical = "amsterdam";
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"amsterdam_city_token","intent":"self","valence":0.82}]}
+                    """);
+            try {
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "prompt.ideal.night.out",
+                        "Ideal night out?",
+                        "clubbing in amsterdam",
+                        "public_prompt",
+                        "public#9543").get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals before = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNull(findRecord(before, rawAlias, SignalIntent.SELF),
+                    "Strict public prompt path should not persist unresolved raw alias tokens.");
+            assertNull(findRecord(before, canonical, SignalIntent.SELF));
+
+            assertTrue(mgr.promoteSignalConcept(rawAlias, canonical).get(10, TimeUnit.SECONDS));
+
+            waitFor(() -> {
+                Signals afterWait = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+                SignalRecord promoted = findRecord(afterWait, canonical, SignalIntent.SELF);
+                return promoted != null
+                        && promoted.isSetSource()
+                        && "signal_concept_promotion".equals(promoted.getSource());
+            }, 5000, "Promoted concept should backfill accounts that generated unresolved strict-source candidates.");
+
+            Signals after = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord promoted = findRecord(after, canonical, SignalIntent.SELF);
+            assertNotNull(promoted);
+            assertTrue(promoted.isSetValence());
+            assertTrue(promoted.getValence() > 0.6);
+        }
+    }
+
+    @Test
+    void promoteSignalConcept_backfillsSeededAnswerOwnerAndReactorFromTokenOnlyAnswer() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long ownerId = 9544L;
+            long viewerId = 9545L;
+            String rawAlias = "custom_seeded_unknown_9544";
+            String canonical = "amsterdam";
+
+            PublicPromptAnswer seeded = new PublicPromptAnswer();
+            seeded.setAnswerId(UUID.randomUUID().toString());
+            seeded.setAccountId(ownerId);
+            seeded.setPromptId("prompt.ideal.night.out");
+            seeded.setBody("clubbing in amsterdam");
+            seeded.setSignalTokens(List.of(rawAlias));
+            long now = System.currentTimeMillis();
+            seeded.setCreatedAt(now);
+            seeded.setUpdatedAt(now);
+            ipc.clusterDepot(Core.class.getName(), "*publicPromptAnswerDepot").append(seeded);
+
+            assertTrue(mgr.postPublicPromptReaction(viewerId, seeded.getAnswerId(), 1).get(5, TimeUnit.SECONDS));
+
+            Signals ownerBefore = mgr.getSignals(ownerId, ownerId).get(5, TimeUnit.SECONDS);
+            Signals viewerBefore = mgr.getSignals(viewerId, viewerId).get(5, TimeUnit.SECONDS);
+            assertNull(findRecord(ownerBefore, canonical, SignalIntent.SELF));
+            assertNull(findRecord(viewerBefore, canonical, SignalIntent.SEEKING));
+
+            assertTrue(mgr.promoteSignalConcept(rawAlias, canonical).get(10, TimeUnit.SECONDS));
+
+            waitFor(() -> {
+                Signals ownerAfter = mgr.getSignals(ownerId, ownerId).get(5, TimeUnit.SECONDS);
+                Signals viewerAfter = mgr.getSignals(viewerId, viewerId).get(5, TimeUnit.SECONDS);
+                return findRecord(ownerAfter, canonical, SignalIntent.SELF) != null
+                        && findRecord(viewerAfter, canonical, SignalIntent.SEEKING) != null;
+            }, 5000, "Promotion should backfill both seeded answer owner and reactor accounts.");
+        }
+    }
+
+    @Test
+    void promoteSignalConcept_backfillsOwnerFromPublicPromptExtractionCandidate() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long ownerId = createAccount(mgr, "Owner Amsterdam", "+19991110001");
+            assertTrue(ownerId >= 0L, "Expected non-negative owner account id but got " + ownerId);
+            String rawCandidate = "owner_backfill_city_" + UUID.randomUUID().toString().replace("-", "");
+            String normalizedCandidate = SignalNormalizer.normalizeOne(rawCandidate);
+            assertNotNull(normalizedCandidate);
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[
+                      {"token":"%s","intent":"self","valence":0.88}
+                    ]}
+                    """.formatted(rawCandidate));
+            PublicPromptAnswer posted;
+            try {
+                posted = mgr.postPublicPromptAnswer(ownerId, "prompt.life.goal", "go clubbing in amsterdam")
+                        .get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+            assertNotNull(posted);
+            assertTrue(posted.isSetSignalTokens());
+            assertTrue(posted.getSignalTokens().contains(normalizedCandidate),
+                    "Prompt answer should carry extracted raw candidate token.");
+            SignalConceptRegistry.Resolution candidateResolution = SignalConceptRegistry
+                    .resolveForWrite(normalizedCandidate);
+            assertNotNull(candidateResolution);
+            assertSame(SignalConceptRegistry.ResolutionKind.UNKNOWN, candidateResolution.kind(),
+                    "Raw candidate should remain unresolved prior to promotion.");
+            List<SignalConceptRegistry.CandidateEntry> candidateSnapshot = SignalConceptRegistry.candidateSnapshot(200);
+            boolean hasRawCandidate = candidateSnapshot.stream()
+                    .anyMatch(entry -> entry != null && normalizedCandidate.equals(entry.rawToken));
+            assertTrue(hasRawCandidate, "Expected raw candidate to be observed from strict source.");
+
+            Signals before = mgr.getSignals(ownerId, ownerId).get(5, TimeUnit.SECONDS);
+            assertNull(findRecord(before, normalizedCandidate, SignalIntent.SELF),
+                    "Unknown strict-source token should not persist before promotion.");
+
+            List<SignalConceptRegistry.CandidateAccountIntentObservation> observations = SignalConceptRegistry
+                    .candidateAccountIntentObservations(normalizedCandidate);
+            assertFalse(observations.isEmpty(), "Expected unresolved candidate observations for raw candidate.");
+            boolean hasOwnerObservation = observations.stream().anyMatch(obs -> obs != null && obs.accountId == ownerId);
+            assertTrue(hasOwnerObservation, "Expected owner observation to be captured for raw candidate.");
+
+            assertTrue(mgr.promoteSignalConcept(normalizedCandidate, normalizedCandidate).get(10, TimeUnit.SECONDS));
+
+            waitFor(() -> {
+                Signals after = mgr.getSignals(ownerId, ownerId).get(5, TimeUnit.SECONDS);
+                return findRecord(after, normalizedCandidate, SignalIntent.SELF) != null;
+            }, 5000, "Promotion should backfill prompt owner from candidate observation.");
+        }
+    }
+
+    @Test
+    void promoteSignalConcept_backfillsOwnerFromPromptContextWhenOwnerObservationMissing() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long ownerId = 9601L;
+            long viewerId = 9602L;
+            String rawAlias = "amsterdam_candidate_ctx";
+            String canonical = "amsterdam";
+
+            PublicPromptAnswer seeded = new PublicPromptAnswer();
+            seeded.setAnswerId(UUID.randomUUID().toString());
+            seeded.setAccountId(ownerId);
+            seeded.setPromptId("prompt.ideal.night.out");
+            seeded.setBody("clubbing in amsterdam");
+            long now = System.currentTimeMillis();
+            seeded.setCreatedAt(now);
+            seeded.setUpdatedAt(now);
+            ipc.clusterDepot(Core.class.getName(), "*publicPromptAnswerDepot").append(seeded);
+
+            SignalConceptRegistry.observeUnresolved(
+                    rawAlias,
+                    "public_prompt_reaction",
+                    "reaction_strength=1 | prompt_id=prompt.ideal.night.out",
+                    viewerId,
+                    SignalIntent.SEEKING,
+                    0.28);
+
+            Signals ownerBefore = mgr.getSignals(ownerId, ownerId).get(5, TimeUnit.SECONDS);
+            Signals viewerBefore = mgr.getSignals(viewerId, viewerId).get(5, TimeUnit.SECONDS);
+            assertNull(findRecord(ownerBefore, canonical, SignalIntent.SELF));
+            assertNull(findRecord(viewerBefore, canonical, SignalIntent.SEEKING));
+
+            assertTrue(mgr.promoteSignalConcept(rawAlias, canonical).get(10, TimeUnit.SECONDS));
+
+            waitFor(() -> {
+                Signals ownerAfter = mgr.getSignals(ownerId, ownerId).get(5, TimeUnit.SECONDS);
+                Signals viewerAfter = mgr.getSignals(viewerId, viewerId).get(5, TimeUnit.SECONDS);
+                return findRecord(ownerAfter, canonical, SignalIntent.SELF) != null
+                        && findRecord(viewerAfter, canonical, SignalIntent.SEEKING) != null;
+            }, 5000, "Promotion should backfill owner from prompt context even if owner observation was missing.");
+        }
+    }
+
+    @Test
+    void promoteSignalConcept_backfillsOwnerFromReactionContextOwnerIdWhenObservationMissing() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long ownerId = 9603L;
+            long viewerId = 9604L;
+            String rawAlias = "amsterdam_owner_hint_ctx";
+            String canonical = "amsterdam";
+
+            SignalConceptRegistry.observeUnresolved(
+                    rawAlias,
+                    "public_prompt_reaction",
+                    "reaction_strength=1 | answer_owner_id=" + ownerId + " | prompt_id=prompt.ideal.night.out",
+                    viewerId,
+                    SignalIntent.SEEKING,
+                    0.24);
+
+            Signals ownerBefore = mgr.getSignals(ownerId, ownerId).get(5, TimeUnit.SECONDS);
+            Signals viewerBefore = mgr.getSignals(viewerId, viewerId).get(5, TimeUnit.SECONDS);
+            assertNull(findRecord(ownerBefore, canonical, SignalIntent.SELF));
+            assertNull(findRecord(viewerBefore, canonical, SignalIntent.SEEKING));
+
+            assertTrue(mgr.promoteSignalConcept(rawAlias, canonical).get(10, TimeUnit.SECONDS));
+
+            waitFor(() -> {
+                Signals ownerAfter = mgr.getSignals(ownerId, ownerId).get(5, TimeUnit.SECONDS);
+                Signals viewerAfter = mgr.getSignals(viewerId, viewerId).get(5, TimeUnit.SECONDS);
+                return findRecord(ownerAfter, canonical, SignalIntent.SELF) != null
+                        && findRecord(viewerAfter, canonical, SignalIntent.SEEKING) != null;
+            }, 5000, "Promotion should backfill owner from reaction answer_owner_id context.");
+        }
+    }
+
+    @Test
+    void getSignals_mergesLegacyNullIntentIntoSelf() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 9546L;
+            long now = System.currentTimeMillis();
+
+            SignalRecord legacy = new SignalRecord();
+            legacy.setToken("socializing");
+            legacy.setValence(0.22);
+            legacy.setCount(1);
+            legacy.setSource("private_prompt");
+            legacy.setSourceId("private#legacy");
+            legacy.setFirstSeen(now - 1000);
+            legacy.setLastSeen(now - 1000);
+
+            SignalRecord current = new SignalRecord();
+            current.setToken("socializing");
+            current.setIntent(SignalIntent.SELF);
+            current.setValence(0.24);
+            current.setCount(1);
+            current.setSource("private_prompt");
+            current.setSourceId("private#current");
+            current.setFirstSeen(now);
+            current.setLastSeen(now);
+
+            Signals seeded = new Signals();
+            seeded.setAccountId(accountId);
+            seeded.setRecords(List.of(legacy, current));
+            ipc.clusterDepot(Core.class.getName(), "*signalsDepot").append(seeded);
+
+            Signals merged = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord self = findRecord(merged, "socializing", SignalIntent.SELF);
+            SignalRecord none = findRecord(merged, "socializing", null);
+
+            assertNotNull(self);
+            assertNull(none, "Legacy null-intent records should be normalized into SELF.");
+            assertTrue(self.isSetCount());
+            assertTrue(self.getCount() >= 2);
         }
     }
 

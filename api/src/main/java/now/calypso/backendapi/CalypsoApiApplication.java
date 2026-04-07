@@ -7,8 +7,6 @@ import now.calypso.backend.data.LocationScope;
 import now.calypso.backend.data.ManyToManyFilter;
 import now.calypso.backend.data.ModeFilter;
 import now.calypso.backend.data.OneToManyFilter;
-import now.calypso.backend.data.PromptReaction;
-import now.calypso.backend.data.PublicPromptAnswer;
 import now.calypso.backend.data.RangeFilter;
 import now.calypso.backend.data.TagPreference;
 import now.calypso.backend.modules.*;
@@ -99,6 +97,7 @@ public class CalypsoApiApplication {
     private static final String[] SEED_LIFESTYLE_PREFERENCE = {
             "non_smoker", "no_drugs", "social_drinker", "cannabis_user", "non_smoker", "regular_drinker"
     };
+    private static final String IPC_SEED_SIGNAL_EXTRACTION_ENV = "CALYPSO_IPC_SEED_SIGNAL_EXTRACTION";
 
     public static void main(String[] args) throws NoSuchAlgorithmException, IOException, NoSuchProviderException {
         if (args.length > 1) {
@@ -174,10 +173,23 @@ public class CalypsoApiApplication {
     }
 
     private static void seedIpcUsers(CalypsoApiManager manager) {
-        OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+        String extractionToggle = System.getenv(IPC_SEED_SIGNAL_EXTRACTION_ENV);
+        boolean extractionEnabled = extractionToggle == null
+                || (!"false".equalsIgnoreCase(extractionToggle.trim()) && !"0".equals(extractionToggle.trim()));
+        String openAiKey = System.getenv("OPENAI_API_KEY");
+        boolean hasOpenAiKey = openAiKey != null && !openAiKey.trim().isEmpty();
+        boolean useSeedExtraction = extractionEnabled && hasOpenAiKey;
+        if (!useSeedExtraction) {
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            if (!extractionEnabled) {
+                System.out.println(
+                        "IPC seed signal extraction disabled (CALYPSO_IPC_SEED_SIGNAL_EXTRACTION=false).");
+            } else {
+                System.out.println("IPC seed signal extraction disabled (missing OPENAI_API_KEY).");
+            }
+        }
         try {
             List<Long> accountIds = new ArrayList<>();
-            Map<Long, String> firstAnswerByAccountId = new HashMap<>();
 
             for (int i = 0; i < SEED_NAMES.length; i++) {
                 String name = SEED_NAMES[i];
@@ -191,7 +203,7 @@ public class CalypsoApiApplication {
                 manager.postFilters(filters, accountId).get(8, TimeUnit.SECONDS);
 
                 manager.postPublicPromptSelection(accountId, SEED_PROMPT_IDS).get(8, TimeUnit.SECONDS);
-                PublicPromptAnswer first = manager.postPublicPromptAnswer(
+                manager.postPublicPromptAnswer(
                         accountId,
                         SEED_PROMPT_IDS.get(0),
                         SEED_TALK_ANSWERS[i % SEED_TALK_ANSWERS.length])
@@ -206,65 +218,17 @@ public class CalypsoApiApplication {
                         SEED_PROMPT_IDS.get(2),
                         SEED_GOAL_ANSWERS[i % SEED_GOAL_ANSWERS.length])
                         .get(8, TimeUnit.SECONDS);
-
-                if (first != null && first.getAnswerId() != null) {
-                    firstAnswerByAccountId.put(accountId, first.getAnswerId());
-                }
             }
 
-            for (int i = 0; i < accountIds.size(); i++) {
-                long viewerId = accountIds.get(i);
-                long likeTargetId = accountIds.get((i + 1) % accountIds.size());
-                long dislikeTargetId = accountIds.get((i + 2) % accountIds.size());
-
-                String likeAnswerId = firstAnswerByAccountId.get(likeTargetId);
-                if (likeAnswerId != null) {
-                    manager.postPublicPromptReaction(viewerId, likeAnswerId, PromptReaction.LIKE)
-                            .get(6, TimeUnit.SECONDS);
-                }
-                String dislikeAnswerId = firstAnswerByAccountId.get(dislikeTargetId);
-                if (dislikeAnswerId != null) {
-                    manager.postPublicPromptReaction(viewerId, dislikeAnswerId, PromptReaction.DISLIKE)
-                            .get(6, TimeUnit.SECONDS);
-                }
-            }
-
-            if (accountIds.size() >= 2) {
-                seedMutualPair(manager, accountIds, firstAnswerByAccountId, 0, 1);
-            }
-            if (accountIds.size() >= 4) {
-                seedMutualPair(manager, accountIds, firstAnswerByAccountId, 2, 3);
-            }
-            if (accountIds.size() >= 6) {
-                seedMutualPair(manager, accountIds, firstAnswerByAccountId, 4, 5);
-            }
-
-            System.out.println("Seeded " + accountIds.size() + " IPC users with filters, prompts, and reactions.");
+            System.out.println("Seeded " + accountIds.size() + " IPC users with filters and prompts.");
         } catch (Exception e) {
             System.err.println("IPC seed bootstrap failed: " + e.getMessage());
             e.printStackTrace();
         } finally {
-            OpenAIJson.clearTestOverride();
+            if (!useSeedExtraction) {
+                OpenAIJson.clearTestOverride();
+            }
         }
-    }
-
-    private static void seedMutualPair(CalypsoApiManager manager, List<Long> ids, Map<Long, String> firstAnswerByAccountId,
-            int leftIdx, int rightIdx) throws Exception {
-        if (leftIdx < 0 || rightIdx < 0 || leftIdx >= ids.size() || rightIdx >= ids.size()) {
-            return;
-        }
-        long left = ids.get(leftIdx);
-        long right = ids.get(rightIdx);
-        String leftAnswer = firstAnswerByAccountId.get(left);
-        String rightAnswer = firstAnswerByAccountId.get(right);
-        if (leftAnswer != null) {
-            manager.postPublicPromptReaction(right, leftAnswer, PromptReaction.LIKE).get(6, TimeUnit.SECONDS);
-        }
-        if (rightAnswer != null) {
-            manager.postPublicPromptReaction(left, rightAnswer, PromptReaction.LIKE).get(6, TimeUnit.SECONDS);
-        }
-        manager.postFacecardReaction(left, right, PromptReaction.LIKE).get(6, TimeUnit.SECONDS);
-        manager.postFacecardReaction(right, left, PromptReaction.LIKE).get(6, TimeUnit.SECONDS);
     }
 
     private static long ensureSeedAccount(CalypsoApiManager manager, String name, String phone, int idx) throws Exception {

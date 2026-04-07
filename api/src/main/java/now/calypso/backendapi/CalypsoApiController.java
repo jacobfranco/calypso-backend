@@ -575,6 +575,76 @@ public class CalypsoApiController {
                 .defaultIfEmpty(new GetSignals(accountId, List.of()));
     }
 
+    @GetMapping("/api/accounts/{id}/admin/signal-concepts")
+    public Mono<GetSignalConceptRegistry> getSignalConceptRegistry(
+            @PathVariable("id") String idStr,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getSignalConceptRegistry());
+    }
+
+    @GetMapping("/api/accounts/{id}/admin/signal-concepts/candidates")
+    public Mono<GetSignalConceptCandidates> getSignalConceptCandidates(
+            @PathVariable("id") String idStr,
+            @RequestParam(value = "limit", required = false, defaultValue = "100") int limit,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getSignalConceptCandidates(limit));
+    }
+
+    @PostMapping("/api/accounts/{id}/admin/signal-concepts/promote")
+    public Mono<Map<String, Object>> postPromoteSignalConceptCandidate(
+            @PathVariable("id") String idStr,
+            @RequestBody(required = false) PostSignalConceptPromoteRequest payload,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        String rawToken = payload == null ? null : payload.rawToken;
+        String canonicalToken = payload == null ? null : payload.canonicalToken;
+        return Mono.fromFuture(manager.promoteSignalConceptWithDebug(rawToken, canonicalToken))
+                .map(result -> {
+                    Map<String, Object> out = new LinkedHashMap<>();
+                    out.put("changed", result == null ? Boolean.FALSE : result.changed);
+                    out.put("rawToken", result == null ? null : result.rawToken);
+                    out.put("canonicalToken", result == null ? null : result.canonicalToken);
+                    out.put("migratedStoredAccounts", result == null ? 0 : result.migratedStoredAccounts);
+                    out.put("replayedObservedAccounts", result == null ? 0 : result.replayedObservedAccounts);
+                    out.put("replayedContextualOwners", result == null ? 0 : result.replayedContextualOwners);
+                    out.put("observedAccountIds", result == null ? List.of() : result.observedAccountIds);
+                    return out;
+                })
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
+    @PostMapping("/api/accounts/{id}/admin/signal-concepts/reject")
+    public Mono<Map<String, Object>> postRejectSignalConceptCandidate(
+            @PathVariable("id") String idStr,
+            @RequestBody(required = false) PostSignalConceptRejectRequest payload,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        String rawToken = payload == null ? null : payload.rawToken;
+        return Mono.fromFuture(manager.rejectSignalConceptCandidate(rawToken))
+                .map(changed -> Collections.<String, Object>singletonMap("changed", changed))
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
     @GetMapping("/api/accounts/{id}/public-prompt-feed")
     public Mono<List<PublicPromptFeedCard>> getPublicPromptFeed(
             @PathVariable("id") String idStr,

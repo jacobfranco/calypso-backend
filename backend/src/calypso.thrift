@@ -144,6 +144,8 @@ struct SignalRecord {
   7: optional SignalIntent intent;
  10: optional string sourceId; // pointer back to the originating entity
   11: optional double valence; // -1..1, direction (dislike..like)
+  12: optional string rawToken; // normalized raw extracted token before canonical resolution
+  13: optional string canonicalToken; // canonical concept token used for scoring
 }
 
 struct Signals {

@@ -61,6 +61,8 @@ public class GetSignals {
 
     public static final class GetSignalRecord {
         public final String token;
+        public final String rawToken;
+        public final String canonicalToken;
         public final String source;
         public final String sourceId;
         public final Long firstSeen;
@@ -72,6 +74,8 @@ public class GetSignals {
 
         public GetSignalRecord(SignalRecord r) {
             this.token = r.getToken();
+            this.rawToken = r.isSetRawToken() ? r.getRawToken() : null;
+            this.canonicalToken = r.isSetCanonicalToken() ? r.getCanonicalToken() : null;
             this.source = r.getSource();
             this.sourceId = r.getSourceId();
             this.firstSeen = r.isSetFirstSeen() ? r.getFirstSeen() : null;
@@ -85,6 +89,8 @@ public class GetSignals {
         @JsonCreator
         public GetSignalRecord(
                 @JsonProperty("token") String token,
+                @JsonProperty("rawToken") String rawToken,
+                @JsonProperty("canonicalToken") String canonicalToken,
                 @JsonProperty("source") String source,
                 @JsonProperty("sourceId") String sourceId,
                 @JsonProperty("firstSeen") Long firstSeen,
@@ -94,6 +100,8 @@ public class GetSignals {
                 @JsonProperty("intent") String intent,
                 @JsonProperty("valence") Double valence) {
             this.token = token;
+            this.rawToken = rawToken;
+            this.canonicalToken = canonicalToken;
             this.source = source;
             this.sourceId = sourceId;
             this.firstSeen = firstSeen;

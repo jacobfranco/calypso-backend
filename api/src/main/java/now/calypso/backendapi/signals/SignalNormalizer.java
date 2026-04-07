@@ -17,7 +17,7 @@ public final class SignalNormalizer {
     public static String normalizeOne(String raw) {
         if (raw == null)
             return null;
-        String s = raw.toLowerCase(Locale.ROOT).trim();
+        String s = collapseMappingNotation(raw).toLowerCase(Locale.ROOT).trim();
         s = canonicalizePossessives(s);
         s = s.replaceAll("[\\s\\-]+", "_"); // spaces/hyphens -> _
         s = s.replaceAll("^_+|_+$", ""); // trim _
@@ -30,6 +30,25 @@ public final class SignalNormalizer {
             s = s.substring(0, 48);
         if (!VALID.matcher(s).matches())
             return null;
+        return s;
+    }
+
+    private static String collapseMappingNotation(String raw) {
+        if (raw == null)
+            return null;
+        String s = raw.trim();
+        if (s.isBlank())
+            return s;
+        String[] separators = { "->", "=>", "→" };
+        for (String separator : separators) {
+            int idx = s.indexOf(separator);
+            if (idx < 0)
+                continue;
+            String rhs = s.substring(idx + separator.length()).trim();
+            if (!rhs.isBlank()) {
+                return rhs;
+            }
+        }
         return s;
     }
 

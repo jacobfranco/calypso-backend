@@ -19,6 +19,8 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
   private static final org.apache.thrift.protocol.TField INTENT_FIELD_DESC = new org.apache.thrift.protocol.TField("intent", org.apache.thrift.protocol.TType.I32, (short)7);
   private static final org.apache.thrift.protocol.TField SOURCE_ID_FIELD_DESC = new org.apache.thrift.protocol.TField("sourceId", org.apache.thrift.protocol.TType.STRING, (short)10);
   private static final org.apache.thrift.protocol.TField VALENCE_FIELD_DESC = new org.apache.thrift.protocol.TField("valence", org.apache.thrift.protocol.TType.DOUBLE, (short)11);
+  private static final org.apache.thrift.protocol.TField RAW_TOKEN_FIELD_DESC = new org.apache.thrift.protocol.TField("rawToken", org.apache.thrift.protocol.TType.STRING, (short)12);
+  private static final org.apache.thrift.protocol.TField CANONICAL_TOKEN_FIELD_DESC = new org.apache.thrift.protocol.TField("canonicalToken", org.apache.thrift.protocol.TType.STRING, (short)13);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new SignalRecordStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new SignalRecordTupleSchemeFactory();
@@ -36,6 +38,8 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
   public @org.apache.thrift.annotation.Nullable SignalIntent intent; // optional
   public @org.apache.thrift.annotation.Nullable java.lang.String sourceId; // optional
   public double valence; // optional
+  public @org.apache.thrift.annotation.Nullable java.lang.String rawToken; // optional
+  public @org.apache.thrift.annotation.Nullable java.lang.String canonicalToken; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
@@ -51,7 +55,9 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
      */
     INTENT((short)7, "intent"),
     SOURCE_ID((short)10, "sourceId"),
-    VALENCE((short)11, "valence");
+    VALENCE((short)11, "valence"),
+    RAW_TOKEN((short)12, "rawToken"),
+    CANONICAL_TOKEN((short)13, "canonicalToken");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -85,6 +91,10 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
           return SOURCE_ID;
         case 11: // VALENCE
           return VALENCE;
+        case 12: // RAW_TOKEN
+          return RAW_TOKEN;
+        case 13: // CANONICAL_TOKEN
+          return CANONICAL_TOKEN;
         default:
           return null;
       }
@@ -133,7 +143,7 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
   private static final int __COUNT_ISSET_ID = 2;
   private static final int __VALENCE_ISSET_ID = 3;
   private byte __isset_bitfield = 0;
-  private static final _Fields[] optionals = {_Fields.SOURCE,_Fields.FIRST_SEEN,_Fields.LAST_SEEN,_Fields.COUNT,_Fields.LAST_CONTEXT,_Fields.INTENT,_Fields.SOURCE_ID,_Fields.VALENCE};
+  private static final _Fields[] optionals = {_Fields.SOURCE,_Fields.FIRST_SEEN,_Fields.LAST_SEEN,_Fields.COUNT,_Fields.LAST_CONTEXT,_Fields.INTENT,_Fields.SOURCE_ID,_Fields.VALENCE,_Fields.RAW_TOKEN,_Fields.CANONICAL_TOKEN};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
@@ -155,6 +165,10 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
     tmpMap.put(_Fields.VALENCE, new org.apache.thrift.meta_data.FieldMetaData("valence", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.DOUBLE)));
+    tmpMap.put(_Fields.RAW_TOKEN, new org.apache.thrift.meta_data.FieldMetaData("rawToken", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
+    tmpMap.put(_Fields.CANONICAL_TOKEN, new org.apache.thrift.meta_data.FieldMetaData("canonicalToken", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(SignalRecord.class, metaDataMap);
   }
@@ -193,6 +207,12 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       this.sourceId = other.sourceId;
     }
     this.valence = other.valence;
+    if (other.isSetRawToken()) {
+      this.rawToken = other.rawToken;
+    }
+    if (other.isSetCanonicalToken()) {
+      this.canonicalToken = other.canonicalToken;
+    }
   }
 
   @Override
@@ -215,6 +235,8 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
     this.sourceId = null;
     setValenceIsSet(false);
     this.valence = 0.0;
+    this.rawToken = null;
+    this.canonicalToken = null;
   }
 
   @org.apache.thrift.annotation.Nullable
@@ -442,6 +464,56 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
     __isset_bitfield = org.apache.thrift.EncodingUtils.setBit(__isset_bitfield, __VALENCE_ISSET_ID, value);
   }
 
+  @org.apache.thrift.annotation.Nullable
+  public java.lang.String getRawToken() {
+    return this.rawToken;
+  }
+
+  public SignalRecord setRawToken(@org.apache.thrift.annotation.Nullable java.lang.String rawToken) {
+    this.rawToken = rawToken;
+    return this;
+  }
+
+  public void unsetRawToken() {
+    this.rawToken = null;
+  }
+
+  /** Returns true if field rawToken is set (has been assigned a value) and false otherwise */
+  public boolean isSetRawToken() {
+    return this.rawToken != null;
+  }
+
+  public void setRawTokenIsSet(boolean value) {
+    if (!value) {
+      this.rawToken = null;
+    }
+  }
+
+  @org.apache.thrift.annotation.Nullable
+  public java.lang.String getCanonicalToken() {
+    return this.canonicalToken;
+  }
+
+  public SignalRecord setCanonicalToken(@org.apache.thrift.annotation.Nullable java.lang.String canonicalToken) {
+    this.canonicalToken = canonicalToken;
+    return this;
+  }
+
+  public void unsetCanonicalToken() {
+    this.canonicalToken = null;
+  }
+
+  /** Returns true if field canonicalToken is set (has been assigned a value) and false otherwise */
+  public boolean isSetCanonicalToken() {
+    return this.canonicalToken != null;
+  }
+
+  public void setCanonicalTokenIsSet(boolean value) {
+    if (!value) {
+      this.canonicalToken = null;
+    }
+  }
+
   @Override
   public void setFieldValue(_Fields field, @org.apache.thrift.annotation.Nullable java.lang.Object value) {
     switch (field) {
@@ -517,6 +589,22 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       }
       break;
 
+    case RAW_TOKEN:
+      if (value == null) {
+        unsetRawToken();
+      } else {
+        setRawToken((java.lang.String)value);
+      }
+      break;
+
+    case CANONICAL_TOKEN:
+      if (value == null) {
+        unsetCanonicalToken();
+      } else {
+        setCanonicalToken((java.lang.String)value);
+      }
+      break;
+
     }
   }
 
@@ -551,6 +639,12 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
     case VALENCE:
       return getValence();
 
+    case RAW_TOKEN:
+      return getRawToken();
+
+    case CANONICAL_TOKEN:
+      return getCanonicalToken();
+
     }
     throw new java.lang.IllegalStateException();
   }
@@ -581,6 +675,10 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       return isSetSourceId();
     case VALENCE:
       return isSetValence();
+    case RAW_TOKEN:
+      return isSetRawToken();
+    case CANONICAL_TOKEN:
+      return isSetCanonicalToken();
     }
     throw new java.lang.IllegalStateException();
   }
@@ -679,6 +777,24 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
         return false;
     }
 
+    boolean this_present_rawToken = true && this.isSetRawToken();
+    boolean that_present_rawToken = true && that.isSetRawToken();
+    if (this_present_rawToken || that_present_rawToken) {
+      if (!(this_present_rawToken && that_present_rawToken))
+        return false;
+      if (!this.rawToken.equals(that.rawToken))
+        return false;
+    }
+
+    boolean this_present_canonicalToken = true && this.isSetCanonicalToken();
+    boolean that_present_canonicalToken = true && that.isSetCanonicalToken();
+    if (this_present_canonicalToken || that_present_canonicalToken) {
+      if (!(this_present_canonicalToken && that_present_canonicalToken))
+        return false;
+      if (!this.canonicalToken.equals(that.canonicalToken))
+        return false;
+    }
+
     return true;
   }
 
@@ -721,6 +837,14 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
     hashCode = hashCode * 8191 + ((isSetValence()) ? 131071 : 524287);
     if (isSetValence())
       hashCode = hashCode * 8191 + org.apache.thrift.TBaseHelper.hashCode(valence);
+
+    hashCode = hashCode * 8191 + ((isSetRawToken()) ? 131071 : 524287);
+    if (isSetRawToken())
+      hashCode = hashCode * 8191 + rawToken.hashCode();
+
+    hashCode = hashCode * 8191 + ((isSetCanonicalToken()) ? 131071 : 524287);
+    if (isSetCanonicalToken())
+      hashCode = hashCode * 8191 + canonicalToken.hashCode();
 
     return hashCode;
   }
@@ -823,6 +947,26 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
         return lastComparison;
       }
     }
+    lastComparison = java.lang.Boolean.compare(isSetRawToken(), other.isSetRawToken());
+    if (lastComparison != 0) {
+      return lastComparison;
+    }
+    if (isSetRawToken()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.rawToken, other.rawToken);
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+    }
+    lastComparison = java.lang.Boolean.compare(isSetCanonicalToken(), other.isSetCanonicalToken());
+    if (lastComparison != 0) {
+      return lastComparison;
+    }
+    if (isSetCanonicalToken()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.canonicalToken, other.canonicalToken);
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+    }
     return 0;
   }
 
@@ -916,6 +1060,26 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       if (!first) sb.append(", ");
       sb.append("valence:");
       sb.append(this.valence);
+      first = false;
+    }
+    if (isSetRawToken()) {
+      if (!first) sb.append(", ");
+      sb.append("rawToken:");
+      if (this.rawToken == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.rawToken);
+      }
+      first = false;
+    }
+    if (isSetCanonicalToken()) {
+      if (!first) sb.append(", ");
+      sb.append("canonicalToken:");
+      if (this.canonicalToken == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.canonicalToken);
+      }
       first = false;
     }
     sb.append(")");
@@ -1040,6 +1204,22 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
+          case 12: // RAW_TOKEN
+            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
+              struct.rawToken = iprot.readString();
+              struct.setRawTokenIsSet(true);
+            } else { 
+              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+            }
+            break;
+          case 13: // CANONICAL_TOKEN
+            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
+              struct.canonicalToken = iprot.readString();
+              struct.setCanonicalTokenIsSet(true);
+            } else { 
+              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+            }
+            break;
           default:
             org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
         }
@@ -1109,6 +1289,20 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
         oprot.writeDouble(struct.valence);
         oprot.writeFieldEnd();
       }
+      if (struct.rawToken != null) {
+        if (struct.isSetRawToken()) {
+          oprot.writeFieldBegin(RAW_TOKEN_FIELD_DESC);
+          oprot.writeString(struct.rawToken);
+          oprot.writeFieldEnd();
+        }
+      }
+      if (struct.canonicalToken != null) {
+        if (struct.isSetCanonicalToken()) {
+          oprot.writeFieldBegin(CANONICAL_TOKEN_FIELD_DESC);
+          oprot.writeString(struct.canonicalToken);
+          oprot.writeFieldEnd();
+        }
+      }
       oprot.writeFieldStop();
       oprot.writeStructEnd();
     }
@@ -1153,7 +1347,13 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       if (struct.isSetValence()) {
         optionals.set(7);
       }
-      oprot.writeBitSet(optionals, 8);
+      if (struct.isSetRawToken()) {
+        optionals.set(8);
+      }
+      if (struct.isSetCanonicalToken()) {
+        optionals.set(9);
+      }
+      oprot.writeBitSet(optionals, 10);
       if (struct.isSetSource()) {
         oprot.writeString(struct.source);
       }
@@ -1178,6 +1378,12 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       if (struct.isSetValence()) {
         oprot.writeDouble(struct.valence);
       }
+      if (struct.isSetRawToken()) {
+        oprot.writeString(struct.rawToken);
+      }
+      if (struct.isSetCanonicalToken()) {
+        oprot.writeString(struct.canonicalToken);
+      }
     }
 
     @Override
@@ -1185,7 +1391,7 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       struct.token = iprot.readString();
       struct.setTokenIsSet(true);
-      java.util.BitSet incoming = iprot.readBitSet(8);
+      java.util.BitSet incoming = iprot.readBitSet(10);
       if (incoming.get(0)) {
         struct.source = iprot.readString();
         struct.setSourceIsSet(true);
@@ -1217,6 +1423,14 @@ public class SignalRecord implements org.apache.thrift.TBase<SignalRecord, Signa
       if (incoming.get(7)) {
         struct.valence = iprot.readDouble();
         struct.setValenceIsSet(true);
+      }
+      if (incoming.get(8)) {
+        struct.rawToken = iprot.readString();
+        struct.setRawTokenIsSet(true);
+      }
+      if (incoming.get(9)) {
+        struct.canonicalToken = iprot.readString();
+        struct.setCanonicalTokenIsSet(true);
       }
     }
   }

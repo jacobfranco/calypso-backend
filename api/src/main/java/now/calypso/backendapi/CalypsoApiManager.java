@@ -46,6 +46,7 @@ public class CalypsoApiManager {
     private final ConcurrentHashMap<Long, CompletableFuture<?>> matchmakingFollowupSerialByAccount = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, CompletableFuture<Signals>> seedSignalBootstrapByAccount = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CompletableFuture<PublicPromptAnswer>> publicPromptSignalBackfillByAnswerId = new ConcurrentHashMap<>();
+    private final Set<String> publicPromptOwnerCandidateObservedAnswerIds = ConcurrentHashMap.newKeySet();
 
     // Modules
     public static final String CORE_MODULE_NAME = Core.class.getName();
@@ -75,6 +76,7 @@ public class CalypsoApiManager {
     private final QueryTopologyClient<List<AccountWithId>> getAccountsFromAccountIds;
     private final QueryTopologyClient<Application> getApplicationFromClientId;
     private final QueryTopologyClient<PublicPromptAnswer> getPublicPromptAnswerById;
+    private final QueryTopologyClient<List<String>> getPublicPromptAnswerIdsByPromptId;
     private final QueryTopologyClient<List<PublicPromptAnswer>> getPublicPromptFeed;
     private final QueryTopologyClient<List<PublicPromptAnswer>> getMyPublicPromptAnswers;
     private final QueryTopologyClient<PublicPromptSelection> getPublicPromptSelection;
@@ -94,6 +96,7 @@ public class CalypsoApiManager {
     private final QueryTopologyClient<Filters> getFiltersFromAccountId;
     private final QueryTopologyClient<List<MatchCandidate>> getMatchesFromAccountId;
     private final QueryTopologyClient<Signals> getSignalsFromAccountId;
+    private final QueryTopologyClient<List<Long>> getSignalAccountIds;
     private final QueryTopologyClient<AgentSession> getAgentSessionFromAccountId;
     private final QueryTopologyClient<PrivatePromptAssignment> getPrivatePromptAssignmentByInstanceId;
     private final QueryTopologyClient<PrivatePromptAnswer> getPrivatePromptAnswerByInstanceId;
@@ -121,7 +124,7 @@ public class CalypsoApiManager {
             .equalsIgnoreCase(System.getenv("CALYPSO_MATCH_LLM_RERANK_ENABLED"));
     private static final int MATCH_RERANK_POOL_MULTIPLIER = 3;
     private static final int MATCH_RERANK_POOL_MIN = 12;
-    private static final int MATCH_RERANK_POOL_MAX = 48;
+    private static final int MATCH_RERANK_POOL_MAX = 40;
     private static final int MATCH_RERANK_SIGNAL_LIMIT_VIEWER = 16;
     private static final int MATCH_RERANK_SIGNAL_LIMIT_CANDIDATE = 12;
     private static final double MATCH_RERANK_MAX_WEIGHT = 0.28;
@@ -134,6 +137,9 @@ public class CalypsoApiManager {
     private static final int PUBLIC_REACTION_STRENGTH_MIN = -3;
     private static final int PUBLIC_REACTION_STRENGTH_MAX = 3;
     private static final String PUBLIC_REACTION_STRENGTH_PROMPT_SUFFIX = "|reaction_strength:";
+    private static final double PUBLIC_PROMPT_OWNER_CANDIDATE_FALLBACK_VALENCE = 0.82;
+    private static final int SIGNAL_HIERARCHY_MAX_DEPTH = 3;
+    private static final double SIGNAL_HIERARCHY_MIN_VALENCE_ABS = 0.08;
     private static final SecureRandom PHONE_CODE_RANDOM = new SecureRandom();
     private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
     private static final String SMS_FALLBACK_ENV = "CALYPSO_SMS_FALLBACK";
@@ -173,6 +179,8 @@ public class CalypsoApiManager {
         getAccountsFromAccountIds = cluster.clusterQuery(CORE_MODULE_NAME, "getAccountsFromAccountIds");
         getApplicationFromClientId = cluster.clusterQuery(CORE_MODULE_NAME, "getApplicationFromClientId");
         getPublicPromptAnswerById = cluster.clusterQuery(CORE_MODULE_NAME, "getPublicPromptAnswerById");
+        getPublicPromptAnswerIdsByPromptId = cluster.clusterQuery(CORE_MODULE_NAME,
+                "getPublicPromptAnswerIdsByPromptId");
         getPublicPromptFeed = cluster.clusterQuery(CORE_MODULE_NAME, "getPublicPromptFeed");
         getMyPublicPromptAnswers = cluster.clusterQuery(CORE_MODULE_NAME, "getMyPublicPromptAnswers");
         getPublicPromptSelection = cluster.clusterQuery(CORE_MODULE_NAME, "getPublicPromptSelection");
@@ -200,6 +208,7 @@ public class CalypsoApiManager {
         getFiltersFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getFiltersFromAccountId");
         getMatchesFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getMatchesFromAccountId");
         getSignalsFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getSignalsFromAccountId");
+        getSignalAccountIds = cluster.clusterQuery(CORE_MODULE_NAME, "getSignalAccountIds");
         getAgentSessionFromAccountId = cluster.clusterQuery(AGENT_MODULE_NAME, "getAgentSessionFromAccountId");
         getPrivatePromptAssignmentByInstanceId = cluster.clusterQuery(AGENT_MODULE_NAME,
                 "getPrivatePromptAssignmentByInstanceId");
@@ -393,6 +402,524 @@ public class CalypsoApiManager {
                 .thenCompose(snapshot -> maybeBootstrapSeedSignals(requesterId, accountId, snapshot));
     }
 
+    public CompletableFuture<GetSignalConceptRegistry> getSignalConceptRegistry() {
+        int promoted = SignalConceptRegistry.autoPromoteReadyCandidatesIfDue();
+        if (promoted > 0) {
+            LOG.info("Auto-promoted {} signal concept candidates", promoted);
+        }
+        return CompletableFuture.completedFuture(GetSignalConceptRegistry.fromEntries(
+                SignalConceptRegistry.version(),
+                SignalConceptRegistry.conceptsSnapshot()));
+    }
+
+    public CompletableFuture<GetSignalConceptCandidates> getSignalConceptCandidates(int limit) {
+        int promoted = SignalConceptRegistry.autoPromoteReadyCandidatesIfDue();
+        if (promoted > 0) {
+            LOG.info("Auto-promoted {} signal concept candidates", promoted);
+        }
+        int bounded = Math.max(1, Math.min(500, limit));
+        return CompletableFuture.completedFuture(GetSignalConceptCandidates.fromEntries(
+                SignalConceptRegistry.version(),
+                SignalConceptRegistry.candidateSnapshot(bounded)));
+    }
+
+    private static final class ConceptMigrationSummary {
+        int migratedAccounts = 0;
+        final LinkedHashSet<Long> accountsWithStoredRawAlias = new LinkedHashSet<>();
+    }
+
+    private static final class ConceptMigrationOutcome {
+        final boolean migrated;
+        final boolean hadStoredRawAlias;
+
+        ConceptMigrationOutcome(boolean migrated, boolean hadStoredRawAlias) {
+            this.migrated = migrated;
+            this.hadStoredRawAlias = hadStoredRawAlias;
+        }
+    }
+
+    public static final class SignalConceptPromotionResult {
+        public final boolean changed;
+        public final String rawToken;
+        public final String canonicalToken;
+        public final int migratedStoredAccounts;
+        public final int replayedObservedAccounts;
+        public final int replayedContextualOwners;
+        public final List<Long> observedAccountIds;
+
+        SignalConceptPromotionResult(boolean changed, String rawToken, String canonicalToken,
+                int migratedStoredAccounts, int replayedObservedAccounts, int replayedContextualOwners,
+                Collection<Long> observedAccountIds) {
+            this.changed = changed;
+            this.rawToken = rawToken;
+            this.canonicalToken = canonicalToken;
+            this.migratedStoredAccounts = migratedStoredAccounts;
+            this.replayedObservedAccounts = replayedObservedAccounts;
+            this.replayedContextualOwners = replayedContextualOwners;
+            ArrayList<Long> ids = new ArrayList<>();
+            if (observedAccountIds != null) {
+                for (Long id : observedAccountIds) {
+                    if (id != null && id.longValue() >= 0L) {
+                        ids.add(id);
+                    }
+                }
+            }
+            ids.sort(Long::compareTo);
+            this.observedAccountIds = Collections.unmodifiableList(ids);
+        }
+    }
+
+    public CompletableFuture<Boolean> promoteSignalConcept(String rawToken, String canonicalToken) {
+        return promoteSignalConceptWithDebug(rawToken, canonicalToken).thenApply(result -> result.changed);
+    }
+
+    public CompletableFuture<SignalConceptPromotionResult> promoteSignalConceptWithDebug(String rawToken,
+            String canonicalToken) {
+        final String normalizedRaw = SignalNormalizer.normalizeOne(rawToken);
+        final String normalizedCanonical = SignalNormalizer.normalizeOne(canonicalToken);
+        if (normalizedRaw == null || normalizedRaw.isBlank()
+                || normalizedCanonical == null || normalizedCanonical.isBlank()) {
+            return CompletableFuture.completedFuture(
+                    new SignalConceptPromotionResult(false, normalizedRaw, normalizedCanonical, 0, 0, 0, List.of()));
+        }
+
+        List<SignalConceptRegistry.CandidateAccountIntentObservation> observations = SignalConceptRegistry
+                .candidateAccountIntentObservations(normalizedRaw);
+        List<String> candidateContexts = SignalConceptRegistry.candidateExampleContexts(normalizedRaw);
+        LinkedHashSet<Long> observedAccountIds = new LinkedHashSet<>();
+        if (observations != null) {
+            for (SignalConceptRegistry.CandidateAccountIntentObservation observation : observations) {
+                if (observation != null && observation.accountId >= 0L) {
+                    observedAccountIds.add(observation.accountId);
+                }
+            }
+        }
+        boolean changed = SignalConceptRegistry.promoteAlias(normalizedRaw, normalizedCanonical);
+        if (!changed) {
+            return CompletableFuture.completedFuture(new SignalConceptPromotionResult(
+                    false,
+                    normalizedRaw,
+                    normalizedCanonical,
+                    0,
+                    0,
+                    0,
+                    observedAccountIds));
+        }
+        return migratePromotedConceptAcrossAccounts(normalizedRaw, normalizedCanonical)
+                .thenCompose(summary -> applyPromotedConceptToObservedRequesters(
+                        normalizedRaw,
+                        normalizedCanonical,
+                        observations,
+                        summary.accountsWithStoredRawAlias)
+                        .thenCompose(appliedObserved -> backfillPromotedConceptFromPublicPromptContexts(
+                                normalizedRaw,
+                                normalizedCanonical,
+                                candidateContexts,
+                                summary.accountsWithStoredRawAlias,
+                                observedAccountIds).thenApply(appliedOwners -> {
+                            LOG.info(
+                                    "Promoted signal concept alias {} -> {} (migrated {} stored accounts, backfilled {} requester observations, {} contextual owners)",
+                                    normalizedRaw,
+                                    normalizedCanonical,
+                                    summary.migratedAccounts,
+                                    appliedObserved,
+                                    appliedOwners);
+                            return new SignalConceptPromotionResult(
+                                    true,
+                                    normalizedRaw,
+                                    normalizedCanonical,
+                                    summary.migratedAccounts,
+                                    appliedObserved,
+                                    appliedOwners,
+                                    observedAccountIds);
+                        })));
+    }
+
+    public CompletableFuture<Boolean> rejectSignalConceptCandidate(String rawToken) {
+        boolean changed = SignalConceptRegistry.rejectCandidate(rawToken);
+        return CompletableFuture.completedFuture(changed);
+    }
+
+    private CompletableFuture<Integer> applyPromotedConceptToObservedRequesters(String normalizedRaw,
+            String normalizedCanonical, List<SignalConceptRegistry.CandidateAccountIntentObservation> observations,
+            Set<Long> skipAccountsWithStoredRawAlias) {
+        if (normalizedCanonical == null || normalizedCanonical.isBlank()
+                || observations == null || observations.isEmpty()) {
+            return CompletableFuture.completedFuture(0);
+        }
+        Set<Long> skip = skipAccountsWithStoredRawAlias == null ? Set.of() : skipAccountsWithStoredRawAlias;
+        CompletableFuture<Integer> chain = CompletableFuture.completedFuture(0);
+        for (SignalConceptRegistry.CandidateAccountIntentObservation observation : observations) {
+            if (observation == null || observation.accountId < 0L || observation.seenCount <= 0) {
+                continue;
+            }
+            if (skip.contains(observation.accountId)) {
+                continue;
+            }
+            double averageValence = clampSigned(observation.averageValence);
+            if (!Double.isFinite(averageValence) || Math.abs(averageValence) <= 1.0e-9) {
+                continue;
+            }
+            SignalIntent intent = observation.intent == null ? SignalIntent.SELF : observation.intent;
+            ExtractedSignal template = ExtractedSignal.from(normalizedCanonical, intent, averageValence);
+            if (template == null) {
+                continue;
+            }
+            ArrayList<ExtractedSignal> replaySignals = new ArrayList<>(observation.seenCount);
+            for (int i = 0; i < observation.seenCount; i++) {
+                replaySignals.add(template);
+            }
+            if (replaySignals.isEmpty()) {
+                continue;
+            }
+            String sourceId = "promoted:" + normalizedRaw;
+            String context = "promoted_alias=" + normalizedRaw + " | seen=" + observation.seenCount;
+            chain = chain.thenCompose(total -> persistSignals(
+                    observation.accountId,
+                    replaySignals,
+                    "signal_concept_promotion",
+                    sourceId,
+                    context)
+                    .thenApply(ok -> ok ? total + 1 : total)
+                    .exceptionally(ex -> {
+                        LOG.warn("Failed concept backfill replay for account {} ({} -> {})",
+                                observation.accountId, normalizedRaw, normalizedCanonical, ex);
+                        return total;
+                    }));
+        }
+        return chain;
+    }
+
+    private static Set<String> contextValues(List<String> contexts, String key) {
+        if (contexts == null || contexts.isEmpty() || key == null || key.isBlank()) {
+            return Set.of();
+        }
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        String prefix = key + "=";
+        for (String context : contexts) {
+            if (context == null || context.isBlank()) {
+                continue;
+            }
+            String[] parts = context.split("\\|");
+            for (String part : parts) {
+                if (part == null) {
+                    continue;
+                }
+                String trimmed = part.trim();
+                if (!trimmed.startsWith(prefix)) {
+                    continue;
+                }
+                String value = trimmed.substring(prefix.length()).trim();
+                if (!value.isBlank()) {
+                    out.add(value);
+                }
+            }
+        }
+        return out;
+    }
+
+    private static Set<Long> contextLongValues(List<String> contexts, String key) {
+        Set<String> values = contextValues(contexts, key);
+        if (values.isEmpty()) {
+            return Set.of();
+        }
+        LinkedHashSet<Long> out = new LinkedHashSet<>();
+        for (String value : values) {
+            String trimmed = asTrimmedString(value);
+            if (trimmed == null) {
+                continue;
+            }
+            try {
+                long parsed = Long.parseLong(trimmed);
+                if (parsed >= 0L) {
+                    out.add(parsed);
+                }
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return out;
+    }
+
+    private static Long parsePublicSourceOwnerId(String sourceId) {
+        String trimmed = asTrimmedString(sourceId);
+        if (trimmed == null || !trimmed.startsWith("public#")) {
+            return null;
+        }
+        String suffix = trimmed.substring("public#".length()).trim();
+        if (suffix.isEmpty()) {
+            return null;
+        }
+        try {
+            long parsed = Long.parseLong(suffix);
+            return parsed >= 0L ? Long.valueOf(parsed) : null;
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private static boolean answerLikelyContainsPromotedToken(PublicPromptAnswer answer, String normalizedRaw,
+            String normalizedCanonical) {
+        if (answer == null) {
+            return false;
+        }
+        List<String> tokens = SignalNormalizer.normalizeTokens(answer.getSignalTokens());
+        if (tokens.contains(normalizedRaw) || tokens.contains(normalizedCanonical)) {
+            return true;
+        }
+        String body = answer.isSetBody() ? answer.getBody() : null;
+        if (body == null || body.isBlank()) {
+            return false;
+        }
+        String lower = body.toLowerCase(Locale.ROOT);
+        String rawPhrase = normalizedRaw == null ? "" : normalizedRaw.replace('_', ' ');
+        String canonicalPhrase = normalizedCanonical == null ? "" : normalizedCanonical.replace('_', ' ');
+        return (!rawPhrase.isBlank() && (lower.contains(rawPhrase) || lower.contains(normalizedRaw)))
+                || (!canonicalPhrase.isBlank() && (lower.contains(canonicalPhrase) || lower.contains(normalizedCanonical)));
+    }
+
+    private CompletableFuture<Integer> backfillPromotedConceptFromPublicPromptContexts(String normalizedRaw,
+            String normalizedCanonical, List<String> candidateContexts, Set<Long> skipAccountsWithStoredRawAlias,
+            Set<Long> skipObservedAccounts) {
+        if (normalizedRaw == null || normalizedRaw.isBlank()
+                || normalizedCanonical == null || normalizedCanonical.isBlank()) {
+            return CompletableFuture.completedFuture(0);
+        }
+        LinkedHashSet<Long> skip = new LinkedHashSet<>();
+        if (skipAccountsWithStoredRawAlias != null) {
+            skip.addAll(skipAccountsWithStoredRawAlias);
+        }
+        if (skipObservedAccounts != null) {
+            skip.addAll(skipObservedAccounts);
+        }
+        LinkedHashSet<String> sourceIds = new LinkedHashSet<>(contextValues(candidateContexts, "source_id"));
+        LinkedHashSet<String> answerIds = new LinkedHashSet<>(contextValues(candidateContexts, "answer_id"));
+        answerIds.addAll(sourceIds);
+        LinkedHashSet<String> promptIds = new LinkedHashSet<>(contextValues(candidateContexts, "prompt_id"));
+        LinkedHashSet<Long> sourceOwnerIds = new LinkedHashSet<>();
+        LinkedHashSet<Long> contextOwnerIds = new LinkedHashSet<>(contextLongValues(candidateContexts, "answer_owner_id"));
+        contextOwnerIds.addAll(contextLongValues(candidateContexts, "source_owner_id"));
+        for (String sourceId : sourceIds) {
+            Long ownerId = parsePublicSourceOwnerId(sourceId);
+            if (ownerId != null) {
+                sourceOwnerIds.add(ownerId);
+            }
+        }
+        if (answerIds.isEmpty() && promptIds.isEmpty() && sourceOwnerIds.isEmpty() && contextOwnerIds.isEmpty()) {
+            List<PromptDefinition> publicPrompts = PromptLibrary.publicBank();
+            if (publicPrompts != null) {
+                for (PromptDefinition def : publicPrompts) {
+                    if (def == null) {
+                        continue;
+                    }
+                    String promptId = asTrimmedString(def.getPromptId());
+                    if (promptId != null) {
+                        promptIds.add(promptId);
+                    }
+                }
+            }
+        }
+        if (answerIds.isEmpty() && promptIds.isEmpty() && sourceOwnerIds.isEmpty() && contextOwnerIds.isEmpty()) {
+            return CompletableFuture.completedFuture(0);
+        }
+
+        CompletableFuture<LinkedHashSet<String>> answerIdsFuture = CompletableFuture.completedFuture(answerIds);
+        for (String promptId : promptIds) {
+            if (promptId == null || promptId.isBlank()) {
+                continue;
+            }
+            answerIdsFuture = answerIdsFuture.thenCompose(ids -> getPublicPromptAnswerIdsByPromptId
+                    .invokeAsync(promptId)
+                    .handle((found, ex) -> {
+                        if (ex != null) {
+                            LOG.warn("Failed fetching public answers for prompt {} during concept promotion {} -> {}",
+                                    promptId, normalizedRaw, normalizedCanonical, ex);
+                            return ids;
+                        }
+                        if (found != null) {
+                            for (String foundId : found) {
+                                String normalizedId = asTrimmedString(foundId);
+                                if (normalizedId != null) {
+                                    ids.add(normalizedId);
+                                }
+                            }
+                        }
+                        return ids;
+                    }));
+        }
+
+        return answerIdsFuture.thenCompose(ids -> {
+            CompletableFuture<Integer> chain = CompletableFuture.completedFuture(0);
+            LinkedHashSet<String> replayKeys = new LinkedHashSet<>();
+            if (ids != null && !ids.isEmpty()) {
+                for (String answerId : ids) {
+                    String normalizedAnswerId = asTrimmedString(answerId);
+                    if (normalizedAnswerId == null) {
+                        continue;
+                    }
+                    chain = chain.thenCompose(total -> getPublicPromptAnswerById.invokeAsync(normalizedAnswerId)
+                            .thenCompose(answer -> {
+                                if (answer == null || !answer.isSetAccountId()) {
+                                    return CompletableFuture.completedFuture(total);
+                                }
+                                long ownerId = answer.getAccountId();
+                                if (ownerId < 0L || skip.contains(ownerId)) {
+                                    return CompletableFuture.completedFuture(total);
+                                }
+                                if (!answerLikelyContainsPromotedToken(answer, normalizedRaw, normalizedCanonical)) {
+                                    return CompletableFuture.completedFuture(total);
+                                }
+                                String replayKey = ownerId + "|" + normalizedAnswerId;
+                                if (!replayKeys.add(replayKey)) {
+                                    return CompletableFuture.completedFuture(total);
+                                }
+                                ExtractedSignal signal = ExtractedSignal.from(
+                                        normalizedCanonical,
+                                        SignalIntent.SELF,
+                                        PUBLIC_PROMPT_OWNER_CANDIDATE_FALLBACK_VALENCE);
+                                if (signal == null) {
+                                    return CompletableFuture.completedFuture(total);
+                                }
+                                String sourceId = "promoted:" + normalizedRaw + ":answer:" + normalizedAnswerId;
+                                String context = "promoted_alias=" + normalizedRaw + " | answer_id=" + normalizedAnswerId;
+                                return persistSignals(ownerId,
+                                        List.of(signal),
+                                        "signal_concept_promotion_owner_backfill",
+                                        sourceId,
+                                        context).thenApply(ok -> ok ? total + 1 : total);
+                            }).exceptionally(ex -> {
+                                LOG.warn("Failed contextual owner backfill for promoted concept {} -> {} answer {}",
+                                        normalizedRaw, normalizedCanonical, normalizedAnswerId, ex);
+                                return total;
+                            }));
+                }
+            }
+            LinkedHashSet<Long> directOwnerIds = new LinkedHashSet<>();
+            directOwnerIds.addAll(sourceOwnerIds);
+            directOwnerIds.addAll(contextOwnerIds);
+            if (!directOwnerIds.isEmpty()) {
+                for (Long ownerId : directOwnerIds) {
+                    if (ownerId == null || ownerId.longValue() < 0L || skip.contains(ownerId)) {
+                        continue;
+                    }
+                    chain = chain.thenCompose(total -> {
+                        ExtractedSignal signal = ExtractedSignal.from(
+                                normalizedCanonical,
+                                SignalIntent.SELF,
+                                PUBLIC_PROMPT_OWNER_CANDIDATE_FALLBACK_VALENCE);
+                        if (signal == null) {
+                            return CompletableFuture.completedFuture(total);
+                        }
+                        String sourceId = "promoted:" + normalizedRaw + ":source-owner:" + ownerId.longValue();
+                        String context = "promoted_alias=" + normalizedRaw + " | source_owner_id=" + ownerId.longValue();
+                        return persistSignals(
+                                ownerId.longValue(),
+                                List.of(signal),
+                                "signal_concept_promotion_owner_backfill",
+                                sourceId,
+                                context)
+                                .handle((ok, ex) -> {
+                                    if (ex != null) {
+                                        LOG.warn("Failed source-id owner backfill for promoted concept {} -> {} owner {}",
+                                                normalizedRaw, normalizedCanonical, ownerId, ex);
+                                        return total;
+                                    }
+                                    return (ok != null && ok.booleanValue()) ? total + 1 : total;
+                                });
+                    });
+                }
+            }
+            return chain;
+        });
+    }
+
+    private CompletableFuture<ConceptMigrationSummary> migratePromotedConceptAcrossAccounts(String rawToken,
+            String canonicalToken) {
+        final String normalizedRaw = SignalNormalizer.normalizeOne(rawToken);
+        final String normalizedCanonical = SignalNormalizer.normalizeOne(canonicalToken);
+        if (normalizedRaw == null || normalizedRaw.isBlank()
+                || normalizedCanonical == null || normalizedCanonical.isBlank()) {
+            return CompletableFuture.completedFuture(new ConceptMigrationSummary());
+        }
+        return getSignalAccountIds.invokeAsync()
+                .thenCompose(rawIds -> {
+                    LinkedHashSet<Long> accountIds = new LinkedHashSet<>();
+                    if (rawIds != null) {
+                        for (Long rawId : rawIds) {
+                            if (rawId != null && rawId >= 0L) {
+                                accountIds.add(rawId);
+                            }
+                        }
+                    }
+                    if (accountIds.isEmpty()) {
+                        return CompletableFuture.completedFuture(new ConceptMigrationSummary());
+                    }
+                    CompletableFuture<ConceptMigrationSummary> chain = CompletableFuture
+                            .completedFuture(new ConceptMigrationSummary());
+                    for (Long accountId : accountIds) {
+                        chain = chain.thenCompose(summary -> migratePromotedConceptForAccount(
+                                accountId.longValue(),
+                                normalizedRaw).thenApply(outcome -> {
+                                    if (outcome != null) {
+                                        if (outcome.hadStoredRawAlias) {
+                                            summary.accountsWithStoredRawAlias.add(accountId);
+                                        }
+                                        if (outcome.migrated) {
+                                            summary.migratedAccounts += 1;
+                                        }
+                                    }
+                                    return summary;
+                                }));
+                    }
+                    return chain;
+                })
+                .exceptionally(ex -> {
+                    LOG.warn("Failed concept migration for promoted alias {} -> {}", normalizedRaw, normalizedCanonical, ex);
+                    return new ConceptMigrationSummary();
+                });
+    }
+
+    private CompletableFuture<ConceptMigrationOutcome> migratePromotedConceptForAccount(long accountId,
+            String normalizedRaw) {
+        return getSignalsFromAccountId.invokeAsync(accountId, accountId).thenCompose(snapshot -> {
+            if (snapshot == null || snapshot.getRecords() == null || snapshot.getRecords().isEmpty()) {
+                return CompletableFuture.completedFuture(new ConceptMigrationOutcome(false, false));
+            }
+            if (!signalsContainRawAlias(snapshot, normalizedRaw)) {
+                return CompletableFuture.completedFuture(new ConceptMigrationOutcome(false, false));
+            }
+            Signals canonicalized = canonicalizeSignalSnapshot(snapshot);
+            canonicalized.setAccountId(accountId);
+            return signalsDepot.appendAsync(canonicalized)
+                    .thenApply(res -> new ConceptMigrationOutcome(true, true));
+        }).exceptionally(ex -> {
+            LOG.warn("Failed concept migration for account {} (raw alias={})", accountId, normalizedRaw,
+                    ex);
+            return new ConceptMigrationOutcome(false, false);
+        });
+    }
+
+    private static boolean signalsContainRawAlias(Signals signals, String normalizedRaw) {
+        if (normalizedRaw == null || normalizedRaw.isBlank()
+                || signals == null || signals.getRecords() == null || signals.getRecords().isEmpty()) {
+            return false;
+        }
+        for (SignalRecord record : signals.getRecords()) {
+            if (record == null) {
+                continue;
+            }
+            String token = SignalNormalizer.normalizeOne(record.getToken());
+            String rawToken = SignalNormalizer.normalizeOne(record.isSetRawToken() ? record.getRawToken() : null);
+            String canonicalToken = SignalNormalizer
+                    .normalizeOne(record.isSetCanonicalToken() ? record.getCanonicalToken() : null);
+            if (Objects.equals(token, normalizedRaw)
+                    || Objects.equals(rawToken, normalizedRaw)
+                    || Objects.equals(canonicalToken, normalizedRaw)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private CompletableFuture<Signals> maybeBootstrapSeedSignals(long requesterId, long accountId, Signals snapshot) {
         Signals canonical = canonicalizeSignalSnapshot(snapshot);
         if (requesterId != accountId || hasSignalRecords(canonical)) {
@@ -458,7 +985,8 @@ public class CalypsoApiManager {
         String promptText = PromptLibrary.publicTextById(promptId);
         String body = clampPromptText(answer.getBody(), 800);
         long ownerId = answer.isSetAccountId() ? answer.getAccountId() : 0L;
-        if (answerId == null || promptId == null || promptText == null || body == null || ownerId <= 0L) {
+        if (answerId == null || promptId == null || promptText == null || body == null
+                || !answer.isSetAccountId() || ownerId < 0L) {
             return CompletableFuture.completedFuture(false);
         }
 
@@ -1460,11 +1988,33 @@ public class CalypsoApiManager {
             if (r == null || r.getToken() == null)
                 continue;
             String normalizedToken = SignalNormalizer.normalizeOne(r.getToken());
-            if (normalizedToken == null || normalizedToken.isBlank())
+            if (normalizedToken == null || normalizedToken.isBlank()) {
                 continue;
-            r.setToken(normalizedToken);
+            }
+            String normalizedRaw = SignalNormalizer.normalizeOne(r.isSetRawToken() ? r.getRawToken() : normalizedToken);
+            String preferredCanonical = SignalNormalizer
+                    .normalizeOne(r.isSetCanonicalToken() ? r.getCanonicalToken() : normalizedToken);
+            SignalConceptRegistry.Resolution resolved = SignalConceptRegistry.resolve(preferredCanonical);
+            if (resolved == null || resolved.canonicalToken() == null || resolved.canonicalToken().isBlank()) {
+                resolved = SignalConceptRegistry.resolve(normalizedToken);
+            }
+            String normalizedCanonical = resolved == null ? preferredCanonical : resolved.canonicalToken();
+            if (normalizedCanonical == null || normalizedCanonical.isBlank()) {
+                normalizedCanonical = normalizedToken;
+            }
+            r.setToken(normalizedCanonical);
+            r.setCanonicalToken(normalizedCanonical);
+            if (normalizedRaw != null && !normalizedRaw.isBlank()) {
+                r.setRawToken(normalizedRaw);
+            } else if (!r.isSetRawToken()) {
+                r.setRawToken(normalizedCanonical);
+            }
             SignalIntent intent = r.isSetIntent() ? r.getIntent() : null;
-            String key = recordKey(normalizedToken, intent);
+            if (intent == null) {
+                intent = SignalIntent.SELF;
+                r.setIntent(intent);
+            }
+            String key = recordKey(normalizedCanonical, intent);
             SignalRecord existing = map.get(key);
             if (existing != null) {
                 mergeSignalRecords(existing, r);
@@ -1529,6 +2079,13 @@ public class CalypsoApiManager {
             }
             if (incoming.isSetIntent()) {
                 target.setIntent(incoming.getIntent());
+            }
+            if (incoming.isSetRawToken()) {
+                target.setRawToken(incoming.getRawToken());
+            }
+            if (incoming.isSetCanonicalToken()) {
+                target.setCanonicalToken(incoming.getCanonicalToken());
+                target.setToken(incoming.getCanonicalToken());
             }
         }
 
@@ -1695,6 +2252,45 @@ public class CalypsoApiManager {
         if (trimmed.isEmpty())
             return null;
         return trimmed.length() > 280 ? trimmed.substring(0, 280) : trimmed;
+    }
+
+    private static String sanitizeContextValue(String value) {
+        if (value == null)
+            return null;
+        String trimmed = value.trim().replace('|', ' ');
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private static String appendContextField(String context, String key, String value) {
+        if (key == null || key.isBlank()) {
+            return clampContext(context);
+        }
+        String sanitized = sanitizeContextValue(value);
+        if (sanitized == null) {
+            return clampContext(context);
+        }
+        String marker = key.trim() + "=";
+        String base = clampContext(context);
+        if (base != null && base.contains(marker)) {
+            return base;
+        }
+        if (base == null) {
+            return clampContext(marker + sanitized);
+        }
+        return clampContext(base + " | " + marker + sanitized);
+    }
+
+    private static String augmentObservationContext(String context, String normalizedSource, String normalizedSourceId) {
+        String out = clampContext(context);
+        if (normalizedSourceId == null || normalizedSourceId.isBlank()) {
+            return out;
+        }
+        if (normalizedSource == null || !normalizedSource.startsWith("public_prompt")) {
+            return out;
+        }
+        out = appendContextField(out, "source_id", normalizedSourceId);
+        out = appendContextField(out, "answer_id", normalizedSourceId);
+        return out;
     }
 
     private static String clampPromptText(String text, int limit) {
@@ -2026,7 +2622,7 @@ public class CalypsoApiManager {
 
         long ownerId = answer.isSetAccountId() ? answer.getAccountId() : 0L;
         CompletableFuture<List<String>> extractedTokensFuture;
-        if (ownerId > 0L) {
+        if (answer.isSetAccountId() && ownerId >= 0L) {
             extractedTokensFuture = extractAndAppendSignalsFromPrompt(
                     ownerId,
                     promptId,
@@ -2091,6 +2687,45 @@ public class CalypsoApiManager {
         return created;
     }
 
+    private void observeOwnerCandidatesFromAnswerTokensOnce(PublicPromptAnswer answer) {
+        if (answer == null || !hasAnswerSignalTokens(answer)) {
+            return;
+        }
+        if (!answer.isSetAccountId()) {
+            return;
+        }
+        long ownerId = answer.getAccountId();
+        if (ownerId < 0L) {
+            return;
+        }
+        String answerId = asTrimmedString(answer.getAnswerId());
+        if (answerId == null || !publicPromptOwnerCandidateObservedAnswerIds.add(answerId)) {
+            return;
+        }
+        List<String> normalizedTokens = SignalNormalizer.normalizeTokens(answer.getSignalTokens());
+        if (normalizedTokens.isEmpty()) {
+            return;
+        }
+        String source = "public_prompt_owner_backfill";
+        String context = "owner_candidate_observation";
+        context = appendContextField(context, "answer_owner_id", Long.toString(ownerId));
+        context = appendContextField(context, "answer_id", answerId);
+        context = appendContextField(context, "prompt_id", answer.getPromptId());
+        for (String token : normalizedTokens) {
+            SignalConceptRegistry.Resolution resolution = SignalConceptRegistry.resolveForWrite(token);
+            if (resolution == null || resolution.kind() != SignalConceptRegistry.ResolutionKind.UNKNOWN) {
+                continue;
+            }
+            SignalConceptRegistry.observeUnresolved(
+                    resolution.rawToken(),
+                    source,
+                    context,
+                    ownerId,
+                    SignalIntent.SELF,
+                    PUBLIC_PROMPT_OWNER_CANDIDATE_FALLBACK_VALENCE);
+        }
+    }
+
     private CompletableFuture<List<ExtractedSignal>> publicReactionSignalsFromAnswer(PublicPromptAnswer answer,
             int strength) {
         if (!hasAnswerSignalTokens(answer)) {
@@ -2136,8 +2771,11 @@ public class CalypsoApiManager {
         if (answer == null || normalizedTokens == null || normalizedTokens.isEmpty()) {
             return CompletableFuture.completedFuture(Map.of());
         }
-        long ownerId = answer.isSetAccountId() ? answer.getAccountId() : 0L;
-        if (ownerId <= 0L) {
+        if (!answer.isSetAccountId()) {
+            return CompletableFuture.completedFuture(Map.of());
+        }
+        long ownerId = answer.getAccountId();
+        if (ownerId < 0L) {
             return CompletableFuture.completedFuture(Map.of());
         }
         String answerId = asTrimmedString(answer.getAnswerId());
@@ -2215,8 +2853,11 @@ public class CalypsoApiManager {
                 return CompletableFuture.completedFuture(List.of());
             }
             String promptId = answer == null ? null : answer.getPromptId();
-            String context = "reaction_strength=" + strength + " | prompt_id="
-                    + (promptId == null ? "unknown" : promptId);
+            String context = "reaction_strength=" + strength;
+            if (answer != null && answer.isSetAccountId() && answer.getAccountId() >= 0L) {
+                context = appendContextField(context, "answer_owner_id", Long.toString(answer.getAccountId()));
+            }
+            context = appendContextField(context, "prompt_id", promptId == null ? "unknown" : promptId);
             return persistSignals(viewerId, signals, "public_prompt_reaction", sourceId, context)
                     .thenApply(ok -> tokens(signals));
         });
@@ -2242,6 +2883,7 @@ public class CalypsoApiManager {
                 throw new IllegalArgumentException("Unknown answer: " + answerId);
             }
             PublicPromptAnswer normalizedAnswer = answer;
+            observeOwnerCandidatesFromAnswerTokensOnce(normalizedAnswer);
             PublicPromptReactionEvent event = new PublicPromptReactionEvent();
             event.setViewerAccountId(viewerId);
             event.setAnswerId(answerId);
@@ -2269,6 +2911,7 @@ public class CalypsoApiManager {
             persist.thenCompose(v -> schedulePublicPromptAnswerSignalBackfill(normalizedAnswer)
                     .thenCompose(backfilled -> {
                         PublicPromptAnswer effective = backfilled == null ? normalizedAnswer : backfilled;
+                        observeOwnerCandidatesFromAnswerTokensOnce(effective);
                         if (!hasAnswerSignalTokens(effective)) {
                             return CompletableFuture.completedFuture(List.of());
                         }
@@ -2371,7 +3014,7 @@ public class CalypsoApiManager {
      */
     public CompletableFuture<Boolean> postSignals(long accountId, List<String> rawTokens, String source,
             String sourceId, String contextMaybe) {
-        List<String> tokens = SignalNormalizer.normalizeTokens(rawTokens);
+        List<String> tokens = SignalConceptRegistry.normalizeAndCanonicalizeTokens(rawTokens);
         if (tokens.isEmpty())
             return CompletableFuture.completedFuture(false);
         List<ExtractedSignal> manual = new ArrayList<>(tokens.size());
@@ -2392,7 +3035,15 @@ public class CalypsoApiManager {
         final long now = System.currentTimeMillis();
         final String normalizedSource = normalizeSource(source);
         final String normalizedSourceId = normalizeSourceId(sourceId);
-        final String context = clampContext(contextMaybe);
+        final String context = augmentObservationContext(
+                clampContext(contextMaybe),
+                normalizedSource,
+                normalizedSourceId);
+        final boolean strictCanonicalSource = normalizedSource.startsWith("public_prompt");
+        int promoted = SignalConceptRegistry.autoPromoteReadyCandidatesIfDue();
+        if (promoted > 0) {
+            LOG.info("Auto-promoted {} signal concept candidates", promoted);
+        }
 
         CompletableFuture<Void> chained = serialByAccount.compute(accountId, (k, prev) -> {
             CompletableFuture<Void> start = (prev == null) ? CompletableFuture.completedFuture(null) : prev;
@@ -2401,54 +3052,132 @@ public class CalypsoApiManager {
                         LinkedHashMap<String, SignalRecord> map = toRecordMap(current);
                         for (ExtractedSignal sig : sanitized) {
                             SignalIntent intent = sig.intent();
-                            String token = SignalNormalizer.normalizeOne(sig.token());
-                            if (token == null || token.isBlank()) {
+                            double baseValence = sig.valence() == null ? 1.0 : clampSigned(sig.valence());
+                            String rawToken = SignalNormalizer.normalizeOne(sig.token());
+                            if (rawToken == null || rawToken.isBlank()) {
                                 continue;
                             }
-                            String key = recordKey(token, intent);
-                            SignalRecord record = map.get(key);
-                            int priorCount = record == null ? 0 : (record.isSetCount() ? Math.max(1, record.getCount()) : 1);
-                            int nextCount;
-                            if (record == null) {
-                                record = new SignalRecord();
-                                record.setToken(token);
-                                record.setFirstSeen(now);
-                                nextCount = 1;
-                            } else {
-                                nextCount = record.isSetCount() ? record.getCount() + 1 : 1;
-                                if (!record.isSetFirstSeen())
-                                    record.setFirstSeen(now);
-                                if (record.getToken() == null || record.getToken().isBlank()) {
-                                    record.setToken(token);
+                            SignalConceptRegistry.Resolution resolution = SignalConceptRegistry.resolve(rawToken);
+                            String canonicalToken = resolution == null ? rawToken : resolution.canonicalToken();
+                            if (canonicalToken == null || canonicalToken.isBlank()) {
+                                continue;
+                            }
+                            if (resolution != null && resolution.kind() == SignalConceptRegistry.ResolutionKind.UNKNOWN) {
+                                SignalConceptRegistry.observeUnresolved(
+                                        rawToken,
+                                        normalizedSource,
+                                        context,
+                                        accountId,
+                                        intent,
+                                        baseValence);
+                                if (strictCanonicalSource) {
+                                    continue;
                                 }
                             }
-                            record.setCount(nextCount);
-                            record.setSource(normalizedSource);
-                            if (normalizedSourceId != null)
-                                record.setSourceId(normalizedSourceId);
-                            record.setLastSeen(now);
-                            if (context != null)
-                                record.setLastContext(context);
-                            if (intent != null)
-                                record.setIntent(intent);
-                            if (sig.valence() != null) {
-                                double incomingValence = clampSigned(sig.valence());
+                            Map<String, Double> expanded = SignalConceptRegistry.expandedConceptWeights(
+                                    canonicalToken,
+                                    SIGNAL_HIERARCHY_MAX_DEPTH);
+                            if (expanded == null || expanded.isEmpty()) {
+                                expanded = Map.of(canonicalToken, 1.0);
+                            }
+                            LinkedHashMap<String, Double> expandedWithLexical = new LinkedHashMap<>();
+                            for (Map.Entry<String, Double> entry : expanded.entrySet()) {
+                                if (entry == null || entry.getKey() == null || entry.getKey().isBlank()) {
+                                    continue;
+                                }
+                                double w = entry.getValue() == null ? 0.0 : entry.getValue().doubleValue();
+                                if (Double.isNaN(w) || w <= 0.0) {
+                                    continue;
+                                }
+                                String normalizedKey = SignalNormalizer.normalizeOne(entry.getKey());
+                                if (normalizedKey == null || normalizedKey.isBlank()) {
+                                    continue;
+                                }
+                                double existing = expandedWithLexical.getOrDefault(normalizedKey, 0.0);
+                                if (w > existing) {
+                                    expandedWithLexical.put(normalizedKey, w);
+                                }
+                            }
+                            for (Map.Entry<String, Double> entry : expandedWithLexical.entrySet()) {
+                                if (entry == null)
+                                    continue;
+                                String expandedToken = SignalNormalizer.normalizeOne(entry.getKey());
+                                if (expandedToken == null || expandedToken.isBlank()) {
+                                    continue;
+                                }
+                                double propagationWeight = entry.getValue() == null ? 0.0 : entry.getValue();
+                                if (Double.isNaN(propagationWeight) || propagationWeight <= 0.0) {
+                                    continue;
+                                }
+                                if (propagationWeight > 1.0) {
+                                    propagationWeight = 1.0;
+                                }
+                                double scaledIncoming = clampSigned(baseValence * propagationWeight);
+                                if (Math.abs(scaledIncoming) < SIGNAL_HIERARCHY_MIN_VALENCE_ABS) {
+                                    continue;
+                                }
+                                String key = recordKey(expandedToken, intent);
+                                SignalRecord record = map.get(key);
+                                int priorCount = record == null
+                                        ? 0
+                                        : (record.isSetCount() ? Math.max(1, record.getCount()) : 1);
+                                int nextCount;
+                                if (record == null) {
+                                    record = new SignalRecord();
+                                    record.setToken(expandedToken);
+                                    record.setFirstSeen(now);
+                                    nextCount = 1;
+                                } else {
+                                    nextCount = record.isSetCount() ? record.getCount() + 1 : 1;
+                                    if (!record.isSetFirstSeen())
+                                        record.setFirstSeen(now);
+                                    if (record.getToken() == null || record.getToken().isBlank()) {
+                                        record.setToken(expandedToken);
+                                    }
+                                }
+                                record.setCount(nextCount);
+                                record.setToken(expandedToken);
+                                record.setCanonicalToken(expandedToken);
+                                String storedRawToken;
+                                if (strictCanonicalSource) {
+                                    storedRawToken = expandedToken;
+                                } else if (expandedToken.equals(canonicalToken) || expandedToken.equals(rawToken)) {
+                                    storedRawToken = rawToken;
+                                } else {
+                                    storedRawToken = expandedToken;
+                                }
+                                record.setRawToken(storedRawToken);
+                                record.setSource(normalizedSource);
+                                if (normalizedSourceId != null)
+                                    record.setSourceId(normalizedSourceId);
+                                record.setLastSeen(now);
+                                if (context != null) {
+                                    if (expandedToken.equals(rawToken) && !expandedToken.equals(canonicalToken)) {
+                                        record.setLastContext("canonical=" + canonicalToken + " | " + context);
+                                    } else if (expandedToken.equals(canonicalToken)) {
+                                        record.setLastContext(context);
+                                    } else {
+                                        record.setLastContext("derived_from=" + canonicalToken + " | " + context);
+                                    }
+                                }
+                                if (intent != null)
+                                    record.setIntent(intent);
                                 if (priorCount > 0 && record.isSetValence()) {
                                     double previousValence = clampSigned(record.getValence());
-                                    double blended = blendStoredValence(previousValence, incomingValence, priorCount);
+                                    double blended = blendStoredValence(previousValence, scaledIncoming, priorCount);
                                     record.setValence(blended);
                                 } else {
-                                    record.setValence(incomingValence);
+                                    record.setValence(scaledIncoming);
                                 }
+                                String finalKey = recordKey(record);
+                                if (finalKey == null) {
+                                    continue;
+                                }
+                                if (!finalKey.equals(key)) {
+                                    map.remove(key);
+                                }
+                                map.put(finalKey, record);
                             }
-                            String finalKey = recordKey(record);
-                            if (finalKey == null) {
-                                continue;
-                            }
-                            if (!finalKey.equals(key)) {
-                                map.remove(key);
-                            }
-                            map.put(finalKey, record);
                         }
                         Signals updated = new Signals();
                         updated.setAccountId(accountId);
@@ -2535,12 +3264,16 @@ public class CalypsoApiManager {
     public CompletableFuture<List<String>> extractAndAppendSignalsFromPrompt(long accountId, String promptId,
             String question, String answer, List<String> conversationLines, String source, String sourceId) {
         List<String> normalizedConversation = clampConversationLines(conversationLines, 40, 320);
-        final String context = normalizedConversation.isEmpty() ? answer : String.join(" | ", normalizedConversation);
+        String context = normalizedConversation.isEmpty() ? answer : String.join(" | ", normalizedConversation);
+        if (promptId != null && !promptId.isBlank()) {
+            context = appendContextField(context, "prompt_id", promptId.trim());
+        }
+        final String finalContext = context;
         return extractSignalsFromPrompt(promptId, question, answer, normalizedConversation).thenCompose(signals -> {
             if (signals.isEmpty())
                 return CompletableFuture.completedFuture(List.of());
             List<String> tokens = tokens(signals);
-            return persistSignals(accountId, signals, source, sourceId, context).thenApply(ok -> tokens);
+            return persistSignals(accountId, signals, source, sourceId, finalContext).thenApply(ok -> tokens);
         });
     }
 
@@ -2549,8 +3282,14 @@ public class CalypsoApiManager {
             return List.of();
         LinkedHashSet<String> unique = new LinkedHashSet<>();
         for (ExtractedSignal sig : signals) {
-            if (sig != null && sig.token() != null)
-                unique.add(sig.token());
+            if (sig == null || sig.token() == null) {
+                continue;
+            }
+            String normalized = SignalNormalizer.normalizeOne(sig.token());
+            if (normalized == null || normalized.isBlank()) {
+                continue;
+            }
+            unique.add(normalized);
         }
         return new ArrayList<>(unique);
     }
@@ -2612,6 +3351,11 @@ public class CalypsoApiManager {
             double prevMagnitude = Math.abs(prev);
             double incomingMagnitude = Math.abs(inc);
             double countBoost = Math.min(1.0, Math.log1p(Math.max(1, priorCount)) / 2.2);
+            if (incomingMagnitude + 1.0e-6 < prevMagnitude) {
+                double soften = (prevMagnitude - incomingMagnitude) * (0.10 + (0.10 * countBoost));
+                double softenedMagnitude = Math.max(incomingMagnitude, prevMagnitude - soften);
+                return clampSigned(prevSign * softenedMagnitude);
+            }
             double lift = (1.0 - prevMagnitude) * incomingMagnitude * (0.22 + (0.18 * countBoost));
             double reinforcedMagnitude = Math.min(1.0, prevMagnitude + lift);
             return clampSigned(prevSign * reinforcedMagnitude);
