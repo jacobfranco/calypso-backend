@@ -465,6 +465,14 @@ public final class SignalConceptRegistry {
         return true;
     }
 
+    public static boolean isCanonicalConcept(String token) {
+        String normalized = SignalNormalizer.normalizeOne(token);
+        if (normalized == null || normalized.isBlank()) {
+            return false;
+        }
+        return BASE_CONCEPTS.containsKey(normalized) || DYNAMIC_CANONICAL_CONCEPTS.contains(normalized);
+    }
+
     public static boolean rejectCandidate(String rawToken) {
         String raw = SignalNormalizer.normalizeOne(rawToken);
         if (raw == null || raw.isBlank()) {

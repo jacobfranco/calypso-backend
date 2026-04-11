@@ -47,6 +47,7 @@ public class CalypsoApiManager {
     private final ConcurrentHashMap<Long, CompletableFuture<Signals>> seedSignalBootstrapByAccount = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CompletableFuture<PublicPromptAnswer>> publicPromptSignalBackfillByAnswerId = new ConcurrentHashMap<>();
     private final Set<String> publicPromptOwnerCandidateObservedAnswerIds = ConcurrentHashMap.newKeySet();
+    private final ConcurrentHashMap<Long, ConcurrentHashMap<String, DisambiguationCandidateStats>> signalDisambiguationByAccount = new ConcurrentHashMap<>();
 
     // Modules
     public static final String CORE_MODULE_NAME = Core.class.getName();
@@ -140,6 +141,8 @@ public class CalypsoApiManager {
     private static final double PUBLIC_PROMPT_OWNER_CANDIDATE_FALLBACK_VALENCE = 0.82;
     private static final int SIGNAL_HIERARCHY_MAX_DEPTH = 3;
     private static final double SIGNAL_HIERARCHY_MIN_VALENCE_ABS = 0.08;
+    private static final String SIGNAL_HIERARCHY_DERIVED_SOURCE = "signal_hierarchy_derived";
+    private static final int DISAMBIGUATION_MAX_PER_ACCOUNT = 200;
     private static final SecureRandom PHONE_CODE_RANDOM = new SecureRandom();
     private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
     private static final String SMS_FALLBACK_ENV = "CALYPSO_SMS_FALLBACK";
@@ -469,8 +472,151 @@ public class CalypsoApiManager {
         }
     }
 
+    public enum SignalConceptCandidateAction {
+        CREATE,
+        MAP,
+        REJECT;
+
+        static SignalConceptCandidateAction parse(String raw) {
+            if (raw == null || raw.isBlank()) {
+                return null;
+            }
+            try {
+                return SignalConceptCandidateAction.valueOf(raw.trim().toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException ignored) {
+                return null;
+            }
+        }
+    }
+
+    private static final class DisambiguationCandidateStats {
+        final String key;
+        final String term;
+        final String question;
+        final String promptId;
+        String source;
+        String sourceId;
+        String context;
+        int seenCount;
+        long firstSeen;
+        long lastSeen;
+
+        DisambiguationCandidateStats(String key, String term, String question, String promptId) {
+            this.key = key;
+            this.term = term;
+            this.question = question;
+            this.promptId = promptId;
+        }
+
+        synchronized void record(String source, String sourceId, String context) {
+            long now = System.currentTimeMillis();
+            if (seenCount <= 0) {
+                firstSeen = now;
+            }
+            seenCount += 1;
+            lastSeen = now;
+            if (source != null && !source.isBlank()) {
+                this.source = source.trim();
+            }
+            if (sourceId != null && !sourceId.isBlank()) {
+                this.sourceId = sourceId.trim();
+            }
+            if (context != null && !context.isBlank()) {
+                String compact = context.trim();
+                if (compact.length() > 220) {
+                    compact = compact.substring(0, 220);
+                }
+                this.context = compact;
+            }
+        }
+
+        GetSignalDisambiguationCandidates.Candidate toCandidate() {
+            return new GetSignalDisambiguationCandidates.Candidate(
+                    key,
+                    term,
+                    question,
+                    promptId,
+                    source,
+                    sourceId,
+                    context,
+                    seenCount,
+                    firstSeen,
+                    lastSeen);
+        }
+    }
+
     public CompletableFuture<Boolean> promoteSignalConcept(String rawToken, String canonicalToken) {
         return promoteSignalConceptWithDebug(rawToken, canonicalToken).thenApply(result -> result.changed);
+    }
+
+    public CompletableFuture<SignalConceptPromotionResult> createSignalConceptWithDebug(String rawToken) {
+        String normalizedRaw = SignalNormalizer.normalizeOne(rawToken);
+        if (normalizedRaw == null || normalizedRaw.isBlank()) {
+            return CompletableFuture.completedFuture(
+                    new SignalConceptPromotionResult(false, normalizedRaw, normalizedRaw, 0, 0, 0, List.of()));
+        }
+        return promoteSignalConceptWithDebug(normalizedRaw, normalizedRaw);
+    }
+
+    public CompletableFuture<Boolean> createSignalConcept(String rawToken) {
+        return createSignalConceptWithDebug(rawToken).thenApply(result -> result.changed);
+    }
+
+    public CompletableFuture<SignalConceptPromotionResult> mapSignalConceptToExistingCanonicalWithDebug(
+            String rawToken,
+            String canonicalToken) {
+        String normalizedCanonical = SignalNormalizer.normalizeOne(canonicalToken);
+        if (normalizedCanonical == null || normalizedCanonical.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("canonicalToken required."));
+        }
+        if (!SignalConceptRegistry.isCanonicalConcept(normalizedCanonical)) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("canonicalToken must map to an existing canonical concept."));
+        }
+        return promoteSignalConceptWithDebug(rawToken, normalizedCanonical);
+    }
+
+    public CompletableFuture<Boolean> mapSignalConceptToExistingCanonical(String rawToken, String canonicalToken) {
+        return mapSignalConceptToExistingCanonicalWithDebug(rawToken, canonicalToken)
+                .thenApply(result -> result.changed);
+    }
+
+    public CompletableFuture<Map<String, Object>> actOnSignalConceptCandidate(
+            String rawToken,
+            String canonicalToken,
+            SignalConceptCandidateAction action) {
+        if (action == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("action required."));
+        }
+        if (action == SignalConceptCandidateAction.REJECT) {
+            return rejectSignalConceptCandidate(rawToken).thenApply(changed -> {
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("action", SignalConceptCandidateAction.REJECT.name().toLowerCase(Locale.ROOT));
+                out.put("changed", changed);
+                out.put("rawToken", SignalNormalizer.normalizeOne(rawToken));
+                out.put("canonicalToken", null);
+                out.put("migratedStoredAccounts", 0);
+                out.put("replayedObservedAccounts", 0);
+                out.put("replayedContextualOwners", 0);
+                out.put("observedAccountIds", List.of());
+                return out;
+            });
+        }
+        CompletableFuture<SignalConceptPromotionResult> changeFuture = action == SignalConceptCandidateAction.CREATE
+                ? createSignalConceptWithDebug(rawToken)
+                : mapSignalConceptToExistingCanonicalWithDebug(rawToken, canonicalToken);
+        return changeFuture.thenApply(result -> {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("action", action.name().toLowerCase(Locale.ROOT));
+            out.put("changed", result == null ? Boolean.FALSE : result.changed);
+            out.put("rawToken", result == null ? null : result.rawToken);
+            out.put("canonicalToken", result == null ? null : result.canonicalToken);
+            out.put("migratedStoredAccounts", result == null ? 0 : result.migratedStoredAccounts);
+            out.put("replayedObservedAccounts", result == null ? 0 : result.replayedObservedAccounts);
+            out.put("replayedContextualOwners", result == null ? 0 : result.replayedContextualOwners);
+            out.put("observedAccountIds", result == null ? List.of() : result.observedAccountIds);
+            return out;
+        });
     }
 
     public CompletableFuture<SignalConceptPromotionResult> promoteSignalConceptWithDebug(String rawToken,
@@ -538,6 +684,27 @@ public class CalypsoApiManager {
     public CompletableFuture<Boolean> rejectSignalConceptCandidate(String rawToken) {
         boolean changed = SignalConceptRegistry.rejectCandidate(rawToken);
         return CompletableFuture.completedFuture(changed);
+    }
+
+    public CompletableFuture<GetSignalDisambiguationCandidates> getSignalDisambiguationCandidates(long accountId,
+            int limit) {
+        int bounded = Math.max(1, Math.min(500, limit <= 0 ? 100 : limit));
+        ConcurrentHashMap<String, DisambiguationCandidateStats> byKey = signalDisambiguationByAccount.get(accountId);
+        if (byKey == null || byKey.isEmpty()) {
+            return CompletableFuture.completedFuture(new GetSignalDisambiguationCandidates(List.of()));
+        }
+        ArrayList<GetSignalDisambiguationCandidates.Candidate> out = new ArrayList<>();
+        for (DisambiguationCandidateStats stats : byKey.values()) {
+            if (stats == null || stats.seenCount <= 0 || stats.key == null || stats.key.isBlank()) {
+                continue;
+            }
+            out.add(stats.toCandidate());
+        }
+        out.sort((a, b) -> Long.compare(b.lastSeen, a.lastSeen));
+        if (out.size() > bounded) {
+            out = new ArrayList<>(out.subList(0, bounded));
+        }
+        return CompletableFuture.completedFuture(new GetSignalDisambiguationCandidates(out));
     }
 
     private CompletableFuture<Integer> applyPromotedConceptToObservedRequesters(String normalizedRaw,
@@ -3146,12 +3313,27 @@ public class CalypsoApiManager {
                                 } else {
                                     storedRawToken = expandedToken;
                                 }
-                                record.setRawToken(storedRawToken);
-                                record.setSource(normalizedSource);
-                                if (normalizedSourceId != null)
-                                    record.setSourceId(normalizedSourceId);
+                                boolean derivedExpansion = !expandedToken.equals(canonicalToken);
+                                String effectiveSource = derivedExpansion ? SIGNAL_HIERARCHY_DERIVED_SOURCE
+                                        : normalizedSource;
+                                String effectiveSourceId = derivedExpansion ? null : normalizedSourceId;
+                                boolean preserveExistingCoreAttribution = derivedExpansion
+                                        && priorCount > 0
+                                        && record.isSetSource()
+                                        && !SIGNAL_HIERARCHY_DERIVED_SOURCE.equals(record.getSource());
+                                if (!preserveExistingCoreAttribution || !record.isSetRawToken()) {
+                                    record.setRawToken(storedRawToken);
+                                }
+                                if (!preserveExistingCoreAttribution || !record.isSetSource()) {
+                                    record.setSource(effectiveSource);
+                                }
+                                if (effectiveSourceId != null
+                                        && (!preserveExistingCoreAttribution || !record.isSetSourceId())) {
+                                    record.setSourceId(effectiveSourceId);
+                                }
                                 record.setLastSeen(now);
-                                if (context != null) {
+                                if (context != null
+                                        && (!preserveExistingCoreAttribution || !record.isSetLastContext())) {
                                     if (expandedToken.equals(rawToken) && !expandedToken.equals(canonicalToken)) {
                                         record.setLastContext("canonical=" + canonicalToken + " | " + context);
                                     } else if (expandedToken.equals(canonicalToken)) {
@@ -3222,6 +3404,71 @@ public class CalypsoApiManager {
                         Set.of()));
     }
 
+    private void observePromptDisambiguationCandidates(
+            long accountId,
+            String promptId,
+            String question,
+            String answer,
+            List<String> conversationLines,
+            List<ExtractedSignal> extractedSignals,
+            String source,
+            String sourceId,
+            String contextMaybe) {
+        if (accountId < 0L) {
+            return;
+        }
+        List<SignalDisambiguationPlanner.FollowupCandidate> candidates = SignalDisambiguationPlanner.detectPromptAmbiguities(
+                promptId,
+                question,
+                answer,
+                conversationLines,
+                extractedSignals);
+        if (candidates == null || candidates.isEmpty()) {
+            return;
+        }
+        String normalizedSource = normalizeSource(source);
+        String normalizedSourceId = normalizeSourceId(sourceId);
+        String context = clampContext(contextMaybe);
+        ConcurrentHashMap<String, DisambiguationCandidateStats> byKey = signalDisambiguationByAccount.computeIfAbsent(
+                accountId,
+                k -> new ConcurrentHashMap<>());
+        for (SignalDisambiguationPlanner.FollowupCandidate candidate : candidates) {
+            if (candidate == null || candidate.key == null || candidate.key.isBlank()
+                    || candidate.term == null || candidate.term.isBlank()
+                    || candidate.question == null || candidate.question.isBlank()) {
+                continue;
+            }
+            String normalizedKey = SignalNormalizer.normalizeOne(candidate.key);
+            if (normalizedKey == null || normalizedKey.isBlank()) {
+                continue;
+            }
+            String normalizedTerm = SignalNormalizer.normalizeOne(candidate.term);
+            if (normalizedTerm == null || normalizedTerm.isBlank()) {
+                continue;
+            }
+            DisambiguationCandidateStats stats = byKey.computeIfAbsent(
+                    normalizedKey,
+                    k -> new DisambiguationCandidateStats(
+                            normalizedKey,
+                            normalizedTerm,
+                            candidate.question.trim(),
+                            asTrimmedString(candidate.promptId)));
+            stats.record(normalizedSource, normalizedSourceId, context);
+        }
+        if (byKey.size() > DISAMBIGUATION_MAX_PER_ACCOUNT) {
+            ArrayList<DisambiguationCandidateStats> all = new ArrayList<>(byKey.values());
+            all.sort(Comparator.comparingLong(stats -> stats == null ? Long.MAX_VALUE : stats.firstSeen));
+            int toRemove = byKey.size() - DISAMBIGUATION_MAX_PER_ACCOUNT;
+            for (int i = 0; i < toRemove && i < all.size(); i++) {
+                DisambiguationCandidateStats oldest = all.get(i);
+                if (oldest == null || oldest.key == null || oldest.key.isBlank()) {
+                    continue;
+                }
+                byKey.remove(oldest.key, oldest);
+            }
+        }
+    }
+
     /**
      * Convenience: extract from text, append, and return the tokens that were
      * attempted.
@@ -3270,6 +3517,16 @@ public class CalypsoApiManager {
         }
         final String finalContext = context;
         return extractSignalsFromPrompt(promptId, question, answer, normalizedConversation).thenCompose(signals -> {
+            observePromptDisambiguationCandidates(
+                    accountId,
+                    promptId,
+                    question,
+                    answer,
+                    normalizedConversation,
+                    signals,
+                    source,
+                    sourceId,
+                    finalContext);
             if (signals.isEmpty())
                 return CompletableFuture.completedFuture(List.of());
             List<String> tokens = tokens(signals);

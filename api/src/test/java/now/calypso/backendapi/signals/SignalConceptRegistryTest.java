@@ -118,4 +118,12 @@ class SignalConceptRegistryTest {
         assertEquals(1, seeking.seenCount);
         assertEquals(-0.70, seeking.averageValence, 1.0e-6);
     }
+
+    @Test
+    void isCanonicalConcept_returnsTrueForCanonicalAndFalseForAliasOrUnknown() {
+        assertTrue(SignalConceptRegistry.isCanonicalConcept("travel"));
+        assertTrue(SignalConceptRegistry.isCanonicalConcept("anime"));
+        assertFalse(SignalConceptRegistry.isCanonicalConcept("anime_fan"));
+        assertFalse(SignalConceptRegistry.isCanonicalConcept("unknown_canonical_v3"));
+    }
 }

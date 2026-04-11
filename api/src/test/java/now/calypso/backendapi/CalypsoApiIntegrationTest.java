@@ -1489,6 +1489,103 @@ class CalypsoApiIntegrationTest {
     }
 
     @Test
+    void promoteSignalConcept_preservesExistingDerivedSourceMetadataDuringBackfill() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 95431L;
+            String rawAlias = "amsterdam_city_token_preserve_meta";
+            String canonical = "club";
+
+            assertTrue(
+                    mgr.postSignals(
+                            accountId,
+                            List.of("socializing"),
+                            "public_prompt_reaction",
+                            "seed-socializing-source",
+                            "seed")
+                            .get(5, TimeUnit.SECONDS));
+            Signals seeded = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord seededSocializing = findRecord(seeded, "socializing", SignalIntent.SELF);
+            assertNotNull(seededSocializing);
+            assertTrue(seededSocializing.isSetSource());
+            assertEquals("public_prompt_reaction", seededSocializing.getSource());
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"amsterdam_city_token_preserve_meta","intent":"self","valence":0.82}]}
+                    """);
+            try {
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "prompt.ideal.night.out",
+                        "Ideal night out?",
+                        "clubbing in amsterdam",
+                        "public_prompt",
+                        "public#95431").get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            assertTrue(mgr.promoteSignalConcept(rawAlias, canonical).get(10, TimeUnit.SECONDS));
+
+            waitFor(() -> {
+                Signals afterWait = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+                SignalRecord club = findRecord(afterWait, canonical, SignalIntent.SELF);
+                return club != null
+                        && club.isSetSource()
+                        && "signal_concept_promotion".equals(club.getSource());
+            }, 5000, "Promoted canonical token should carry promotion source.");
+
+            Signals after = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord nightlife = findRecord(after, "nightlife", SignalIntent.SELF);
+            assertNotNull(nightlife);
+            assertTrue(nightlife.isSetSource());
+            assertEquals("signal_hierarchy_derived", nightlife.getSource(),
+                    "New derived hierarchy records from promotion should use derived source labeling.");
+            SignalRecord socializing = findRecord(after, "socializing", SignalIntent.SELF);
+            assertNotNull(socializing);
+            assertTrue(socializing.isSetSource());
+            assertEquals("public_prompt_reaction", socializing.getSource(),
+                    "Existing derived signal metadata should not be overwritten by promotion replay.");
+        }
+    }
+
+    @Test
+    void hierarchyDerivedSignals_useDerivedSourceAcrossNormalWrites() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 95432L;
+
+            assertTrue(
+                    mgr.postSignals(
+                            accountId,
+                            List.of("club"),
+                            "public_prompt_reaction",
+                            "seed-club-source",
+                            "seed")
+                            .get(5, TimeUnit.SECONDS));
+
+            Signals after = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord club = findRecord(after, "club", SignalIntent.SELF);
+            assertNotNull(club);
+            assertTrue(club.isSetSource());
+            assertEquals("public_prompt_reaction", club.getSource(),
+                    "Canonical signal should keep original event source.");
+
+            SignalRecord nightlife = findRecord(after, "nightlife", SignalIntent.SELF);
+            assertNotNull(nightlife);
+            assertTrue(nightlife.isSetSource());
+            assertEquals("signal_hierarchy_derived", nightlife.getSource(),
+                    "Hierarchy-expanded non-canonical signals should use derived source.");
+
+            SignalRecord socializing = findRecord(after, "socializing", SignalIntent.SELF);
+            assertNotNull(socializing);
+            assertTrue(socializing.isSetSource());
+            assertEquals("signal_hierarchy_derived", socializing.getSource(),
+                    "Second-level hierarchy-expanded signals should use derived source.");
+        }
+    }
+
+    @Test
     void promoteSignalConcept_backfillsSeededAnswerOwnerAndReactorFromTokenOnlyAnswer() throws Exception {
         try (InProcessCluster ipc = newCluster()) {
             CalypsoApiManager mgr = newManager(ipc);

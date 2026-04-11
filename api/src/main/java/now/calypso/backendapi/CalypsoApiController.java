@@ -600,6 +600,19 @@ public class CalypsoApiController {
         return Mono.fromFuture(manager.getSignalConceptCandidates(limit));
     }
 
+    @GetMapping("/api/accounts/{id}/admin/signal-disambiguation/candidates")
+    public Mono<GetSignalDisambiguationCandidates> getSignalDisambiguationCandidates(
+            @PathVariable("id") String idStr,
+            @RequestParam(value = "limit", required = false, defaultValue = "100") int limit,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getSignalDisambiguationCandidates(accountId, limit));
+    }
+
     @PostMapping("/api/accounts/{id}/admin/signal-concepts/promote")
     public Mono<Map<String, Object>> postPromoteSignalConceptCandidate(
             @PathVariable("id") String idStr,
@@ -641,6 +654,28 @@ public class CalypsoApiController {
         String rawToken = payload == null ? null : payload.rawToken;
         return Mono.fromFuture(manager.rejectSignalConceptCandidate(rawToken))
                 .map(changed -> Collections.<String, Object>singletonMap("changed", changed))
+                .onErrorMap(IllegalArgumentException.class,
+                        ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
+    }
+
+    @PostMapping("/api/accounts/{id}/admin/signal-concepts/action")
+    public Mono<Map<String, Object>> postSignalConceptCandidateAction(
+            @PathVariable("id") String idStr,
+            @RequestBody(required = false) PostSignalConceptActionRequest payload,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        String rawToken = payload == null ? null : payload.rawToken;
+        String canonicalToken = payload == null ? null : payload.canonicalToken;
+        CalypsoApiManager.SignalConceptCandidateAction action = CalypsoApiManager.SignalConceptCandidateAction
+                .parse(payload == null ? null : payload.action);
+        if (action == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "action required (create|map|reject)");
+        }
+        return Mono.fromFuture(manager.actOnSignalConceptCandidate(rawToken, canonicalToken, action))
                 .onErrorMap(IllegalArgumentException.class,
                         ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
     }
