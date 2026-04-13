@@ -223,24 +223,56 @@ public final class PrivatePromptTurnResponder {
         if (message.length() > 320) {
             message = message.substring(0, 320).trim();
         }
-        boolean needsMore = raw.needsMoreDetail || looksLikeFollowUpQuestion(message);
+        boolean needsMore = raw.needsMoreDetail || looksLikeClarifierRequest(message);
+        if (needsMore
+                && isGenericWhyQuestion(message)
+                && isSubstantiveAnswer(input == null ? null : input.userMessage)) {
+            needsMore = false;
+        }
         return new TurnResult(message, needsMore);
     }
 
-    private static boolean looksLikeFollowUpQuestion(String message) {
+    private static boolean looksLikeClarifierRequest(String message) {
         if (message == null || message.isBlank())
             return false;
         String text = message.toLowerCase(Locale.ROOT);
-        if (text.contains("?"))
-            return true;
         return containsAny(text,
+                "do you mean",
                 "can you",
                 "what kind",
                 "which kind",
                 "tell me more",
                 "anything specific",
+                "share a little more",
+                "can you clarify",
+                "could you clarify",
                 "board games",
                 "video games");
+    }
+
+    private static boolean isGenericWhyQuestion(String message) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        String text = message.trim().toLowerCase(Locale.ROOT);
+        if ("why?".equals(text) || "why".equals(text)) {
+            return true;
+        }
+        if (text.endsWith(" why?") || text.endsWith("why?")) {
+            return text.length() <= 96;
+        }
+        return false;
+    }
+
+    private static boolean isSubstantiveAnswer(String text) {
+        if (text == null) {
+            return false;
+        }
+        String trimmed = text.trim();
+        if (trimmed.length() < 18) {
+            return false;
+        }
+        return wordCount(trimmed) >= 4;
     }
 
     private static TurnResult fallback(String userMessage) {
@@ -260,12 +292,20 @@ public final class PrivatePromptTurnResponder {
             return true;
         if (trimmed.length() < 12)
             return true;
-        int words = 0;
-        for (String token : trimmed.split("\\s+")) {
-            if (!token.isBlank())
-                words++;
+        return wordCount(trimmed) < 3;
+    }
+
+    private static int wordCount(String text) {
+        if (text == null || text.isBlank()) {
+            return 0;
         }
-        return words < 3;
+        int words = 0;
+        for (String token : text.split("\\s+")) {
+            if (!token.isBlank()) {
+                words += 1;
+            }
+        }
+        return words;
     }
 
     private static String safe(String value) {

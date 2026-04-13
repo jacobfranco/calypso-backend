@@ -600,6 +600,19 @@ public class CalypsoApiController {
         return Mono.fromFuture(manager.getSignalConceptCandidates(limit));
     }
 
+    @GetMapping("/api/accounts/{id}/admin/signal-concepts/blocked")
+    public Mono<GetSignalConceptCandidates> getBlockedSignalConceptCandidates(
+            @PathVariable("id") String idStr,
+            @RequestParam(value = "limit", required = false, defaultValue = "100") int limit,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getBlockedSignalConceptCandidates(limit));
+    }
+
     @GetMapping("/api/accounts/{id}/admin/signal-disambiguation/candidates")
     public Mono<GetSignalDisambiguationCandidates> getSignalDisambiguationCandidates(
             @PathVariable("id") String idStr,
@@ -673,7 +686,7 @@ public class CalypsoApiController {
         CalypsoApiManager.SignalConceptCandidateAction action = CalypsoApiManager.SignalConceptCandidateAction
                 .parse(payload == null ? null : payload.action);
         if (action == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "action required (create|map|reject)");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "action required (create|map|reject|block|unblock)");
         }
         return Mono.fromFuture(manager.actOnSignalConceptCandidate(rawToken, canonicalToken, action))
                 .onErrorMap(IllegalArgumentException.class,

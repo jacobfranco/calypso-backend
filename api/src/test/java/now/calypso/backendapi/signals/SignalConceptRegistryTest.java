@@ -120,6 +120,48 @@ class SignalConceptRegistryTest {
     }
 
     @Test
+    void blockAndUnblockCandidate_suppressesAndRestoresQueueEntry() {
+        String raw = "blocked_candidate_v3_token";
+        SignalConceptRegistry.observeUnresolved(raw, "test", "ctx-a");
+        SignalConceptRegistry.observeUnresolved(raw, "test", "ctx-b");
+
+        SignalConceptRegistry.CandidateEntry before = SignalConceptRegistry.candidateSnapshot(500).stream()
+                .filter(entry -> entry != null && raw.equals(entry.rawToken))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(2, before.seenCount);
+
+        assertTrue(SignalConceptRegistry.blockCandidate(raw));
+        assertFalse(SignalConceptRegistry.candidateSnapshot(500).stream()
+                .anyMatch(entry -> entry != null && raw.equals(entry.rawToken)));
+
+        SignalConceptRegistry.BlockedCandidateEntry blocked = SignalConceptRegistry.blockedSnapshot(500).stream()
+                .filter(entry -> entry != null && raw.equals(entry.rawToken))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(2, blocked.seenCount);
+        assertTrue(blocked.blockedAt > 0L);
+
+        SignalConceptRegistry.observeUnresolved(raw, "test", "ctx-c");
+        SignalConceptRegistry.BlockedCandidateEntry blockedAfterObserve = SignalConceptRegistry.blockedSnapshot(500)
+                .stream()
+                .filter(entry -> entry != null && raw.equals(entry.rawToken))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(2, blockedAfterObserve.seenCount, "Blocked candidates should ignore fresh observations.");
+
+        assertTrue(SignalConceptRegistry.unblockCandidate(raw));
+        assertFalse(SignalConceptRegistry.blockedSnapshot(500).stream()
+                .anyMatch(entry -> entry != null && raw.equals(entry.rawToken)));
+
+        SignalConceptRegistry.CandidateEntry restored = SignalConceptRegistry.candidateSnapshot(500).stream()
+                .filter(entry -> entry != null && raw.equals(entry.rawToken))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(2, restored.seenCount, "Unblocking should restore previous candidate evidence.");
+    }
+
+    @Test
     void isCanonicalConcept_returnsTrueForCanonicalAndFalseForAliasOrUnknown() {
         assertTrue(SignalConceptRegistry.isCanonicalConcept("travel"));
         assertTrue(SignalConceptRegistry.isCanonicalConcept("anime"));

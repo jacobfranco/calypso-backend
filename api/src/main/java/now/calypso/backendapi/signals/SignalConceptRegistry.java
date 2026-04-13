@@ -82,6 +82,35 @@ public final class SignalConceptRegistry {
         }
     }
 
+    public static final class BlockedCandidateEntry {
+        public final String rawToken;
+        public final long blockedAt;
+        public final int seenCount;
+        public final long firstSeen;
+        public final long lastSeen;
+        public final String lastSource;
+        public final List<String> exampleContexts;
+        public final List<CandidateAccountIntentObservation> observedAccountIntents;
+        public final String suggestedCanonical;
+        public final Double suggestionScore;
+
+        public BlockedCandidateEntry(String rawToken, long blockedAt, int seenCount, long firstSeen, long lastSeen,
+                String lastSource, List<String> exampleContexts,
+                List<CandidateAccountIntentObservation> observedAccountIntents, String suggestedCanonical,
+                Double suggestionScore) {
+            this.rawToken = rawToken;
+            this.blockedAt = blockedAt;
+            this.seenCount = seenCount;
+            this.firstSeen = firstSeen;
+            this.lastSeen = lastSeen;
+            this.lastSource = lastSource;
+            this.exampleContexts = exampleContexts == null ? List.of() : List.copyOf(exampleContexts);
+            this.observedAccountIntents = observedAccountIntents == null ? List.of() : List.copyOf(observedAccountIntents);
+            this.suggestedCanonical = suggestedCanonical;
+            this.suggestionScore = suggestionScore;
+        }
+    }
+
     public static final class CandidateAccountIntentObservation {
         public final long accountId;
         public final SignalIntent intent;
@@ -247,12 +276,40 @@ public final class SignalConceptRegistry {
         }
     }
 
+    private static final class BlockedCandidateStats {
+        final String rawToken;
+        final long blockedAt;
+        final CandidateStats stats;
+
+        BlockedCandidateStats(String rawToken, long blockedAt, CandidateStats stats) {
+            this.rawToken = rawToken;
+            this.blockedAt = blockedAt;
+            this.stats = stats == null ? new CandidateStats(rawToken) : stats;
+        }
+
+        BlockedCandidateEntry snapshot() {
+            CandidateEntry candidate = stats.snapshot();
+            return new BlockedCandidateEntry(
+                    rawToken,
+                    blockedAt,
+                    candidate.seenCount,
+                    candidate.firstSeen,
+                    candidate.lastSeen,
+                    candidate.lastSource,
+                    candidate.exampleContexts,
+                    candidate.observedAccountIntents,
+                    candidate.suggestedCanonical,
+                    candidate.suggestionScore);
+        }
+    }
+
     private static final Map<String, ConceptSeed> BASE_CONCEPTS;
     private static final Map<String, String> BASE_ALIAS_TO_CANONICAL;
 
     private static final Set<String> DYNAMIC_CANONICAL_CONCEPTS = ConcurrentHashMap.newKeySet();
     private static final ConcurrentHashMap<String, String> DYNAMIC_ALIAS_TO_CANONICAL = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, CandidateStats> CANDIDATE_BY_RAW = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, BlockedCandidateStats> BLOCKED_CANDIDATE_BY_RAW = new ConcurrentHashMap<>();
     private static final AtomicLong REGISTRY_VERSION = new AtomicLong(1L);
     private static final AtomicLong LAST_AUTO_PROMOTION_SWEEP_MS = new AtomicLong(0L);
 
@@ -446,6 +503,9 @@ public final class SignalConceptRegistry {
         if (resolution == null || resolution.kind != ResolutionKind.UNKNOWN) {
             return;
         }
+        if (BLOCKED_CANDIDATE_BY_RAW.containsKey(resolution.rawToken())) {
+            return;
+        }
         CandidateStats stats = CANDIDATE_BY_RAW.computeIfAbsent(resolution.rawToken(), CandidateStats::new);
         stats.record(source, contextMaybe, accountId, intent, valenceMaybe);
     }
@@ -461,6 +521,7 @@ public final class SignalConceptRegistry {
         }
         DYNAMIC_ALIAS_TO_CANONICAL.put(raw, canonical);
         CANDIDATE_BY_RAW.remove(raw);
+        BLOCKED_CANDIDATE_BY_RAW.remove(raw);
         REGISTRY_VERSION.incrementAndGet();
         return true;
     }
@@ -479,10 +540,50 @@ public final class SignalConceptRegistry {
             return false;
         }
         boolean removed = CANDIDATE_BY_RAW.remove(raw) != null;
-        if (removed) {
+        boolean removedBlocked = BLOCKED_CANDIDATE_BY_RAW.remove(raw) != null;
+        if (removed || removedBlocked) {
             REGISTRY_VERSION.incrementAndGet();
         }
-        return removed;
+        return removed || removedBlocked;
+    }
+
+    public static boolean blockCandidate(String rawToken) {
+        String raw = SignalNormalizer.normalizeOne(rawToken);
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+        Resolution resolution = resolve(raw);
+        if (resolution == null || resolution.kind != ResolutionKind.UNKNOWN) {
+            return false;
+        }
+        if (BLOCKED_CANDIDATE_BY_RAW.containsKey(raw)) {
+            return false;
+        }
+        CandidateStats existing = CANDIDATE_BY_RAW.remove(raw);
+        BLOCKED_CANDIDATE_BY_RAW.put(raw, new BlockedCandidateStats(raw, System.currentTimeMillis(), existing));
+        REGISTRY_VERSION.incrementAndGet();
+        return true;
+    }
+
+    public static boolean unblockCandidate(String rawToken) {
+        String raw = SignalNormalizer.normalizeOne(rawToken);
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+        BlockedCandidateStats blocked = BLOCKED_CANDIDATE_BY_RAW.remove(raw);
+        if (blocked == null) {
+            return false;
+        }
+        Resolution resolution = resolve(raw);
+        if (resolution != null && resolution.kind == ResolutionKind.UNKNOWN) {
+            CandidateStats stats = blocked.stats == null ? new CandidateStats(raw) : blocked.stats;
+            CandidateStats existing = CANDIDATE_BY_RAW.get(raw);
+            if (existing == null && stats.seenCount > 0) {
+                CANDIDATE_BY_RAW.put(raw, stats);
+            }
+        }
+        REGISTRY_VERSION.incrementAndGet();
+        return true;
     }
 
     public static List<CandidateAccountIntentObservation> candidateAccountIntentObservations(String rawToken) {
@@ -601,6 +702,36 @@ public final class SignalConceptRegistry {
             entries.add(stats.snapshot());
         }
         entries.sort((a, b) -> {
+            int byCount = Integer.compare(b.seenCount, a.seenCount);
+            if (byCount != 0) {
+                return byCount;
+            }
+            int byLastSeen = Long.compare(b.lastSeen, a.lastSeen);
+            if (byLastSeen != 0) {
+                return byLastSeen;
+            }
+            return a.rawToken.compareTo(b.rawToken);
+        });
+        if (entries.size() <= bounded) {
+            return entries;
+        }
+        return new ArrayList<>(entries.subList(0, bounded));
+    }
+
+    public static List<BlockedCandidateEntry> blockedSnapshot(int limit) {
+        int bounded = Math.max(1, Math.min(500, limit));
+        ArrayList<BlockedCandidateEntry> entries = new ArrayList<>();
+        for (BlockedCandidateStats blocked : BLOCKED_CANDIDATE_BY_RAW.values()) {
+            if (blocked == null) {
+                continue;
+            }
+            entries.add(blocked.snapshot());
+        }
+        entries.sort((a, b) -> {
+            int byBlockedAt = Long.compare(b.blockedAt, a.blockedAt);
+            if (byBlockedAt != 0) {
+                return byBlockedAt;
+            }
             int byCount = Integer.compare(b.seenCount, a.seenCount);
             if (byCount != 0) {
                 return byCount;

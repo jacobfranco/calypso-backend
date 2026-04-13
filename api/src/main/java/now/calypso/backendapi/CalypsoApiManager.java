@@ -426,6 +426,13 @@ public class CalypsoApiManager {
                 SignalConceptRegistry.candidateSnapshot(bounded)));
     }
 
+    public CompletableFuture<GetSignalConceptCandidates> getBlockedSignalConceptCandidates(int limit) {
+        int bounded = Math.max(1, Math.min(500, limit));
+        return CompletableFuture.completedFuture(GetSignalConceptCandidates.fromBlockedEntries(
+                SignalConceptRegistry.version(),
+                SignalConceptRegistry.blockedSnapshot(bounded)));
+    }
+
     private static final class ConceptMigrationSummary {
         int migratedAccounts = 0;
         final LinkedHashSet<Long> accountsWithStoredRawAlias = new LinkedHashSet<>();
@@ -475,7 +482,9 @@ public class CalypsoApiManager {
     public enum SignalConceptCandidateAction {
         CREATE,
         MAP,
-        REJECT;
+        REJECT,
+        BLOCK,
+        UNBLOCK;
 
         static SignalConceptCandidateAction parse(String raw) {
             if (raw == null || raw.isBlank()) {
@@ -588,10 +597,17 @@ public class CalypsoApiManager {
         if (action == null) {
             return CompletableFuture.failedFuture(new IllegalArgumentException("action required."));
         }
-        if (action == SignalConceptCandidateAction.REJECT) {
-            return rejectSignalConceptCandidate(rawToken).thenApply(changed -> {
+        if (action == SignalConceptCandidateAction.REJECT
+                || action == SignalConceptCandidateAction.BLOCK
+                || action == SignalConceptCandidateAction.UNBLOCK) {
+            CompletableFuture<Boolean> changeFuture = action == SignalConceptCandidateAction.REJECT
+                    ? rejectSignalConceptCandidate(rawToken)
+                    : action == SignalConceptCandidateAction.BLOCK
+                            ? blockSignalConceptCandidate(rawToken)
+                            : unblockSignalConceptCandidate(rawToken);
+            return changeFuture.thenApply(changed -> {
                 Map<String, Object> out = new LinkedHashMap<>();
-                out.put("action", SignalConceptCandidateAction.REJECT.name().toLowerCase(Locale.ROOT));
+                out.put("action", action.name().toLowerCase(Locale.ROOT));
                 out.put("changed", changed);
                 out.put("rawToken", SignalNormalizer.normalizeOne(rawToken));
                 out.put("canonicalToken", null);
@@ -683,6 +699,16 @@ public class CalypsoApiManager {
 
     public CompletableFuture<Boolean> rejectSignalConceptCandidate(String rawToken) {
         boolean changed = SignalConceptRegistry.rejectCandidate(rawToken);
+        return CompletableFuture.completedFuture(changed);
+    }
+
+    public CompletableFuture<Boolean> blockSignalConceptCandidate(String rawToken) {
+        boolean changed = SignalConceptRegistry.blockCandidate(rawToken);
+        return CompletableFuture.completedFuture(changed);
+    }
+
+    public CompletableFuture<Boolean> unblockSignalConceptCandidate(String rawToken) {
+        boolean changed = SignalConceptRegistry.unblockCandidate(rawToken);
         return CompletableFuture.completedFuture(changed);
     }
 
@@ -2395,6 +2421,34 @@ public class CalypsoApiManager {
         return source.trim();
     }
 
+    private static boolean requiresCanonicalMappingBeforePersist(String normalizedSource, String normalizedSourceId) {
+        if (normalizedSource == null || normalizedSource.isBlank()) {
+            return false;
+        }
+        if (normalizedSource.startsWith("public_prompt")) {
+            return true;
+        }
+        if (normalizedSource.startsWith("matchmaking_followup")) {
+            return true;
+        }
+        if (normalizedSource.startsWith("private_prompt")) {
+            return isUuidLike(normalizedSourceId);
+        }
+        return false;
+    }
+
+    private static boolean isUuidLike(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+        try {
+            UUID.fromString(raw.trim());
+            return true;
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
+    }
+
     private static double clamp01(double value) {
         if (Double.isNaN(value))
             return 0.0;
@@ -3206,7 +3260,7 @@ public class CalypsoApiManager {
                 clampContext(contextMaybe),
                 normalizedSource,
                 normalizedSourceId);
-        final boolean strictCanonicalSource = normalizedSource.startsWith("public_prompt");
+        final boolean strictCanonicalSource = requiresCanonicalMappingBeforePersist(normalizedSource, normalizedSourceId);
         int promoted = SignalConceptRegistry.autoPromoteReadyCandidatesIfDue();
         if (promoted > 0) {
             LOG.info("Auto-promoted {} signal concept candidates", promoted);

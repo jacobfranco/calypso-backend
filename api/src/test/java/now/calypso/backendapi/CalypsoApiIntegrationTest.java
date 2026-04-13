@@ -1550,6 +1550,41 @@ class CalypsoApiIntegrationTest {
     }
 
     @Test
+    void privatePromptExtraction_unknownAliasesQueueBeforePersisting() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 954311L;
+            String rawAlias = "private_unknown_alias_" + UUID.randomUUID().toString().replace("-", "");
+            String normalizedAlias = SignalNormalizer.normalizeOne(rawAlias);
+            assertNotNull(normalizedAlias);
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"%s","intent":"self","valence":0.83}]}
+                    """.formatted(rawAlias));
+            try {
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "private.great.night",
+                        "Describe your ideal night out",
+                        "Dancing until sunrise",
+                        "private_prompt",
+                        UUID.randomUUID().toString()).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals before = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNull(findRecord(before, normalizedAlias, SignalIntent.SELF),
+                    "Private prompt extraction should queue unresolved aliases before persistence.");
+
+            List<SignalConceptRegistry.CandidateEntry> candidateSnapshot = SignalConceptRegistry.candidateSnapshot(200);
+            boolean queued = candidateSnapshot.stream()
+                    .anyMatch(entry -> entry != null && normalizedAlias.equals(entry.rawToken));
+            assertTrue(queued, "Expected unresolved private-prompt alias to be present in drift queue.");
+        }
+    }
+
+    @Test
     void hierarchyDerivedSignals_useDerivedSourceAcrossNormalWrites() throws Exception {
         try (InProcessCluster ipc = newCluster()) {
             CalypsoApiManager mgr = newManager(ipc);

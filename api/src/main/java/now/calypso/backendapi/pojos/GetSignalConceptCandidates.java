@@ -24,7 +24,25 @@ public class GetSignalConceptCandidates {
                 out.add(new Candidate(entry.rawToken, entry.seenCount, entry.firstSeen, entry.lastSeen,
                         entry.lastSource, entry.exampleContexts, toObservedAccounts(entry.observedAccountIntents),
                         entry.suggestedCanonical, entry.suggestionScore,
-                        entry.autoReady));
+                        entry.autoReady, null));
+            }
+        }
+        return new GetSignalConceptCandidates(version, out);
+    }
+
+    public static GetSignalConceptCandidates fromBlockedEntries(
+            long version,
+            List<SignalConceptRegistry.BlockedCandidateEntry> entries) {
+        ArrayList<Candidate> out = new ArrayList<>();
+        if (entries != null) {
+            for (SignalConceptRegistry.BlockedCandidateEntry entry : entries) {
+                if (entry == null || entry.rawToken == null || entry.rawToken.isBlank()) {
+                    continue;
+                }
+                out.add(new Candidate(entry.rawToken, entry.seenCount, entry.firstSeen, entry.lastSeen,
+                        entry.lastSource, entry.exampleContexts, toObservedAccounts(entry.observedAccountIntents),
+                        entry.suggestedCanonical, entry.suggestionScore,
+                        false, entry.blockedAt));
             }
         }
         return new GetSignalConceptCandidates(version, out);
@@ -68,6 +86,7 @@ public class GetSignalConceptCandidates {
         public final String suggestedCanonical;
         public final Double suggestionScore;
         public final boolean autoReady;
+        public final Long blockedAt;
 
         @JsonCreator
         public Candidate(
@@ -80,7 +99,8 @@ public class GetSignalConceptCandidates {
                 @JsonProperty("observedAccounts") List<ObservedAccount> observedAccounts,
                 @JsonProperty("suggestedCanonical") String suggestedCanonical,
                 @JsonProperty("suggestionScore") Double suggestionScore,
-                @JsonProperty("autoReady") boolean autoReady) {
+                @JsonProperty("autoReady") boolean autoReady,
+                @JsonProperty("blockedAt") Long blockedAt) {
             this.rawToken = rawToken;
             this.seenCount = seenCount;
             this.firstSeen = firstSeen;
@@ -93,6 +113,7 @@ public class GetSignalConceptCandidates {
             this.suggestedCanonical = suggestedCanonical;
             this.suggestionScore = suggestionScore;
             this.autoReady = autoReady;
+            this.blockedAt = blockedAt;
         }
     }
 

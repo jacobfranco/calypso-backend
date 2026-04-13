@@ -98,6 +98,9 @@ public class CalypsoApiApplication {
             "non_smoker", "no_drugs", "social_drinker", "cannabis_user", "non_smoker", "regular_drinker"
     };
     private static final String IPC_SEED_SIGNAL_EXTRACTION_ENV = "CALYPSO_IPC_SEED_SIGNAL_EXTRACTION";
+    private static final int IPC_SEED_TIMEOUT_SECONDS = 12;
+    private static final long IPC_SEED_ACCOUNT_LOOKUP_TIMEOUT_MS = 12_000L;
+    private static final int IPC_SEED_POST_RETRIES = 3;
 
     public static void main(String[] args) throws NoSuchAlgorithmException, IOException, NoSuchProviderException {
         if (args.length > 1) {
@@ -190,37 +193,54 @@ public class CalypsoApiApplication {
         }
         try {
             List<Long> accountIds = new ArrayList<>();
+            List<String> failures = new ArrayList<>();
 
             for (int i = 0; i < SEED_NAMES.length; i++) {
                 String name = SEED_NAMES[i];
                 String phone = SEED_PHONES[i];
                 String gender = "woman";
                 String mode = SEED_MODES[i % SEED_MODES.length];
-                long accountId = ensureSeedAccount(manager, name, phone, i);
-                accountIds.add(accountId);
+                try {
+                    long accountId = ensureSeedAccount(manager, name, phone, i);
+                    accountIds.add(accountId);
 
-                PostFilters filters = seedFilters(i, gender, mode);
-                manager.postFilters(filters, accountId).get(8, TimeUnit.SECONDS);
+                    PostFilters filters = seedFilters(i, gender, mode);
+                    manager.postFilters(filters, accountId).get(IPC_SEED_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                    manager.postPublicPromptSelection(accountId, SEED_PROMPT_IDS)
+                            .get(IPC_SEED_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
-                manager.postPublicPromptSelection(accountId, SEED_PROMPT_IDS).get(8, TimeUnit.SECONDS);
-                manager.postPublicPromptAnswer(
-                        accountId,
-                        SEED_PROMPT_IDS.get(0),
-                        SEED_TALK_ANSWERS[i % SEED_TALK_ANSWERS.length])
-                        .get(8, TimeUnit.SECONDS);
-                manager.postPublicPromptAnswer(
-                        accountId,
-                        SEED_PROMPT_IDS.get(1),
-                        SEED_SUNDAY_ANSWERS[i % SEED_SUNDAY_ANSWERS.length])
-                        .get(8, TimeUnit.SECONDS);
-                manager.postPublicPromptAnswer(
-                        accountId,
-                        SEED_PROMPT_IDS.get(2),
-                        SEED_GOAL_ANSWERS[i % SEED_GOAL_ANSWERS.length])
-                        .get(8, TimeUnit.SECONDS);
+                    postSeedPromptAnswer(
+                            manager,
+                            accountId,
+                            SEED_PROMPT_IDS.get(0),
+                            SEED_TALK_ANSWERS[i % SEED_TALK_ANSWERS.length]);
+                    postSeedPromptAnswer(
+                            manager,
+                            accountId,
+                            SEED_PROMPT_IDS.get(1),
+                            SEED_SUNDAY_ANSWERS[i % SEED_SUNDAY_ANSWERS.length]);
+                    postSeedPromptAnswer(
+                            manager,
+                            accountId,
+                            SEED_PROMPT_IDS.get(2),
+                            SEED_GOAL_ANSWERS[i % SEED_GOAL_ANSWERS.length]);
+                } catch (Exception accountSeedError) {
+                    String reason = accountSeedError.getMessage() == null
+                            ? accountSeedError.getClass().getSimpleName()
+                            : accountSeedError.getMessage();
+                    failures.add(phone + ": " + reason);
+                    System.err.println("IPC seed account bootstrap failed for " + phone + ": " + reason);
+                }
             }
 
-            System.out.println("Seeded " + accountIds.size() + " IPC users with filters and prompts.");
+            System.out.println("Seeded " + accountIds.size() + "/" + SEED_NAMES.length
+                    + " IPC users with filters and prompts.");
+            if (!failures.isEmpty()) {
+                System.err.println("IPC seed bootstrap had " + failures.size() + " account-level failure(s):");
+                for (String failure : failures) {
+                    System.err.println(" - " + failure);
+                }
+            }
         } catch (Exception e) {
             System.err.println("IPC seed bootstrap failed: " + e.getMessage());
             e.printStackTrace();
@@ -232,7 +252,7 @@ public class CalypsoApiApplication {
     }
 
     private static long ensureSeedAccount(CalypsoApiManager manager, String name, String phone, int idx) throws Exception {
-        Long existing = manager.getAccountId(phone).get(5, TimeUnit.SECONDS);
+        Long existing = waitForAccountId(manager, phone, IPC_SEED_ACCOUNT_LOOKUP_TIMEOUT_MS);
         if (existing != null && existing.longValue() >= 0L) {
             return existing.longValue();
         }
@@ -243,12 +263,55 @@ public class CalypsoApiApplication {
         account.agreement = true;
         account.verification_token = "ipc-seed-token-" + idx;
         account.birthday = "1998-01-01";
-        manager.postAccount(account).get(8, TimeUnit.SECONDS);
-        Long created = manager.getAccountId(phone).get(5, TimeUnit.SECONDS);
+        manager.postAccount(account).get(IPC_SEED_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        Long created = waitForAccountId(manager, phone, IPC_SEED_ACCOUNT_LOOKUP_TIMEOUT_MS);
         if (created == null || created.longValue() < 0L) {
             throw new IllegalStateException("Unable to create IPC seed account for " + phone);
         }
         return created.longValue();
+    }
+
+    private static Long waitForAccountId(CalypsoApiManager manager, String phone, long timeoutMs) throws Exception {
+        long startedAt = System.currentTimeMillis();
+        long deadline = startedAt + Math.max(500L, timeoutMs);
+        while (System.currentTimeMillis() <= deadline) {
+            Long accountId = manager.getAccountId(phone).get(5, TimeUnit.SECONDS);
+            if (accountId != null && accountId.longValue() >= 0L) {
+                return accountId;
+            }
+            sleepQuietly(150L);
+        }
+        return null;
+    }
+
+    private static void postSeedPromptAnswer(CalypsoApiManager manager, long accountId, String promptId, String body)
+            throws Exception {
+        Exception lastError = null;
+        for (int attempt = 1; attempt <= IPC_SEED_POST_RETRIES; attempt++) {
+            try {
+                manager.postPublicPromptAnswer(accountId, promptId, body).get(IPC_SEED_TIMEOUT_SECONDS,
+                        TimeUnit.SECONDS);
+                return;
+            } catch (Exception e) {
+                lastError = e;
+                if (attempt < IPC_SEED_POST_RETRIES) {
+                    sleepQuietly(250L * attempt);
+                }
+            }
+        }
+        if (lastError != null) {
+            throw lastError;
+        }
+        throw new IllegalStateException("Failed to post seed answer for prompt " + promptId);
+    }
+
+    private static void sleepQuietly(long millis) throws InterruptedException {
+        try {
+            Thread.sleep(Math.max(0L, millis));
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw ie;
+        }
     }
 
     private static PostFilters seedFilters(int idx, String gender, String mode) {
