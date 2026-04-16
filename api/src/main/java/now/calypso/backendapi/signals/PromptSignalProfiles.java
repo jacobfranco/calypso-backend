@@ -99,7 +99,7 @@ public final class PromptSignalProfiles {
 
         // Private prompt profiles.
         add(byId, profile("private.fictional.characters",
-                "Extract attraction patterns and relational archetype preferences from described traits.",
+                "Extract attraction patterns and relational archetype preferences. Keep only context-free durable concepts as signals; preserve explicit franchise/work titles, but avoid character-name-only tags.",
                 7, 1, false));
         add(byId, profile("private.color.presence",
                 "Treat this as vibe and social energy preference context; avoid literal color-only tokens.",
@@ -108,7 +108,7 @@ public final class PromptSignalProfiles {
                 "Split into self hobbies and partner-shared hobby preferences. Explicitly support both intents when warranted.",
                 7, 1, false));
         add(byId, profile("private.popular.dislike",
-                "This is exclusion framing. Convert clear dislikes into seeking constraints with negative valence.",
+                "This is exclusion framing. Convert clear dislikes into seeking constraints with negative valence. Preserve explicit concrete categories (for example reality_tv).",
                 6, 1, false));
         add(byId, profile("private.most.myself",
                 "Extract identity and comfort-state signals with self intent.",
@@ -120,7 +120,7 @@ public final class PromptSignalProfiles {
                 "Hard exclusion framing. Prefer seeking intent with clearly negative valence.",
                 6, 1, false));
         add(byId, profile("private.drawn.to",
-                "Primary output should be seeking preferences for partner traits and lifestyle.",
+                "Primary output should be context-free seeking preferences for partner traits and lifestyle. Avoid character-name-only tags, but preserve explicit franchise/work titles when named (for example red_rising).",
                 7, 1, false));
         add(byId, profile("private.music.feels.like",
                 "Extract identity and taste signals; keep derived umbrella tags weaker than explicit artists/genres.",

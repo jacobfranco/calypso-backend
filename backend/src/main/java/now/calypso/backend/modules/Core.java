@@ -736,6 +736,126 @@ public class Core implements RamaModule {
             return out;
       }
 
+      private static long normalizeMapAccountId(Object raw) {
+            if (raw instanceof Number) {
+                  return ((Number) raw).longValue();
+            }
+            return 0L;
+      }
+
+      private static int normalizeInt(Object raw, int fallback, int min, int max) {
+            int value = fallback;
+            if (raw instanceof Number) {
+                  value = ((Number) raw).intValue();
+            }
+            if (value < min) {
+                  return min;
+            }
+            if (value > max) {
+                  return max;
+            }
+            return value;
+      }
+
+      @SuppressWarnings("unchecked")
+      private static Map<String, Object> toStringObjectMap(Object raw) {
+            if (!(raw instanceof Map)) {
+                  return new HashMap<>();
+            }
+            Map<?, ?> map = (Map<?, ?>) raw;
+            HashMap<String, Object> out = new HashMap<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                  if (entry == null || entry.getKey() == null) {
+                        continue;
+                  }
+                  out.put(entry.getKey().toString(), entry.getValue());
+            }
+            return out;
+      }
+
+      private static String asStringTrimmed(Object raw) {
+            if (raw == null) {
+                  return null;
+            }
+            String value = raw.toString().trim();
+            return value.isEmpty() ? null : value;
+      }
+
+      private static Map<String, Object> defaultSilhouette(long accountId, long now) {
+            HashMap<String, Object> out = new HashMap<>();
+            out.put("accountId", accountId);
+            out.put("version", 1L);
+            out.put("maturity", "empty");
+            out.put("story", "");
+            out.put("facets", new ArrayList<>());
+            out.put("anchors", new ArrayList<>());
+            out.put("metaObservations", new ArrayList<>());
+            out.put("evidence", new ArrayList<>());
+            out.put("history", new ArrayList<>());
+            out.put("updatedAt", now);
+            return out;
+      }
+
+      private static Map<String, Object> normalizeSilhouettePayload(Object rawPayload, Object accountIdRaw) {
+            long accountId = normalizeMapAccountId(accountIdRaw);
+            long now = System.currentTimeMillis();
+            Map<String, Object> payload = toStringObjectMap(rawPayload);
+            if (payload.isEmpty()) {
+                  return defaultSilhouette(accountId, now);
+            }
+            HashMap<String, Object> out = new HashMap<>(defaultSilhouette(accountId, now));
+            out.putAll(payload);
+            out.put("accountId", accountId);
+            out.put("maturity", asStringTrimmed(out.get("maturity")) == null ? "empty" : out.get("maturity"));
+            out.put("story", asStringTrimmed(out.get("story")) == null ? "" : out.get("story"));
+            out.put("updatedAt", asLong(out.get("updatedAt"), now));
+            return out;
+      }
+
+      private static List<Map<String, Object>> sortPendingSilhouetteUpdates(Map<?, ?> byEventId, Object limitObj) {
+            int limit = normalizeInt(limitObj, 50, 1, 200);
+            ArrayList<Map<String, Object>> out = new ArrayList<>();
+            if (byEventId != null) {
+                  for (Object value : byEventId.values()) {
+                        Map<String, Object> event = toStringObjectMap(value);
+                        if (event.isEmpty()) {
+                              continue;
+                        }
+                        String eventId = asStringTrimmed(event.get("eventId"));
+                        if (eventId == null) {
+                              continue;
+                        }
+                        event.put("eventId", eventId);
+                        event.put("createdAt", asLong(event.get("createdAt"), 0L));
+                        out.add(event);
+                  }
+            }
+            out.sort((a, b) -> {
+                  long at = asLong(a.get("createdAt"), 0L);
+                  long bt = asLong(b.get("createdAt"), 0L);
+                  int byTime = Long.compare(at, bt);
+                  if (byTime != 0) {
+                        return byTime;
+                  }
+                  String ae = asStringTrimmed(a.get("eventId"));
+                  String be = asStringTrimmed(b.get("eventId"));
+                  if (ae == null && be == null) {
+                        return 0;
+                  }
+                  if (ae == null) {
+                        return 1;
+                  }
+                  if (be == null) {
+                        return -1;
+                  }
+                  return ae.compareTo(be);
+            });
+            if (out.size() <= limit) {
+                  return out;
+            }
+            return new ArrayList<>(out.subList(0, limit));
+      }
+
       private static void declareAccountsTopology(Topologies topologies) {
             StreamTopology stream = topologies.stream("accounts");
             ModuleUniqueIdPState accountIdGen = new ModuleUniqueIdPState("$$accountIdGen");
@@ -1057,6 +1177,51 @@ public class Core implements RamaModule {
                         .macro(extractFields("*data", "*accountId"))
                         .localTransform("$$accountIdToSignals",
                                     Path.key("*accountId").termVal("*data"));
+      }
+
+      private static void declareSilhouetteTopology(Topologies topologies) {
+            StreamTopology stream = topologies.stream("silhouette");
+
+            stream.pstate("$$accountIdToSilhouette", PState.mapSchema(Long.class, Map.class));
+            stream.pstate("$$accountIdToPendingSilhouetteUpdates", PState.mapSchema(Long.class, Map.class));
+
+            stream.source("*silhouetteDepot")
+                        .out("*data")
+                        .each((Object data) -> toStringObjectMap(data), "*data").out("*payload")
+                        .each((Map<String, Object> payload) -> normalizeMapAccountId(payload.get("accountId")), "*payload")
+                        .out("*accountIdL")
+                        .hashPartition("*accountIdL")
+                        .each((Map<String, Object> payload, Long accountIdL) -> normalizeSilhouettePayload(payload,
+                                    accountIdL), "*payload", "*accountIdL")
+                        .out("*normalized")
+                        .localTransform("$$accountIdToSilhouette",
+                                    Path.key("*accountIdL").termVal("*normalized"));
+
+            stream.source("*silhouetteUpdateEventDepot")
+                        .out("*data")
+                        .each((Object data) -> toStringObjectMap(data), "*data").out("*event")
+                        .each((Map<String, Object> event) -> normalizeMapAccountId(event.get("accountId")), "*event")
+                        .out("*accountIdL")
+                        .each((Map<String, Object> event) -> asStringTrimmed(event.get("eventId")), "*event")
+                        .out("*eventId")
+                        .each((String eventId) -> eventId != null, "*eventId").out("*hasEventId")
+                        .ifTrue("*hasEventId",
+                                    Block.hashPartition("*accountIdL")
+                                                .localTransform("$$accountIdToPendingSilhouetteUpdates",
+                                                            Path.key("*accountIdL", "*eventId").termVal("*event")));
+
+            stream.source("*silhouetteUpdateAckDepot")
+                        .out("*data")
+                        .each((Object data) -> toStringObjectMap(data), "*data").out("*ack")
+                        .each((Map<String, Object> ack) -> normalizeMapAccountId(ack.get("accountId")), "*ack")
+                        .out("*accountIdL")
+                        .each((Map<String, Object> ack) -> asStringTrimmed(ack.get("eventId")), "*ack")
+                        .out("*eventId")
+                        .each((String eventId) -> eventId != null, "*eventId").out("*hasEventId")
+                        .ifTrue("*hasEventId",
+                                    Block.hashPartition("*accountIdL")
+                                                .localTransform("$$accountIdToPendingSilhouetteUpdates",
+                                                            Path.key("*accountIdL", "*eventId").termVoid()));
       }
 
       private static void declareMatchesServeAndCursorTopology(Topologies topologies) {
@@ -1937,6 +2102,26 @@ public class Core implements RamaModule {
                               }
                               return new ArrayList<>(deduped);
                         }, "*grouped").out("*accountIds");
+
+            topologies.query("getSilhouetteFromAccountId", "*requestAccountId", "*accountId").out("*silhouette")
+                        .each((Number n) -> n == null ? 0L : n.longValue(), "*accountId").out("*accountIdL")
+                        .hashPartition("*accountIdL")
+                        .localSelect("$$accountIdToSilhouette", Path.key("*accountIdL")).out("*rawSilhouette")
+                        .each((Object rawSilhouette, Long accountIdL) -> normalizeSilhouettePayload(rawSilhouette,
+                                    accountIdL), "*rawSilhouette", "*accountIdL")
+                        .out("*silhouette")
+                        .originPartition();
+
+            topologies.query("getSilhouettePendingUpdates", "*accountId", "*limit").out("*events")
+                        .each((Number n) -> n == null ? 0L : n.longValue(), "*accountId").out("*accountIdL")
+                        .hashPartition("*accountIdL")
+                        .localSelect("$$accountIdToPendingSilhouetteUpdates", Path.key("*accountIdL"))
+                        .out("*pendingRaw")
+                        .each((Map<?, ?> pendingRaw, Object limitObj) -> sortPendingSilhouetteUpdates(
+                                    pendingRaw == null ? new HashMap<>() : pendingRaw,
+                                    limitObj), "*pendingRaw", "*limit")
+                        .out("*events")
+                        .originPartition();
       }
 
       @Override
@@ -1952,6 +2137,9 @@ public class Core implements RamaModule {
             setup.declareDepot("*matchmakingFollowupAssignmentDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
             setup.declareDepot("*matchmakingFollowupAnswerDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
             setup.declareDepot("*signalsDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
+            setup.declareDepot("*silhouetteDepot", Depot.hashBy("now.calypso.backend.CalypsoHelpers$ExtractMapAccountId"));
+            setup.declareDepot("*silhouetteUpdateEventDepot", Depot.hashBy("now.calypso.backend.CalypsoHelpers$ExtractMapAccountId"));
+            setup.declareDepot("*silhouetteUpdateAckDepot", Depot.hashBy("now.calypso.backend.CalypsoHelpers$ExtractMapAccountId"));
             setup.declareDepot("*publicPromptAnswerDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
             setup.declareDepot("*publicPromptReactionDepot",
                         Depot.hashBy(CalypsoHelpers.ExtractViewerAccountId.class));
@@ -1965,6 +2153,7 @@ public class Core implements RamaModule {
             declareMatchesRefillTopology(topologies);
             declareMatchmakingFollowupsTopology(topologies);
             declareMatchesSignalsTopology(topologies);
+            declareSilhouetteTopology(topologies);
             declarePublicPromptsTopology(topologies);
 
             declareQueries(topologies);

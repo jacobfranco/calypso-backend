@@ -10,6 +10,8 @@ import org.apache.thrift.TFieldIdEnum;
 import org.apache.thrift.TUnion;
 
 import com.rpl.rama.*;
+import com.rpl.rama.ops.RamaFunction1;
+import com.rpl.rama.ops.RamaFunction1;
 
 import now.calypso.backend.data.*;
 import now.calypso.backend.ops.ExtractField;
@@ -53,6 +55,26 @@ public class CalypsoHelpers {
     public static class ExtractViewerAccountId extends ExtractField {
         public ExtractViewerAccountId() {
             super("viewerAccountId");
+        }
+    }
+
+    public static class ExtractMapAccountId implements RamaFunction1<Map, Object> {
+        @Override
+        public Object invoke(Map obj) {
+            if (obj == null)
+                return 0L;
+            Object raw = obj.get("accountId");
+            if (raw instanceof Number) {
+                return ((Number) raw).longValue();
+            }
+            if (raw instanceof String) {
+                try {
+                    return Long.parseLong(((String) raw).trim());
+                } catch (NumberFormatException ignored) {
+                    return 0L;
+                }
+            }
+            return 0L;
         }
     }
 

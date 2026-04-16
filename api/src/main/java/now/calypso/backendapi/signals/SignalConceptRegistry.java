@@ -325,7 +325,7 @@ public final class SignalConceptRegistry {
                 "coffee", "tea", "wine", "beer", "foodie", "baking", "entrepreneurship",
                 "startup", "career", "ambition", "academics", "education", "phd",
                 "tech", "software", "design", "art", "painting", "photography",
-                "film", "cinema", "modeling", "streetwear", "high_fashion",
+                "film", "cinema", "reality_tv", "modeling", "streetwear", "high_fashion",
                 "nature", "outdoors", "camping", "birdwatching", "adventure",
                 "world_cup", "meditation", "mindfulness", "homebody", "cozy", "pets", "dogs", "cats",
                 "family", "faith", "spirituality", "politics", "volunteering", "community",
@@ -348,7 +348,8 @@ public final class SignalConceptRegistry {
                 "mental_health", "greek_life", "solo_travel",
                 "backpacking", "language_exchange",
                 "street_food", "fine_dining",
-                "long_term_planning", "commitment", "loyalty", "honesty", "empathy", "respect");
+                "long_term_planning", "commitment", "loyalty", "honesty", "empathy", "respect",
+                "red_rising");
 
         // Keep aliases intentionally small and high-confidence.
         // We avoid broad shape canonicalization here so prompt outputs remain raw by
@@ -357,6 +358,8 @@ public final class SignalConceptRegistry {
         addAliases(seeds, "anime", "anime_fan", "otaku", "weeb", "shonen", "shounen");
         addAliases(seeds, "manga", "manga_fan");
         addAliases(seeds, "elden_ring", "eldenring");
+        addAliases(seeds, "red_rising", "red rising");
+        addAliases(seeds, "reality_tv", "reality tv", "reality_show", "reality_shows", "reality-television");
 
         // Hierarchy edges for stage-2 propagation.
         addParent(seeds, "high_fashion", "fashion", 0.84);
@@ -365,6 +368,7 @@ public final class SignalConceptRegistry {
         addParent(seeds, "modeling", "fashion", 0.58);
         addParent(seeds, "jojos_bizarre_adventure", "anime", 0.88);
         addParent(seeds, "manga", "anime", 0.62);
+        addParent(seeds, "red_rising", "books", 0.74);
         addParent(seeds, "elden_ring", "soulslike", 0.86);
         addParent(seeds, "soulslike", "gaming", 0.78);
         addParent(seeds, "pc_gaming", "gaming", 0.72);

@@ -72,6 +72,7 @@ public final class SignalDisambiguationPlanner {
         addSportsAmbiguities(out, promptId, combinedLower, extractedTokens);
         addMediaAmbiguities(out, promptId, combinedLower, extractedTokens);
         addGenericWatchingAmbiguities(out, promptId, combinedLower, extractedTokens);
+        addSelfVsPartnerScopeAmbiguities(out, promptId, combinedLower);
 
         if (out.isEmpty()) {
             return List.of();
@@ -186,6 +187,59 @@ public final class SignalDisambiguationPlanner {
         }
     }
 
+    private static void addSelfVsPartnerScopeAmbiguities(
+            LinkedHashMap<String, FollowupCandidate> out,
+            String promptId,
+            String combinedLower) {
+        if (out == null || combinedLower == null || combinedLower.isBlank()) {
+            return;
+        }
+        String normalizedPromptId = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
+        boolean promptSupportsScopeClarification = "private.fascinating.people".equals(normalizedPromptId)
+                || "private.fictional.characters".equals(normalizedPromptId)
+                || "private.drawn.to".equals(normalizedPromptId);
+        if (!promptSupportsScopeClarification) {
+            return;
+        }
+        if (!containsAny(
+                combinedLower,
+                "because",
+                "quality",
+                "qualities",
+                "trait",
+                "traits",
+                "strong",
+                "capable",
+                "independent",
+                "independence",
+                "driven",
+                "disciplined",
+                "focused",
+                "focus",
+                "intelligent",
+                "ambitious",
+                "loyal",
+                "confident")) {
+            return;
+        }
+        if (containsAny(
+                combinedLower,
+                "in a partner",
+                "want in a partner",
+                "looking for",
+                "drawn to",
+                "i see this in myself",
+                "i see these in myself",
+                "in myself",
+                "both",
+                "neither")) {
+            return;
+        }
+        String key = "scope:self_vs_partner";
+        String question = "Quick clarify: are those traits mostly about you, what you want in a partner, both, or neither?";
+        out.putIfAbsent(key, new FollowupCandidate(key, "self_vs_partner_scope", question, promptId));
+    }
+
     private static String combinedLowerText(String question, String answer, Collection<String> conversationLines) {
         StringBuilder buf = new StringBuilder();
         if (question != null) {
@@ -259,6 +313,21 @@ public final class SignalDisambiguationPlanner {
         String pattern = "\\b" + Pattern.quote(normalized.replace('_', ' ')) + "\\b";
         return Pattern.compile(pattern).matcher(text).find()
                 || Pattern.compile("\\b" + Pattern.quote(normalized) + "\\b").matcher(text).find();
+    }
+
+    private static boolean containsAny(String text, String... needles) {
+        if (text == null || text.isBlank() || needles == null || needles.length == 0) {
+            return false;
+        }
+        for (String needle : needles) {
+            if (needle == null || needle.isBlank()) {
+                continue;
+            }
+            if (text.contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String displayToken(String normalized) {

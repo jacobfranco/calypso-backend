@@ -28,6 +28,10 @@ import now.calypso.backendapi.llm.MatchReranker;
 import now.calypso.backendapi.pojos.*;
 import now.calypso.backendapi.prompts.*;
 import now.calypso.backendapi.signals.*;
+import now.calypso.backendapi.silhouette.SilhouetteEditor;
+import now.calypso.backendapi.silhouette.SilhouetteMerger;
+import now.calypso.backendapi.silhouette.SilhouettePatch;
+import now.calypso.backendapi.silhouette.SilhouetteState;
 import now.calypso.backend.*;
 import now.calypso.backend.data.*;
 import now.calypso.backend.modules.*;
@@ -48,6 +52,7 @@ public class CalypsoApiManager {
     private final ConcurrentHashMap<String, CompletableFuture<PublicPromptAnswer>> publicPromptSignalBackfillByAnswerId = new ConcurrentHashMap<>();
     private final Set<String> publicPromptOwnerCandidateObservedAnswerIds = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<Long, ConcurrentHashMap<String, DisambiguationCandidateStats>> signalDisambiguationByAccount = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, CompletableFuture<Void>> silhouetteSerialByAccount = new ConcurrentHashMap<>();
 
     // Modules
     public static final String CORE_MODULE_NAME = Core.class.getName();
@@ -62,6 +67,9 @@ public class CalypsoApiManager {
     private final Depot publicPromptSelectionDepot;
     private final Depot matchmakingFollowupAssignmentDepot;
     private final Depot matchmakingFollowupAnswerDepot;
+    private final Depot silhouetteDepot;
+    private final Depot silhouetteUpdateEventDepot;
+    private final Depot silhouetteUpdateAckDepot;
 
     // Core PStates
     private final PState phoneToUser;
@@ -86,6 +94,8 @@ public class CalypsoApiManager {
     private final QueryTopologyClient<PrivatePromptAnswer> getMatchmakingFollowupAnswerByInstanceId;
     private final QueryTopologyClient<PrivatePromptAssignment> getActiveMatchmakingFollowupAssignment;
     private final QueryTopologyClient<Map<String, Object>> getMatchmakingFollowupSchedulerState;
+    private final QueryTopologyClient<Map<String, Object>> getSilhouetteFromAccountId;
+    private final QueryTopologyClient<List<Map<String, Object>>> getSilhouettePendingUpdates;
 
     // Matches Depots
     private final Depot signalsDepot;
@@ -128,7 +138,7 @@ public class CalypsoApiManager {
     private static final int MATCH_RERANK_POOL_MAX = 40;
     private static final int MATCH_RERANK_SIGNAL_LIMIT_VIEWER = 16;
     private static final int MATCH_RERANK_SIGNAL_LIMIT_CANDIDATE = 12;
-    private static final double MATCH_RERANK_MAX_WEIGHT = 0.28;
+    private static final double MATCH_RERANK_MAX_WEIGHT = 0.45;
     private static final double MATCH_RERANK_BLOCKER_CAP = 0.82;
     private static final double MATCH_RERANK_CONFIDENCE_MIN = 0.25;
     private static final long MATCH_RERANK_TIMEOUT_MS = 4500L;
@@ -143,6 +153,16 @@ public class CalypsoApiManager {
     private static final double SIGNAL_HIERARCHY_MIN_VALENCE_ABS = 0.08;
     private static final String SIGNAL_HIERARCHY_DERIVED_SOURCE = "signal_hierarchy_derived";
     private static final int DISAMBIGUATION_MAX_PER_ACCOUNT = 200;
+    private static final boolean SILHOUETTE_WRITE_ENABLED = !"false"
+            .equalsIgnoreCase(System.getenv("CALYPSO_SILHOUETTE_WRITE_ENABLED"));
+    private static final boolean SILHOUETTE_RERANK_ENABLED = !"false"
+            .equalsIgnoreCase(System.getenv("CALYPSO_SILHOUETTE_RERANK_ENABLED"));
+    private static final boolean SILHOUETTE_PUBLIC_REACTION_ENABLED = "true"
+            .equalsIgnoreCase(System.getenv("CALYPSO_SILHOUETTE_PUBLIC_REACTION_ENABLED"));
+    private static final int SILHOUETTE_PENDING_BATCH_LIMIT = 20;
+    private static final int SILHOUETTE_MAX_EVENT_ATTEMPTS = 3;
+    private static final int SILHOUETTE_MIN_ANSWER_CHARS = 8;
+    private static final int SILHOUETTE_PUBLIC_MIN_ANSWER_CHARS = 28;
     private static final SecureRandom PHONE_CODE_RANDOM = new SecureRandom();
     private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
     private static final String SMS_FALLBACK_ENV = "CALYPSO_SMS_FALLBACK";
@@ -165,6 +185,9 @@ public class CalypsoApiManager {
         publicPromptSelectionDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*publicPromptSelectionDepot");
         matchmakingFollowupAssignmentDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*matchmakingFollowupAssignmentDepot");
         matchmakingFollowupAnswerDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*matchmakingFollowupAnswerDepot");
+        silhouetteDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*silhouetteDepot");
+        silhouetteUpdateEventDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*silhouetteUpdateEventDepot");
+        silhouetteUpdateAckDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*silhouetteUpdateAckDepot");
 
         // Core PStates
         phoneToUser = cluster.clusterPState(CORE_MODULE_NAME, "$$phoneToUser");
@@ -197,6 +220,8 @@ public class CalypsoApiManager {
                 "getActiveMatchmakingFollowupAssignment");
         getMatchmakingFollowupSchedulerState = cluster.clusterQuery(CORE_MODULE_NAME,
                 "getMatchmakingFollowupSchedulerState");
+        getSilhouetteFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME, "getSilhouetteFromAccountId");
+        getSilhouettePendingUpdates = cluster.clusterQuery(CORE_MODULE_NAME, "getSilhouettePendingUpdates");
 
         // Matches Depots
         signalsDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*signalsDepot");
@@ -258,7 +283,19 @@ public class CalypsoApiManager {
         return accountDepot
                 .appendAsync(account)
                 .thenCompose(res -> this.getAccountUUID(params.phone_number))
-                .thenApply(accountUUID -> accountUUID.equals(uuid));
+                .thenCompose(accountUUID -> {
+                    boolean created = accountUUID != null && accountUUID.equals(uuid);
+                    if (!created) {
+                        return CompletableFuture.completedFuture(false);
+                    }
+                    return this.getAccountId(params.phone_number)
+                            .thenCompose(accountId -> initializeSilhouetteForAccount(accountId == null ? -1L : accountId.longValue())
+                                    .exceptionally(ex -> {
+                                        LOG.warn("Failed to initialize silhouette for new account {}", accountId, ex);
+                                        return null;
+                                    })
+                                    .thenApply(ignored -> true));
+                });
     }
 
     public CompletableFuture<String> getAccountUUID(String phoneNumber) {
@@ -403,6 +440,306 @@ public class CalypsoApiManager {
         return getSignalsFromAccountId.invokeAsync(requesterId, accountId)
                 .thenApply(CalypsoApiManager::canonicalizeSignalSnapshot)
                 .thenCompose(snapshot -> maybeBootstrapSeedSignals(requesterId, accountId, snapshot));
+    }
+
+    public CompletableFuture<Map<String, Object>> getSilhouette(long requesterId, long accountId) {
+        if (accountId < 0L) {
+            return CompletableFuture.completedFuture(defaultSilhouetteMap(accountId));
+        }
+        triggerSilhouetteDrain(accountId);
+        return readSilhouetteSnapshot(accountId)
+                .thenApply(snapshot -> snapshot == null ? defaultSilhouetteMap(accountId) : snapshot)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to read silhouette for account {}", accountId, ex);
+                    return defaultSilhouetteMap(accountId);
+                });
+    }
+
+    private CompletableFuture<Map<String, Object>> readSilhouetteSnapshot(long accountId) {
+        if (accountId < 0L) {
+            return CompletableFuture.completedFuture(defaultSilhouetteMap(accountId));
+        }
+        return getSilhouetteFromAccountId.invokeAsync(accountId, accountId)
+                .completeOnTimeout(defaultSilhouetteMap(accountId), 2, TimeUnit.SECONDS)
+                .thenApply(snapshot -> {
+                    if (snapshot == null || snapshot.isEmpty()) {
+                        return defaultSilhouetteMap(accountId);
+                    }
+                    return sanitizeSilhouetteMap(snapshot, accountId);
+                })
+                .exceptionally(ex -> defaultSilhouetteMap(accountId));
+    }
+
+    private CompletableFuture<Void> initializeSilhouetteForAccount(long accountId) {
+        if (accountId < 0L) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return silhouetteDepot.appendAsync(defaultSilhouetteMap(accountId)).thenApply(ignored -> null);
+    }
+
+    private void queueSilhouetteUpdateAsync(long accountId,
+            String source,
+            String sourceId,
+            String promptId,
+            String question,
+            String answer,
+            List<String> conversationLines,
+            String contextMaybe) {
+        if (!SILHOUETTE_WRITE_ENABLED || accountId < 0L) {
+            return;
+        }
+        if (!shouldQueueSilhouetteEvent(source, promptId, answer)) {
+            return;
+        }
+        enqueueSilhouetteUpdate(accountId, source, sourceId, promptId, question, answer, conversationLines, contextMaybe)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to enqueue silhouette update for account {} ({})", accountId, source, ex);
+                    return false;
+                });
+    }
+
+    private CompletableFuture<Boolean> enqueueSilhouetteUpdate(long accountId,
+            String source,
+            String sourceId,
+            String promptId,
+            String question,
+            String answer,
+            List<String> conversationLines,
+            String contextMaybe) {
+        if (!SILHOUETTE_WRITE_ENABLED || accountId < 0L) {
+            return CompletableFuture.completedFuture(false);
+        }
+        Map<String, Object> event = buildSilhouetteEvent(accountId, source, sourceId, promptId, question, answer,
+                conversationLines, contextMaybe);
+        return silhouetteUpdateEventDepot.appendAsync(event)
+                .thenApply(ignored -> true);
+    }
+
+    @SuppressWarnings("unchecked")
+    private CompletableFuture<Void> serializeSilhouetteOp(long accountId, Supplier<CompletableFuture<Void>> op) {
+        return (CompletableFuture<Void>) silhouetteSerialByAccount.compute(accountId, (k, prev) -> {
+            CompletableFuture<?> start = (prev == null) ? CompletableFuture.completedFuture(null) : prev;
+            CompletableFuture<Void> next = start.thenCompose(ignored -> op.get());
+            next.whenComplete((r, e) -> silhouetteSerialByAccount.remove(k, next));
+            return next;
+        });
+    }
+
+    private void triggerSilhouetteDrain(long accountId) {
+        if (!SILHOUETTE_WRITE_ENABLED || accountId < 0L) {
+            return;
+        }
+        serializeSilhouetteOp(accountId, () -> drainSilhouetteUpdates(accountId))
+                .exceptionally(ex -> {
+                    LOG.warn("Silhouette drain failed for account {}", accountId, ex);
+                    return null;
+                });
+    }
+
+    private CompletableFuture<Void> drainSilhouetteUpdates(long accountId) {
+        if (!SILHOUETTE_WRITE_ENABLED || accountId < 0L) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return getSilhouettePendingUpdates.invokeAsync(accountId, SILHOUETTE_PENDING_BATCH_LIMIT)
+                .thenCompose(events -> {
+                    if (events == null || events.isEmpty()) {
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+                    for (Map<String, Object> event : events) {
+                        chain = chain.thenCompose(ignored -> processSilhouetteEvent(accountId, event).thenApply(done -> null));
+                    }
+                    if (events.size() >= SILHOUETTE_PENDING_BATCH_LIMIT) {
+                        chain = chain.thenCompose(ignored -> drainSilhouetteUpdates(accountId));
+                    }
+                    return chain;
+                });
+    }
+
+    private CompletableFuture<Boolean> processSilhouetteEvent(long accountId, Map<String, Object> event) {
+        if (event == null || event.isEmpty()) {
+            return CompletableFuture.completedFuture(false);
+        }
+        String eventId = mapString(event, "eventId");
+        if (eventId == null) {
+            return CompletableFuture.completedFuture(false);
+        }
+        long attempts = mapLong(event, "attemptCount", 0L);
+        if (attempts >= SILHOUETTE_MAX_EVENT_ATTEMPTS) {
+            return ackSilhouetteEvent(accountId, eventId).thenApply(ignored -> false);
+        }
+
+        CompletableFuture<Boolean> work = readSilhouetteSnapshot(accountId).thenCompose(snapshot -> {
+            SilhouetteState base = SilhouetteState.fromMap(snapshot, accountId);
+            SilhouettePatch patch = SilhouetteEditor.buildPatch(openAI, base, event);
+            String source = mapString(event, "source");
+            String sourceId = mapString(event, "sourceId");
+            String promptId = mapString(event, "promptId");
+            String answer = mapString(event, "answer");
+            SilhouetteState merged = SilhouetteMerger.apply(
+                    base,
+                    patch,
+                    silhouetteSourceWeight(source),
+                    source,
+                    sourceId,
+                    promptId,
+                    eventId,
+                    answer,
+                    System.currentTimeMillis());
+            Map<String, Object> payload = sanitizeSilhouetteMap(merged.toMap(), accountId);
+            return silhouetteDepot.appendAsync(payload)
+                    .thenCompose(ignored -> ackSilhouetteEvent(accountId, eventId))
+                    .thenApply(ignored -> true);
+        });
+
+        return work.handle((ok, ex) -> {
+            if (ex == null) {
+                return CompletableFuture.completedFuture(Boolean.TRUE.equals(ok));
+            }
+            long nextAttempt = attempts + 1L;
+            LOG.warn("Failed processing silhouette event {} for account {} (attempt {})",
+                    eventId, accountId, nextAttempt, ex);
+            if (nextAttempt >= SILHOUETTE_MAX_EVENT_ATTEMPTS) {
+                return ackSilhouetteEvent(accountId, eventId).thenApply(ignored -> false);
+            }
+            return requeueSilhouetteEvent(event, nextAttempt).thenApply(ignored -> false);
+        }).thenCompose(future -> future);
+    }
+
+    private CompletableFuture<Void> requeueSilhouetteEvent(Map<String, Object> original, long nextAttempt) {
+        if (original == null || original.isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        HashMap<String, Object> updated = new HashMap<>(original);
+        updated.put("attemptCount", nextAttempt);
+        updated.put("lastTriedAt", System.currentTimeMillis());
+        return silhouetteUpdateEventDepot.appendAsync(updated).thenApply(ignored -> null);
+    }
+
+    private CompletableFuture<Void> ackSilhouetteEvent(long accountId, String eventId) {
+        if (accountId < 0L || eventId == null || eventId.isBlank()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        HashMap<String, Object> ack = new HashMap<>();
+        ack.put("accountId", accountId);
+        ack.put("eventId", eventId);
+        ack.put("ackedAt", System.currentTimeMillis());
+        return silhouetteUpdateAckDepot.appendAsync(ack).thenApply(ignored -> null);
+    }
+
+    private static Map<String, Object> buildSilhouetteEvent(long accountId,
+            String source,
+            String sourceId,
+            String promptId,
+            String question,
+            String answer,
+            List<String> conversationLines,
+            String contextMaybe) {
+        HashMap<String, Object> out = new HashMap<>();
+        out.put("eventId", "ev_" + UUID.randomUUID().toString().replace("-", ""));
+        out.put("accountId", accountId);
+        out.put("source", clampShort(source, 64));
+        out.put("sourceId", clampShort(sourceId, 96));
+        out.put("promptId", clampShort(promptId, 96));
+        out.put("question", clampShort(question, 220));
+        out.put("answer", clampShort(answer, 360));
+        out.put("conversation", String.join(" | ", clampConversationLines(conversationLines, 12, 140)));
+        out.put("context", clampShort(contextMaybe, 180));
+        out.put("createdAt", System.currentTimeMillis());
+        out.put("attemptCount", 0L);
+        return out;
+    }
+
+    private static boolean shouldQueueSilhouetteEvent(String source, String promptId, String answer) {
+        String normalizedSource = source == null ? "" : source.trim().toLowerCase(Locale.ROOT);
+        String normalizedPromptId = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
+        int answerLen = answer == null ? 0 : answer.trim().length();
+        if (answerLen < SILHOUETTE_MIN_ANSWER_CHARS) {
+            return false;
+        }
+        if (normalizedSource.contains("public_prompt_reaction")) {
+            return SILHOUETTE_PUBLIC_REACTION_ENABLED && answerLen >= SILHOUETTE_PUBLIC_MIN_ANSWER_CHARS;
+        }
+        if (normalizedSource.contains("public_prompt")) {
+            return answerLen >= SILHOUETTE_PUBLIC_MIN_ANSWER_CHARS;
+        }
+        if ("private.popular.dislike".equals(normalizedPromptId) && answerLen < SILHOUETTE_PUBLIC_MIN_ANSWER_CHARS) {
+            return false;
+        }
+        return true;
+    }
+
+    private static Map<String, Object> sanitizeSilhouetteMap(Map<String, Object> map, long accountId) {
+        SilhouetteState normalized = SilhouetteState.fromMap(map, accountId);
+        return normalized.toMap();
+    }
+
+    private static Map<String, Object> defaultSilhouetteMap(long accountId) {
+        return SilhouetteState.empty(accountId).toMap();
+    }
+
+    private static String mapString(Map<String, Object> map, String key) {
+        if (map == null || map.isEmpty() || key == null || key.isBlank()) {
+            return null;
+        }
+        Object raw = map.get(key);
+        if (raw == null) {
+            return null;
+        }
+        String trimmed = raw.toString().trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private static long mapLong(Map<String, Object> map, String key, long fallback) {
+        if (map == null || map.isEmpty() || key == null || key.isBlank()) {
+            return fallback;
+        }
+        Object raw = map.get(key);
+        if (raw instanceof Number) {
+            return ((Number) raw).longValue();
+        }
+        if (raw instanceof String s) {
+            try {
+                return Long.parseLong(s.trim());
+            } catch (NumberFormatException ignored) {
+                return fallback;
+            }
+        }
+        return fallback;
+    }
+
+    private static String clampShort(String raw, int limit) {
+        if (raw == null) {
+            return null;
+        }
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        if (trimmed.length() <= limit) {
+            return trimmed;
+        }
+        return trimmed.substring(0, limit).trim();
+    }
+
+    private static double silhouetteSourceWeight(String source) {
+        if (source == null || source.isBlank()) {
+            return 0.35;
+        }
+        String normalized = source.trim().toLowerCase(Locale.ROOT);
+        if (normalized.contains("private_prompt")) {
+            return 1.0;
+        }
+        if (normalized.contains("matchmaking_followup")) {
+            return 0.8;
+        }
+        if (normalized.contains("public_prompt_reaction")) {
+            return 0.25;
+        }
+        if (normalized.contains("public_prompt")) {
+            return 0.45;
+        }
+        return 0.35;
     }
 
     public CompletableFuture<GetSignalConceptRegistry> getSignalConceptRegistry() {
@@ -1807,9 +2144,24 @@ public class CalypsoApiManager {
                         if (updated.isSetSnoozeUntil()) {
                             updated.unsetSnoozeUntil();
                         }
-                        return privatePromptAnswerDepot.appendAsync(answer)
+                        CompletableFuture<ActivePrivatePrompt> persisted = privatePromptAnswerDepot.appendAsync(answer)
                                 .thenCompose(v -> privatePromptAssignmentDepot.appendAsync(updated))
                                 .thenCompose(v -> hydrateActivePrivatePrompt(updated));
+                        return persisted.whenComplete((active, ex) -> {
+                            if (ex == null) {
+                                String context = normalizedConversation.isEmpty() ? normalizedBody
+                                        : String.join(" | ", normalizedConversation);
+                                queueSilhouetteUpdateAsync(
+                                        accountId,
+                                        "private_prompt",
+                                        current.getInstanceId(),
+                                        current.getPromptId(),
+                                        prompt.getText(),
+                                        normalizedBody,
+                                        normalizedConversation,
+                                        context);
+                            }
+                        });
                     });
                 }));
     }
@@ -2105,7 +2457,7 @@ public class CalypsoApiManager {
                         if (updated.isSetSnoozeUntil()) {
                             updated.unsetSnoozeUntil();
                         }
-                        return matchmakingFollowupAnswerDepot.appendAsync(answer)
+                        CompletableFuture<ActivePrivatePrompt> persisted = matchmakingFollowupAnswerDepot.appendAsync(answer)
                                 .thenCompose(v -> matchmakingFollowupAssignmentDepot.appendAsync(updated))
                                 .thenCompose(v -> {
                                     CompletableFuture<Void> refillSelf = requestRefill(accountId, 120)
@@ -2116,6 +2468,21 @@ public class CalypsoApiManager {
                                     return CompletableFuture.allOf(refillSelf, refillViewer)
                                             .thenCompose(ignored -> hydrateMatchmakingFollowup(updated));
                                 });
+                        return persisted.whenComplete((active, ex) -> {
+                            if (ex == null) {
+                                String context = normalizedConversation.isEmpty() ? normalizedBody
+                                        : String.join(" | ", normalizedConversation);
+                                queueSilhouetteUpdateAsync(
+                                        accountId,
+                                        "matchmaking_followup",
+                                        current.getInstanceId(),
+                                        MATCHMAKING_FOLLOWUP_PROMPT_ID,
+                                        question,
+                                        normalizedBody,
+                                        normalizedConversation,
+                                        context);
+                            }
+                        });
                     });
                 }));
     }
@@ -2703,8 +3070,21 @@ public class CalypsoApiManager {
                 return CompletableFuture.completedFuture(List.of());
             }
             List<String> tokens = tokens(normalized);
-            return persistSignals(viewerId, normalized, "public_prompt_reaction", sourceId, context)
+            CompletableFuture<List<String>> persisted = persistSignals(viewerId, normalized, "public_prompt_reaction", sourceId, context)
                     .thenApply(ok -> tokens);
+            return persisted.whenComplete((result, ex) -> {
+                if (ex == null) {
+                    queueSilhouetteUpdateAsync(
+                            viewerId,
+                            "public_prompt_reaction",
+                            sourceId,
+                            promptId,
+                            question,
+                            answer,
+                            conversation,
+                            context);
+                }
+            });
         });
     }
 
@@ -2737,8 +3117,21 @@ public class CalypsoApiManager {
             PublicPromptAnswer stored = new PublicPromptAnswer(base);
             if (tokens != null && !tokens.isEmpty())
                 stored.setSignalTokens(tokens);
-            return publicPromptAnswerDepot.appendAsync(stored)
+            CompletableFuture<PublicPromptAnswer> persisted = publicPromptAnswerDepot.appendAsync(stored)
                     .thenApply(res -> new PublicPromptAnswer(stored));
+            return persisted.whenComplete((result, ex) -> {
+                if (ex == null) {
+                    queueSilhouetteUpdateAsync(
+                            accountId,
+                            "public_prompt_answer",
+                            stored.getAnswerId(),
+                            promptId,
+                            promptText,
+                            normalized,
+                            List.of(),
+                            "prompt_id=" + promptId);
+                }
+            });
         });
     }
 
@@ -3993,6 +4386,16 @@ public class CalypsoApiManager {
         return out;
     }
 
+    private static String silhouetteDigest(Map<String, Object> silhouetteMap, int maxChars) {
+        SilhouetteState state = SilhouetteState.fromMap(silhouetteMap, mapLong(silhouetteMap, "accountId", 0L));
+        return state.digest(Math.max(240, maxChars));
+    }
+
+    private static String silhouetteMaturity(Map<String, Object> silhouetteMap) {
+        String maturity = mapString(silhouetteMap, "maturity");
+        return SilhouetteState.normalizeMaturity(maturity);
+    }
+
     private CompletableFuture<Signals> readSignalsSnapshot(long requesterId, long accountId) {
         return getSignalsFromAccountId.invokeAsync(requesterId, accountId)
                 .thenApply(CalypsoApiManager::canonicalizeSignalSnapshot)
@@ -4009,33 +4412,59 @@ public class CalypsoApiManager {
             return CompletableFuture.completedFuture(limitedStage2);
         }
 
+        if (SILHOUETTE_WRITE_ENABLED) {
+            triggerSilhouetteDrain(viewerId);
+        }
         CompletableFuture<Signals> viewerSignalsFuture = readSignalsSnapshot(viewerId, viewerId);
+        CompletableFuture<Map<String, Object>> viewerSilhouetteFuture = readSilhouetteSnapshot(viewerId);
         HashMap<Long, CompletableFuture<Signals>> targetSignalFutures = new HashMap<>();
+        HashMap<Long, CompletableFuture<Map<String, Object>>> targetSilhouetteFutures = new HashMap<>();
         for (GetMatch candidate : stage2) {
             long targetId = parseTargetAccountId(candidate);
             if (targetId < 0L || targetId == viewerId || targetSignalFutures.containsKey(targetId)) {
                 continue;
             }
+            if (SILHOUETTE_WRITE_ENABLED) {
+                triggerSilhouetteDrain(targetId);
+            }
             targetSignalFutures.put(targetId, readSignalsSnapshot(viewerId, targetId));
+            targetSilhouetteFutures.put(targetId, readSilhouetteSnapshot(targetId));
         }
 
         ArrayList<CompletableFuture<?>> waits = new ArrayList<>();
         waits.add(viewerSignalsFuture);
+        waits.add(viewerSilhouetteFuture);
         waits.addAll(targetSignalFutures.values());
+        waits.addAll(targetSilhouetteFutures.values());
         CompletableFuture<Void> all = CompletableFuture.allOf(waits.toArray(new CompletableFuture[0]));
         return all.thenApply(ignored -> {
             Signals viewerSignals = viewerSignalsFuture.join();
+            Map<String, Object> viewerSilhouette = viewerSilhouetteFuture.join();
             HashMap<Long, Signals> targetSignalsById = new HashMap<>();
+            HashMap<Long, Map<String, Object>> targetSilhouettesById = new HashMap<>();
             for (Map.Entry<Long, CompletableFuture<Signals>> entry : targetSignalFutures.entrySet()) {
                 Signals snapshot = entry.getValue().join();
                 if (snapshot != null) {
                     targetSignalsById.put(entry.getKey(), snapshot);
                 }
             }
+            for (Map.Entry<Long, CompletableFuture<Map<String, Object>>> entry : targetSilhouetteFutures.entrySet()) {
+                Map<String, Object> snapshot = entry.getValue().join();
+                if (snapshot != null) {
+                    targetSilhouettesById.put(entry.getKey(), snapshot);
+                }
+            }
 
             MatchReranker.RerankRequest request = new MatchReranker.RerankRequest();
             request.surface = surface;
             request.viewerSignals = toRerankSignals(viewerSignals, MATCH_RERANK_SIGNAL_LIMIT_VIEWER);
+            if (SILHOUETTE_RERANK_ENABLED) {
+                request.viewerSilhouetteDigest = silhouetteDigest(viewerSilhouette, 560);
+                request.viewerSilhouetteMaturity = silhouetteMaturity(viewerSilhouette);
+            } else {
+                request.viewerSilhouetteDigest = "";
+                request.viewerSilhouetteMaturity = "empty";
+            }
             for (GetMatch candidate : stage2) {
                 if (candidate == null || candidate.account == null || candidate.account.id == null
                         || candidate.account.id.isBlank()) {
@@ -4049,6 +4478,14 @@ public class CalypsoApiManager {
                 entry.id = candidate.account.id;
                 entry.stage2Normalized = clamp01(candidate.score / 100.0);
                 entry.signals = toRerankSignals(targetSignalsById.get(targetId), MATCH_RERANK_SIGNAL_LIMIT_CANDIDATE);
+                if (SILHOUETTE_RERANK_ENABLED) {
+                    Map<String, Object> candidateSilhouette = targetSilhouettesById.get(targetId);
+                    entry.silhouetteDigest = silhouetteDigest(candidateSilhouette, 260);
+                    entry.silhouetteMaturity = silhouetteMaturity(candidateSilhouette);
+                } else {
+                    entry.silhouetteDigest = "";
+                    entry.silhouetteMaturity = "empty";
+                }
                 request.candidates.add(entry);
             }
             if (request.candidates.isEmpty()) {

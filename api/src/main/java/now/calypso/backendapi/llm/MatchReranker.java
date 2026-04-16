@@ -36,6 +36,9 @@ public final class MatchReranker {
             - reason must be <= 12 words and concrete.
             - Prefer small adjustments around stage2; do not ignore stage2 ranking without strong evidence.
             - Use semantics across related concepts (for example anime/cosplay/geek overlap) when useful.
+            - viewer_silhouette and candidate_silhouette are context-rich preference/personality summaries.
+            - If silhouette_maturity is "mature", use silhouette heavily; if "sparse"/"empty", rely more on signals/stage2.
+            - Do not infer hard blockers from weak or sparse silhouette evidence.
             - No markdown, no extra keys, no explanations outside JSON.
             """;
 
@@ -97,6 +100,10 @@ public final class MatchReranker {
     private static String buildInput(RerankRequest request) {
         StringBuilder buf = new StringBuilder();
         buf.append("surface: ").append(nonBlank(request.surface, "unknown")).append("\n");
+        buf.append("viewer_silhouette_maturity: ").append(nonBlank(request.viewerSilhouetteMaturity, "empty"))
+                .append("\n");
+        buf.append("viewer_silhouette:\n");
+        appendSilhouette(buf, request.viewerSilhouetteDigest);
         buf.append("viewer_signals:\n");
         appendSignals(buf, request.viewerSignals);
         buf.append("candidates:\n");
@@ -108,10 +115,53 @@ public final class MatchReranker {
                 buf.append("- id=").append(candidate.id.trim())
                         .append(" stage2=").append(format01(candidate.stage2Normalized))
                         .append("\n");
+                buf.append("  silhouette_maturity=").append(nonBlank(candidate.silhouetteMaturity, "empty")).append("\n");
+                buf.append("  silhouette:\n");
+                appendSilhouette(buf, candidate.silhouetteDigest);
                 appendSignals(buf, candidate.signals);
             }
         }
         return buf.toString();
+    }
+
+    private static void appendSilhouette(StringBuilder buf, String digest) {
+        if (buf == null) {
+            return;
+        }
+        if (digest == null || digest.isBlank()) {
+            buf.append("  [none]\n");
+            return;
+        }
+        String trimmed = digest.trim();
+        if (trimmed.length() > 1400) {
+            trimmed = trimmed.substring(0, 1400).trim();
+        }
+        String[] lines = trimmed.split("\\R");
+        if (lines.length == 0) {
+            buf.append("  [none]\n");
+            return;
+        }
+        int count = 0;
+        for (String line : lines) {
+            if (line == null) {
+                continue;
+            }
+            String cleaned = line.trim();
+            if (cleaned.isEmpty()) {
+                continue;
+            }
+            if (cleaned.length() > 180) {
+                cleaned = cleaned.substring(0, 180).trim();
+            }
+            buf.append("  ").append(cleaned).append("\n");
+            count++;
+            if (count >= 12) {
+                break;
+            }
+        }
+        if (count == 0) {
+            buf.append("  [none]\n");
+        }
     }
 
     private static void appendSignals(StringBuilder buf, List<Signal> signals) {
@@ -245,6 +295,8 @@ public final class MatchReranker {
 
     public static final class RerankRequest {
         public String surface;
+        public String viewerSilhouetteDigest;
+        public String viewerSilhouetteMaturity;
         public List<Signal> viewerSignals = new ArrayList<>();
         public List<Candidate> candidates = new ArrayList<>();
     }
@@ -252,6 +304,8 @@ public final class MatchReranker {
     public static final class Candidate {
         public String id;
         public Double stage2Normalized;
+        public String silhouetteDigest;
+        public String silhouetteMaturity;
         public List<Signal> signals = new ArrayList<>();
     }
 

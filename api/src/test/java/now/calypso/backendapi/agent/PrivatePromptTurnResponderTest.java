@@ -59,4 +59,32 @@ class PrivatePromptTurnResponderTest {
         PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
         assertFalse(result.needsMoreDetail, "A plain question mark should not automatically force another turn.");
     }
+
+    @Test
+    void generate_forcesScopeClarifierWhenTraitDirectionIsAmbiguous() {
+        PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
+                "Who are some people (historical or living) that you find fascinating? Why?",
+                "Who are some people (historical or living) that you find fascinating? Why?",
+                List.of(),
+                "Nikola Tesla for his independence and obsessive focus.");
+
+        PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
+        assertTrue(result.needsMoreDetail, "Ambiguous admired-trait direction should trigger a quick scope clarifier.");
+        assertTrue(
+                result.agentMessage.toLowerCase().contains("mostly about you")
+                        || result.agentMessage.toLowerCase().contains("in a partner"),
+                "Clarifier should ask self-vs-partner scope.");
+    }
+
+    @Test
+    void generate_skipsScopeClarifierWhenUserAlreadySpecifiesBothScopes() {
+        PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
+                "Who are some people (historical or living) that you find fascinating? Why?",
+                "Who are some people (historical or living) that you find fascinating? Why?",
+                List.of(),
+                "Tesla is fascinating because I see that focus in myself and I also want it in a partner.");
+
+        PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
+        assertFalse(result.needsMoreDetail, "Explicit self+partner scope should not be re-clarified.");
+    }
 }

@@ -25,6 +25,11 @@ class SignalConceptRegistryTest {
         assertEquals("anime", anime.canonicalToken());
         assertEquals(SignalConceptRegistry.ResolutionKind.ALIAS, anime.kind());
 
+        SignalConceptRegistry.Resolution redRising = SignalConceptRegistry.resolve("red rising");
+        assertNotNull(redRising);
+        assertEquals("red_rising", redRising.canonicalToken());
+        assertEquals(SignalConceptRegistry.ResolutionKind.CANONICAL, redRising.kind());
+
         SignalConceptRegistry.Resolution unknown = SignalConceptRegistry.resolve("traveling_adventures");
         assertNotNull(unknown);
         assertEquals("traveling_adventures", unknown.canonicalToken());

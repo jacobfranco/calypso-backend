@@ -75,10 +75,13 @@ public final class SignalPrompts {
             - There is NO downstream semantic canonicalizer: output final, reusable concept tags directly.
             - Keep canonical concept labels and dedupe synonyms.
             - Prefer canonical noun forms (travel, career, cooking) over phrasing variants (traveling, career_development, homemade_meals).
-            - For named media/franchises, preserve the official title in snake_case (keep lexical letters; e.g. jojos_bizarre_adventure).
+            - For named media/franchises, preserve the official title in snake_case (keep lexical letters; e.g. jojos_bizarre_adventure, red_rising).
+            - For concrete media formats explicitly named in the answer, emit reusable format concepts (e.g., reality_tv).
             - Prefer atomic head concepts over phrasing wrappers (e.g., cooking over cooking_homemade_meals; sports over sports_fandom; gaming over casual_gaming).
             - For composite time+activity concepts, emit both core concepts when useful (e.g., morning gym => gym + early_morning_activity).
             - Include strongly implied core concepts when obvious from context (e.g., destination activity implies travel; nightlife activity implies socializing).
+            - Emit only context-free reusable concepts as signals. If a concept depends on story-specific interpretation, omit it.
+            - Character/person example names are usually context-dependent; keep them out of signals unless they are durable standalone concepts.
             - Avoid low-information literal/object tokens (bed, day, world, activity, event, performance).
             - If the answer is generic/low-specificity, emit at most 1-2 useful signals.
             - Avoid scaffolding tokens like *_session, *_rest_of_day, bucket_list, or other filler phrase wrappers.

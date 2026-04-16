@@ -575,6 +575,16 @@ public class CalypsoApiController {
                 .defaultIfEmpty(new GetSignals(accountId, List.of()));
     }
 
+    @GetMapping("/api/accounts/{id}/admin/silhouette")
+    public Mono<Map<String, Object>> getAdminSilhouette(@PathVariable("id") String idStr, WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getSilhouette(accountId, accountId));
+    }
+
     @GetMapping("/api/accounts/{id}/admin/signal-concepts")
     public Mono<GetSignalConceptRegistry> getSignalConceptRegistry(
             @PathVariable("id") String idStr,

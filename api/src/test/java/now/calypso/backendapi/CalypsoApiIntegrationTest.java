@@ -1585,6 +1585,67 @@ class CalypsoApiIntegrationTest {
     }
 
     @Test
+    void privatePromptExtraction_knownCanonicalConceptPersists() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 954312L;
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"reality_tv","intent":"self","valence":-0.88}]}
+                    """);
+            try {
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "private.popular.dislike",
+                        "What's something popular that you really don't like?",
+                        "Reality TV.",
+                        "private_prompt",
+                        UUID.randomUUID().toString()).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals after = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord record = findRecord(after, "reality_tv", SignalIntent.SEEKING);
+            assertNotNull(record, "Known canonical private prompt concepts should persist immediately.");
+            assertTrue(record.isSetValence());
+            assertTrue(record.getValence() < 0.0, "Dislike framing should preserve negative valence.");
+        }
+    }
+
+    @Test
+    void privatePromptExtraction_drawnToPromptInjectsExplicitFranchiseTitle() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 954313L;
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[]}
+                    """);
+            List<String> tokens;
+            try {
+                tokens = mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "private.drawn.to",
+                        "Describe the kind of person you tend to be drawn to.",
+                        "Someone like Victra or Mustang from Red Rising.",
+                        "private_prompt",
+                        UUID.randomUUID().toString()).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            assertTrue(tokens.contains("red_rising"),
+                    "Explicit franchise titles in drawn-to answers should be retained as reusable signals.");
+            Signals after = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord record = findRecord(after, "red_rising", SignalIntent.SEEKING);
+            assertNotNull(record, "Drawn-to framing should persist explicit franchise titles with seeking intent.");
+            assertTrue(record.isSetValence());
+            assertTrue(record.getValence() > 0.0);
+        }
+    }
+
+    @Test
     void hierarchyDerivedSignals_useDerivedSourceAcrossNormalWrites() throws Exception {
         try (InProcessCluster ipc = newCluster()) {
             CalypsoApiManager mgr = newManager(ipc);

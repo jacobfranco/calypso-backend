@@ -46,6 +46,8 @@ public final class PrivatePromptTurnResponder {
             - If the user's latest message is too vague, too short, or unclear, ask for a little more detail and set needsMoreDetail=true.
             - If the user gives an ambiguous category (for example "games"), ask a quick clarifier
               (for example board games vs video games) and set needsMoreDetail=true.
+            - If they describe admired traits and it's unclear whether those traits are about themselves or a partner preference,
+              ask that scope clarifier and set needsMoreDetail=true.
             - If the user's message is specific enough, acknowledge and set needsMoreDetail=false.
             - Do not repeat the full original prompt unless needed.
             - Do not include markdown or extra keys.
@@ -156,7 +158,79 @@ public final class PrivatePromptTurnResponder {
         if (mentionsGenericGames(userText) && !mentionsSpecificGameType(userText)) {
             return new TurnResult("Got you. Do you mean board games, video games, or both?", true);
         }
+        if (isSelfVsPartnerAmbiguous(input)) {
+            return new TurnResult(
+                    "Quick clarify: are those traits mostly about you, what you want in a partner, both, or neither?",
+                    true);
+        }
         return null;
+    }
+
+    private static boolean isSelfVsPartnerAmbiguous(TurnInput input) {
+        if (input == null || input.userMessage == null) {
+            return false;
+        }
+        String promptContext = (safe(input.promptText) + " " + safe(input.questionPart)).toLowerCase(Locale.ROOT);
+        if (!containsAny(promptContext,
+                "fascinating",
+                "historical",
+                "fictional",
+                "drawn to",
+                "pulls you in",
+                "admire")) {
+            return false;
+        }
+        String userText = input.userMessage.toLowerCase(Locale.ROOT);
+        if (!isSubstantiveAnswer(userText)) {
+            return false;
+        }
+        if (!containsAny(userText,
+                "because",
+                "trait",
+                "quality",
+                "strong",
+                "capable",
+                "independent",
+                "independence",
+                "driven",
+                "disciplined",
+                "focused",
+                "focus",
+                "intelligent",
+                "ambitious",
+                "loyal",
+                "confident")) {
+            return false;
+        }
+        if (containsAny(userText,
+                "in a partner",
+                "want in a partner",
+                "looking for",
+                "drawn to",
+                "i see this in myself",
+                "i see these in myself",
+                "in myself",
+                "about me",
+                "i am",
+                "i'm",
+                "both",
+                "neither")) {
+            return false;
+        }
+        if (input.conversation != null) {
+            for (String line : input.conversation) {
+                if (line == null) {
+                    continue;
+                }
+                String normalized = line.toLowerCase(Locale.ROOT);
+                if (normalized.contains("both, or neither")
+                        || normalized.contains("about you")
+                        || normalized.contains("in a partner")) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private static boolean mentionsGenericGames(String text) {

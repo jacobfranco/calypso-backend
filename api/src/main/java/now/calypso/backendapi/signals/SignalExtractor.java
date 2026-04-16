@@ -2,6 +2,7 @@ package now.calypso.backendapi.signals;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -106,6 +107,8 @@ public final class SignalExtractor {
                 break;
         }
 
+        injectExplicitTitleMentions(promptId, question, answer, normalizedAlreadyHave, acc);
+
         List<ExtractedSignal> filtered = filtered(acc.values(), normalizedAlreadyHave);
         List<ExtractedSignal> adjusted = applyPromptContextAdjustments(question, answer, normalizedConversation, filtered);
         List<ExtractedSignal> enriched = profile.runSpecificityPass()
@@ -120,6 +123,122 @@ public final class SignalExtractor {
                 normalizedConversation,
                 enriched);
         return cleanupSpecificityConflicts(finalAdjusted);
+    }
+
+    private static void injectExplicitTitleMentions(
+            String promptId,
+            String question,
+            String answer,
+            Collection<String> alreadyHave,
+            LinkedHashMap<String, ExtractedSignal> acc) {
+        if (acc == null || !isTitleInjectionPrompt(promptId) || answer == null || answer.isBlank()) {
+            return;
+        }
+        LinkedHashSet<String> mentions = detectExplicitTitleMentions(answer, 4);
+        if (mentions.isEmpty()) {
+            return;
+        }
+        HashSet<String> seen = new HashSet<>();
+        if (alreadyHave != null) {
+            seen.addAll(alreadyHave);
+        }
+        seen.addAll(tokens(acc.values()));
+        SignalIntent intent = defaultTitleIntent(promptId);
+        double valence = isNegativePreferenceContext(question, answer, List.of()) ? -0.78 : 0.78;
+        int injected = 0;
+        for (String token : mentions) {
+            if (token == null || token.isBlank() || seen.contains(token)) {
+                continue;
+            }
+            ExtractedSignal forced = ExtractedSignal.from(token, intent, valence);
+            if (forced == null) {
+                continue;
+            }
+            merge(acc, List.of(forced));
+            seen.add(token);
+            injected += 1;
+            if (injected >= 3) {
+                break;
+            }
+        }
+    }
+
+    private static boolean isTitleInjectionPrompt(String promptId) {
+        if (promptId == null || promptId.isBlank()) {
+            return false;
+        }
+        String normalized = promptId.trim().toLowerCase(Locale.ROOT);
+        return "private.drawn.to".equals(normalized)
+                || "private.fictional.characters".equals(normalized)
+                || "private.media.revisit".equals(normalized)
+                || "private.fascinating.people".equals(normalized);
+    }
+
+    private static SignalIntent defaultTitleIntent(String promptId) {
+        if (promptId == null || promptId.isBlank()) {
+            return SignalIntent.SELF;
+        }
+        String normalized = promptId.trim().toLowerCase(Locale.ROOT);
+        if ("private.drawn.to".equals(normalized) || "private.fictional.characters".equals(normalized)) {
+            return SignalIntent.SEEKING;
+        }
+        return SignalIntent.SELF;
+    }
+
+    private static LinkedHashSet<String> detectExplicitTitleMentions(String text, int maxMentions) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (text == null || text.isBlank()) {
+            return out;
+        }
+        String cleaned = text.toLowerCase(Locale.ROOT)
+                .replace('\u2019', '\'')
+                .replaceAll("[^a-z0-9]+", " ")
+                .trim();
+        if (cleaned.isBlank()) {
+            return out;
+        }
+        String[] rawWords = cleaned.split("\\s+");
+        ArrayList<String> words = new ArrayList<>(rawWords.length);
+        for (String word : rawWords) {
+            if (word == null || word.isBlank() || word.length() < 2) {
+                continue;
+            }
+            words.add(word);
+        }
+        int boundedMax = Math.max(1, maxMentions);
+        for (int i = 0; i < words.size(); i++) {
+            for (int n = 2; n <= 4; n++) {
+                int end = i + n;
+                if (end > words.size()) {
+                    break;
+                }
+                String candidate = String.join("_", words.subList(i, end));
+                SignalConceptRegistry.Resolution resolution = SignalConceptRegistry.resolve(candidate);
+                if (resolution == null || resolution.kind() == SignalConceptRegistry.ResolutionKind.UNKNOWN) {
+                    continue;
+                }
+                String canonical = resolution.canonicalToken();
+                if (!looksLikeExplicitTitleToken(canonical)) {
+                    continue;
+                }
+                out.add(canonical);
+                if (out.size() >= boundedMax) {
+                    return out;
+                }
+            }
+        }
+        return out;
+    }
+
+    private static boolean looksLikeExplicitTitleToken(String token) {
+        if (token == null || token.isBlank()) {
+            return false;
+        }
+        String normalized = SignalNormalizer.normalizeOne(token);
+        if (normalized == null || normalized.isBlank()) {
+            return false;
+        }
+        return normalized.contains("_") && normalized.length() >= 6;
     }
 
     private static List<String> chunk(String text, int maxChars) {

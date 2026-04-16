@@ -48,4 +48,15 @@ class SignalDisambiguationPlannerTest {
                 List.of(ExtractedSignal.from("culture", SignalIntent.SELF, 0.5)));
         assertTrue(candidates.stream().anyMatch(c -> c != null && "media:joker".equals(c.key)));
     }
+
+    @Test
+    void detectPromptAmbiguities_flagsSelfVsPartnerScopeWhenTraitDirectionIsUnclear() {
+        List<SignalDisambiguationPlanner.FollowupCandidate> candidates = SignalDisambiguationPlanner.detectPromptAmbiguities(
+                "private.fascinating.people",
+                "Who are some people (historical or living) that you find fascinating? Why?",
+                "Nikola Tesla for his independence and obsessive focus.",
+                List.of(),
+                List.of(ExtractedSignal.from("intelligence", SignalIntent.SELF, 0.6)));
+        assertTrue(candidates.stream().anyMatch(c -> c != null && "scope:self_vs_partner".equals(c.key)));
+    }
 }
