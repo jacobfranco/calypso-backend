@@ -59,4 +59,15 @@ class SignalDisambiguationPlannerTest {
                 List.of(ExtractedSignal.from("intelligence", SignalIntent.SELF, 0.6)));
         assertTrue(candidates.stream().anyMatch(c -> c != null && "scope:self_vs_partner".equals(c.key)));
     }
+
+    @Test
+    void detectPromptAmbiguities_doesNotFlagScopeForDrawnToPrompt() {
+        List<SignalDisambiguationPlanner.FollowupCandidate> candidates = SignalDisambiguationPlanner.detectPromptAmbiguities(
+                "private.drawn.to",
+                "Describe the kind of person you tend to be drawn to.",
+                "Someone independent, focused, and ambitious.",
+                List.of(),
+                List.of(ExtractedSignal.from("ambition", SignalIntent.SEEKING, 0.72)));
+        assertFalse(candidates.stream().anyMatch(c -> c != null && "scope:self_vs_partner".equals(c.key)));
+    }
 }

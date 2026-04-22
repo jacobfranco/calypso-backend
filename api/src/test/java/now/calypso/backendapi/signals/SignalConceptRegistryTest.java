@@ -173,4 +173,62 @@ class SignalConceptRegistryTest {
         assertFalse(SignalConceptRegistry.isCanonicalConcept("anime_fan"));
         assertFalse(SignalConceptRegistry.isCanonicalConcept("unknown_canonical_v3"));
     }
+
+    @Test
+    void categoryForConcept_resolvesCanonicalAliasAndHeuristics() {
+        assertEquals(SignalTaxonomy.MEDIA, SignalConceptRegistry.categoryForConcept("red_rising"));
+        assertEquals(SignalTaxonomy.MEDIA, SignalConceptRegistry.categoryForConcept("anime_fan"));
+        assertEquals(SignalTaxonomy.HOBBIES, SignalConceptRegistry.categoryForConcept("hiking"));
+
+        String raw = "category_probe_tv_" + System.nanoTime();
+        SignalConceptRegistry.observeUnresolved(raw, "test", "Reality TV mention");
+        SignalConceptRegistry.CandidateEntry candidate = SignalConceptRegistry.candidateSnapshot(500).stream()
+                .filter(entry -> entry != null && raw.equals(entry.rawToken))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(SignalTaxonomy.MEDIA, candidate.suggestedCategory,
+                "Unknown drift candidates should carry heuristic category suggestions.");
+    }
+
+    @Test
+    void promoteAlias_withCategoryPersistsCategoryOnCanonicalConcept() {
+        String suffix = Long.toString(System.nanoTime());
+        String raw = "raw_category_alias_" + suffix;
+        String canonical = "canonical_category_concept_" + suffix;
+
+        assertTrue(SignalConceptRegistry.promoteAlias(raw, canonical, SignalTaxonomy.VALUES));
+        assertEquals(SignalTaxonomy.VALUES, SignalConceptRegistry.categoryForConcept(canonical));
+        assertEquals(SignalTaxonomy.VALUES, SignalConceptRegistry.categoryForConcept(raw));
+
+        SignalConceptRegistry.ConceptEntry concept = SignalConceptRegistry.conceptsSnapshot().stream()
+                .filter(entry -> entry != null && canonical.equals(entry.concept))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(SignalTaxonomy.VALUES, concept.category);
+
+        assertTrue(SignalConceptRegistry.setCanonicalCategory(canonical, SignalTaxonomy.SOCIAL_STYLE));
+        assertEquals(SignalTaxonomy.SOCIAL_STYLE, SignalConceptRegistry.categoryForConcept(canonical));
+    }
+
+    @Test
+    void expandedConceptWeights_propagatesFranchiseToGenreAndBooks() {
+        var weights = SignalConceptRegistry.expandedConceptWeights("red_rising", 3);
+        assertNotNull(weights);
+        assertTrue(weights.containsKey("red_rising"));
+        assertTrue(weights.containsKey("sci_fi"));
+        assertTrue(weights.containsKey("books"));
+        assertTrue(weights.get("red_rising") > weights.get("sci_fi"));
+        assertTrue(weights.get("sci_fi") > weights.get("books"));
+    }
+
+    @Test
+    void expandedConceptWeights_propagatesTeamToLeagueToSport() {
+        var weights = SignalConceptRegistry.expandedConceptWeights("carolina_panthers", 3);
+        assertNotNull(weights);
+        assertTrue(weights.containsKey("carolina_panthers"));
+        assertTrue(weights.containsKey("nfl"));
+        assertTrue(weights.containsKey("sports"));
+        assertTrue(weights.get("carolina_panthers") > weights.get("nfl"));
+        assertTrue(weights.get("nfl") > weights.get("sports"));
+    }
 }

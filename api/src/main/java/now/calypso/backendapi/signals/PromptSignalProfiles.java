@@ -105,7 +105,7 @@ public final class PromptSignalProfiles {
                 "Treat this as vibe and social energy preference context; avoid literal color-only tokens.",
                 5, 1, false));
         add(byId, profile("private.hobbies",
-                "Split into self hobbies and partner-shared hobby preferences. Explicitly support both intents when warranted.",
+                "Signal-first prompt: extract concrete hobby/activity concepts. Split into self hobbies and partner-shared hobby preferences. Avoid abstract narrative labels.",
                 7, 1, false));
         add(byId, profile("private.popular.dislike",
                 "This is exclusion framing. Convert clear dislikes into seeking constraints with negative valence. Preserve explicit concrete categories (for example reality_tv).",
@@ -147,7 +147,7 @@ public final class PromptSignalProfiles {
                 "Long-term consistency framing; favor durable commitment/discipline signals.",
                 5, 1, false));
         add(byId, profile("private.communities.scene",
-                "Extract community belonging and social identity signals.",
+                "Signal-first prompt: extract concrete communities/scenes (for example gym, gaming, dance) as durable signals. Avoid generic social-belonging abstractions.",
                 6, 1, false));
         add(byId, profile("private.fascinating.people",
                 "Extract intellectual/cultural attraction patterns from why those figures are admired.",
@@ -155,6 +155,9 @@ public final class PromptSignalProfiles {
 
         // Synthetic prompt ids.
         add(byId, profile("matchmaking.followup",
+                "Matchmaking follow-up context. Prefer the explicitly missing concept and align intent to compatibility.",
+                4, 1, false));
+        add(byId, profile("private.matchmaking.followup",
                 "Matchmaking follow-up context. Prefer the explicitly missing concept and align intent to compatibility.",
                 4, 1, false));
 

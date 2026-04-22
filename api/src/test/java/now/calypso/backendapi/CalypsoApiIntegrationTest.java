@@ -1614,6 +1614,38 @@ class CalypsoApiIntegrationTest {
     }
 
     @Test
+    void privatePromptExtraction_communitiesPromptInjectsConcreteGymSignalWhenModelReturnsEmpty() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 954315L;
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[]}
+                    """);
+            List<String> tokens;
+            try {
+                tokens = mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "private.communities.scene",
+                        "What communities or scene have you felt the most at home in?",
+                        "the gym",
+                        "private_prompt",
+                        UUID.randomUUID().toString()).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            assertTrue(tokens.contains("gym"),
+                    "Concrete private-prompt community mentions should still produce signals when model output is sparse.");
+            Signals after = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord record = findRecord(after, "gym", SignalIntent.SELF);
+            assertNotNull(record);
+            assertTrue(record.isSetValence());
+            assertTrue(record.getValence() > 0.0);
+        }
+    }
+
+    @Test
     void privatePromptExtraction_drawnToPromptInjectsExplicitFranchiseTitle() throws Exception {
         try (InProcessCluster ipc = newCluster()) {
             CalypsoApiManager mgr = newManager(ipc);
@@ -1642,6 +1674,56 @@ class CalypsoApiIntegrationTest {
             assertNotNull(record, "Drawn-to framing should persist explicit franchise titles with seeking intent.");
             assertTrue(record.isSetValence());
             assertTrue(record.getValence() > 0.0);
+
+            SignalRecord sciFi = findRecord(after, "sci_fi", SignalIntent.SEEKING);
+            assertNotNull(sciFi, "Franchise signals should derive to genre-level concepts.");
+            assertTrue(sciFi.isSetSource());
+            assertEquals("signal_hierarchy_derived", sciFi.getSource());
+            assertTrue(sciFi.isSetValence());
+
+            SignalRecord books = findRecord(after, "books", SignalIntent.SEEKING);
+            assertNotNull(books, "Franchise signals should also derive to broader media format concepts.");
+            assertTrue(books.isSetSource());
+            assertEquals("signal_hierarchy_derived", books.getSource());
+            assertTrue(books.isSetValence());
+
+            assertTrue(record.getValence() > sciFi.getValence(),
+                    "Canonical franchise should keep strongest valence.");
+            assertTrue(sciFi.getValence() > books.getValence(),
+                    "Genre-level derivation should rank above broad media format derivation.");
+        }
+    }
+
+    @Test
+    void privatePromptExtraction_fictionalCharactersInjectsSingleWordTitleAlias() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 954314L;
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[]}
+                    """);
+            List<String> tokens;
+            try {
+                tokens = mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "private.fictional.characters",
+                        "Name up to 3 fictional characters you've felt drawn to romantically.",
+                        "I relate to Frieren because she's emotionally restrained but deeply caring.",
+                        "private_prompt",
+                        UUID.randomUUID().toString()).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            assertTrue(tokens.contains("frieren_beyond_journeys_end"),
+                    "Single-word explicit title aliases should resolve to canonical franchise/work tokens.");
+            Signals after = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord selfRecord = findRecord(after, "frieren_beyond_journeys_end", SignalIntent.SELF);
+            assertNotNull(selfRecord,
+                    "Relatability framing in fictional-character answers should retain self-intent title signals.");
+            assertTrue(selfRecord.isSetValence());
+            assertTrue(selfRecord.getValence() > 0.0);
         }
     }
 

@@ -9,6 +9,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import now.calypso.backend.data.SignalRecord;
 import now.calypso.backend.data.Signals;
+import now.calypso.backendapi.signals.SignalConceptRegistry;
 
 public class GetSignals {
     public final long accountId;
@@ -63,6 +64,7 @@ public class GetSignals {
         public final String token;
         public final String rawToken;
         public final String canonicalToken;
+        public final String category;
         public final String source;
         public final String sourceId;
         public final Long firstSeen;
@@ -76,6 +78,8 @@ public class GetSignals {
             this.token = r.getToken();
             this.rawToken = r.isSetRawToken() ? r.getRawToken() : null;
             this.canonicalToken = r.isSetCanonicalToken() ? r.getCanonicalToken() : null;
+            this.category = SignalConceptRegistry.categoryForConcept(
+                    this.canonicalToken == null || this.canonicalToken.isBlank() ? this.token : this.canonicalToken);
             this.source = r.getSource();
             this.sourceId = r.getSourceId();
             this.firstSeen = r.isSetFirstSeen() ? r.getFirstSeen() : null;
@@ -91,6 +95,7 @@ public class GetSignals {
                 @JsonProperty("token") String token,
                 @JsonProperty("rawToken") String rawToken,
                 @JsonProperty("canonicalToken") String canonicalToken,
+                @JsonProperty("category") String category,
                 @JsonProperty("source") String source,
                 @JsonProperty("sourceId") String sourceId,
                 @JsonProperty("firstSeen") Long firstSeen,
@@ -102,6 +107,7 @@ public class GetSignals {
             this.token = token;
             this.rawToken = rawToken;
             this.canonicalToken = canonicalToken;
+            this.category = category;
             this.source = source;
             this.sourceId = sourceId;
             this.firstSeen = firstSeen;

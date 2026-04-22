@@ -14,36 +14,34 @@ import now.calypso.backendapi.llm.OpenAIJson;
 
 public final class SilhouetteEditor {
     private static final int MIN_LLM_ANSWER_CHARS = 36;
+    private static final long LLM_MAX_OUTPUT_TOKENS_PRIMARY = 170L;
+    private static final long LLM_MAX_OUTPUT_TOKENS_RETRY = 300L;
     private static final Pattern COMPARATIVE_FROM_PATTERN = Pattern.compile(
-            "(?i)([a-z0-9'\\- ]{2,72})\\s+from\\s+([a-z0-9'\\- ]{2,56})");
+            "(?i)([a-z0-9'\\- ]{2,84})\\s+from\\s+([a-z0-9'\\- ]{2,56})");
     private static final String SYSTEM_PROMPT = """
-            You are Calypso's silhouette editor.
+            You are Calypso's silhouette claim editor.
 
             Task:
-            - Update the user's silhouette with compact patch ops.
-            - Silhouette captures context-dependent psychology and relational dynamics.
-            - Signals capture context-free facts (hobbies, interests, explicit media/franchises).
+            - Update the user's silhouette claim ledger with compact, high-signal claims.
+            - Silhouette captures context-dependent personality, relational dynamics, and trajectory.
+            - Signals capture context-free facts (hobbies, explicit media/franchise titles, concrete interests).
 
             Output JSON ONLY in shape:
-            {"ops":[{"op":"set_facet","key":"relationship_dynamic","summary":"...","confidence":0.72,"evidenceIds":["ev_x"]}]}
+            {"ops":[{"op":"upsert_claim","key":"seeking_core","text":"...","kind":"preference","confidence":0.72}]}
 
             Allowed ops:
-            - set_story
-            - set_facet
-            - reinforce_facet
-            - add_anchor
-            - add_meta_observation
-            - add_evidence
-            - prune_stale
+            - upsert_claim
+            - reinforce_claim
+            - retract_claim
 
             Constraints:
             - Keep ops minimal and high precision (0-6 ops typically).
-            - Prefer only these facet keys:
+            - Prefer these facet keys:
               self_core, seeking_core, relationship_dynamic, energy_style,
-              communication_style, emotional_style, trajectory, hard_boundaries.
-            - When the user references comparative examples (characters/figures/titles), add `add_anchor` ops with kind `partner_comp`.
-            - Anchor labels can include contextual names (characters/examples), but do not turn them into generic signal tags.
-            - Meta observations must be neutral (no moralizing language).
+              communication_style, emotional_style, trajectory, hard_boundaries,
+              partner_comps, meta_observation, narrative.
+            - Comparative references (characters/figures/examples) should be `key=partner_comps` and `kind=partner_comp`.
+            - Meta observations should be neutral and non-moralizing.
             - Confidence in [0,1].
             - No markdown, no prose outside JSON.
             """;
@@ -66,15 +64,32 @@ public final class SilhouetteEditor {
             return heuristicFallbackPatch(source, promptId, question, answer);
         }
         String user = buildUserPrompt(current, event);
-        String raw = OpenAIJson.call(client, SYSTEM_PROMPT, user);
-        SilhouettePatch parsed = SilhouettePatch.fromRawJson(raw);
+        SilhouettePatch parsed = llmPatch(client, user, source, promptId, LLM_MAX_OUTPUT_TOKENS_PRIMARY);
+        if ((parsed == null || parsed.isEmpty()) && answer != null && answer.trim().length() >= 80) {
+            parsed = llmPatch(client, user, source, promptId, LLM_MAX_OUTPUT_TOKENS_RETRY);
+        }
         if (parsed != null && !parsed.isEmpty()) {
-            maybeAugmentPartnerCompAnchors(parsed, promptId, question, answer);
+            maybeAugmentPartnerCompClaims(parsed, promptId, question, answer);
             return parsed;
         }
         SilhouettePatch fallback = heuristicFallbackPatch(source, promptId, question, answer);
-        maybeAugmentPartnerCompAnchors(fallback, promptId, question, answer);
+        maybeAugmentPartnerCompClaims(fallback, promptId, question, answer);
         return fallback;
+    }
+
+    private static SilhouettePatch llmPatch(
+            OpenAIClient client,
+            String userPrompt,
+            String source,
+            String promptId,
+            long maxOutputTokens) {
+        String surface = source == null || source.isBlank() ? "silhouette_event" : source.trim();
+        String raw = OpenAIJson.call(
+                client,
+                SYSTEM_PROMPT,
+                userPrompt,
+                OpenAIJson.CallSpec.silhouettePatch(surface, promptId, maxOutputTokens));
+        return SilhouettePatch.fromRawJson(raw);
     }
 
     private static boolean shouldUseHeuristicOnly(String source, String promptId, String answer) {
@@ -111,64 +126,40 @@ public final class SilhouetteEditor {
             return fallback;
         }
 
+        String facet;
+        double confidence;
         boolean explicitDislike = "private.popular.dislike".equals(normalizedPrompt)
                 || normalizedQuestion.contains("don't like")
-                || normalizedQuestion.contains("don't get");
+                || normalizedQuestion.contains("don't get")
+                || normalizedQuestion.contains("turn off");
         if (explicitDislike) {
-            fallback.ops.add(new SilhouettePatch.Op(
-                    "set_facet",
-                    "hard_boundaries",
-                    summary,
-                    null,
-                    null,
-                    null,
-                    0.56,
-                    List.of()));
-        } else if (question != null && question.toLowerCase(Locale.ROOT).contains("drawn")) {
-            fallback.ops.add(new SilhouettePatch.Op(
-                    "set_facet",
-                    "relationship_dynamic",
-                    summary,
-                    null,
-                    null,
-                    null,
-                    0.58,
-                    List.of()));
-        } else if (normalizedSource.contains("private")) {
-            fallback.ops.add(new SilhouettePatch.Op(
-                    "set_facet",
-                    "seeking_core",
-                    summary,
-                    null,
-                    null,
-                    null,
-                    0.52,
-                    List.of()));
+            facet = "hard_boundaries";
+            confidence = 0.60;
+        } else if (normalizedQuestion.contains("drawn") || normalizedQuestion.contains("looking for")) {
+            facet = "seeking_core";
+            confidence = 0.58;
+        } else if (normalizedSource.contains("private") || normalizedSource.contains("matchmaking_followup")) {
+            facet = "seeking_core";
+            confidence = 0.54;
         } else {
-            fallback.ops.add(new SilhouettePatch.Op(
-                    "set_facet",
-                    "self_core",
-                    summary,
-                    null,
-                    null,
-                    null,
-                    0.42,
-                    List.of()));
+            facet = "self_core";
+            confidence = 0.44;
         }
+
         fallback.ops.add(new SilhouettePatch.Op(
-                "add_evidence",
+                "upsert_claim",
+                facet,
                 null,
                 summary,
                 null,
-                null,
-                null,
-                0.40,
+                "heuristic",
+                confidence,
                 List.of()));
-        maybeAugmentPartnerCompAnchors(fallback, promptId, question, answer);
+        maybeAugmentPartnerCompClaims(fallback, promptId, question, answer);
         return fallback;
     }
 
-    private static void maybeAugmentPartnerCompAnchors(
+    private static void maybeAugmentPartnerCompClaims(
             SilhouettePatch patch,
             String promptId,
             String question,
@@ -179,61 +170,69 @@ public final class SilhouetteEditor {
         if (!isComparativePrompt(promptId, question)) {
             return;
         }
-        LinkedHashSet<String> existingLabels = new LinkedHashSet<>();
+        LinkedHashSet<String> existing = new LinkedHashSet<>();
         for (SilhouettePatch.Op op : patch.ops) {
-            if (op == null || op.label == null || op.label.isBlank()) {
+            if (op == null || op.key == null || op.text == null || op.text.isBlank()) {
                 continue;
             }
-            String normalized = normalizeAnchorLabel(op.label);
-            if (normalized != null) {
-                existingLabels.add(normalized);
+            if (!"partner_comps".equals(SilhouetteState.normalizeKey(op.key))) {
+                continue;
             }
+            existing.add(op.text.trim().toLowerCase(Locale.ROOT));
         }
-        for (SilhouettePatch.Op op : extractPartnerCompAnchors(answer)) {
-            if (op == null || op.label == null || op.label.isBlank()) {
+
+        for (SilhouettePatch.Op op : extractPartnerCompClaims(answer)) {
+            if (op == null || op.text == null || op.text.isBlank()) {
                 continue;
             }
-            String normalizedLabel = normalizeAnchorLabel(op.label);
-            if (normalizedLabel == null || existingLabels.contains(normalizedLabel)) {
+            String key = op.text.trim().toLowerCase(Locale.ROOT);
+            if (existing.contains(key)) {
                 continue;
             }
-            existingLabels.add(normalizedLabel);
+            existing.add(key);
             patch.ops.add(op);
-            if (existingLabels.size() >= 4) {
+            if (existing.size() >= 4) {
                 break;
             }
         }
     }
 
-    private static List<SilhouettePatch.Op> extractPartnerCompAnchors(String answer) {
+    private static List<SilhouettePatch.Op> extractPartnerCompClaims(String answer) {
         if (answer == null || answer.isBlank()) {
             return List.of();
         }
         ArrayList<SilhouettePatch.Op> out = new ArrayList<>();
-        LinkedHashSet<String> seenLabels = new LinkedHashSet<>();
+        LinkedHashSet<String> seenClaims = new LinkedHashSet<>();
         Matcher matcher = COMPARATIVE_FROM_PATTERN.matcher(answer);
         while (matcher.find()) {
             String rawComparisons = matcher.group(1);
             String rawSource = matcher.group(2);
-            String sourceLabel = normalizeAnchorLabel(rawSource);
-            if (sourceLabel == null || seenLabels.contains(sourceLabel)) {
+            String sourceLabel = displayLabel(normalizeLabel(rawSource));
+            if (sourceLabel.isBlank()) {
                 continue;
             }
-            String sourceDisplay = displayLabel(sourceLabel);
             String comparisons = compactComparisons(rawComparisons);
-            String summary = comparisons.isBlank()
-                    ? "Comparative reference from " + sourceDisplay + "."
-                    : ("Comparative reference: " + comparisons + " from " + sourceDisplay + ".");
+            String claimText = comparisons.isBlank()
+                    ? sourceLabel
+                    : comparisons + " (" + sourceLabel + ")";
+            claimText = clamp(claimText, 180);
+            if (claimText == null || claimText.isBlank()) {
+                continue;
+            }
+            String dedupKey = claimText.toLowerCase(Locale.ROOT);
+            if (seenClaims.contains(dedupKey)) {
+                continue;
+            }
             out.add(new SilhouettePatch.Op(
-                    "add_anchor",
+                    "upsert_claim",
+                    "partner_comps",
                     null,
-                    summary,
+                    claimText,
                     null,
-                    sourceLabel,
                     "partner_comp",
-                    0.62,
+                    0.64,
                     List.of()));
-            seenLabels.add(sourceLabel);
+            seenClaims.add(dedupKey);
             if (out.size() >= 3) {
                 break;
             }
@@ -294,7 +293,7 @@ public final class SilhouetteEditor {
                 || lowered.contains("fascinating");
     }
 
-    private static String normalizeAnchorLabel(String raw) {
+    private static String normalizeLabel(String raw) {
         String key = SilhouetteState.normalizeKey(raw);
         if (key == null || key.isBlank()) {
             return null;
@@ -329,7 +328,7 @@ public final class SilhouetteEditor {
     private static String buildUserPrompt(SilhouetteState current, Map<String, Object> event) {
         StringBuilder buf = new StringBuilder();
         buf.append("current_silhouette:\n");
-        buf.append(current == null ? "maturity=empty\nstory:\n" : current.digest(520)).append('\n');
+        buf.append(current == null ? "maturity=empty\n" : current.digest(520)).append('\n');
         buf.append("event:\n");
         appendField(buf, "event_id", event.get("eventId"), 40);
         appendField(buf, "source", event.get("source"), 48);
@@ -339,6 +338,7 @@ public final class SilhouetteEditor {
         appendField(buf, "answer", event.get("answer"), 260);
         appendField(buf, "conversation", event.get("conversation"), 220);
         appendField(buf, "context", event.get("context"), 180);
+        appendField(buf, "delta", event.get("delta"), 180);
         return buf.toString();
     }
 

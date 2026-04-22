@@ -195,9 +195,7 @@ public final class SignalDisambiguationPlanner {
             return;
         }
         String normalizedPromptId = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
-        boolean promptSupportsScopeClarification = "private.fascinating.people".equals(normalizedPromptId)
-                || "private.fictional.characters".equals(normalizedPromptId)
-                || "private.drawn.to".equals(normalizedPromptId);
+        boolean promptSupportsScopeClarification = "private.fascinating.people".equals(normalizedPromptId);
         if (!promptSupportsScopeClarification) {
             return;
         }

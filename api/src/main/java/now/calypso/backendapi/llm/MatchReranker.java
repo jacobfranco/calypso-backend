@@ -66,6 +66,7 @@ public final class MatchReranker {
         String input = buildInput(request);
         Exception lastError = null;
         for (ChatModel model : OpenAIModelRouter.modelChain(MODEL_ENV, MODEL_DEFAULT)) {
+            long startedAt = System.currentTimeMillis();
             try {
                 StructuredResponseCreateParams<RerankResult> params = StructuredResponseCreateParams
                         .<RerankResult>builder()
@@ -77,6 +78,15 @@ public final class MatchReranker {
                         .text(RerankResult.class)
                         .build();
                 StructuredResponse<RerankResult> response = client.responses().create(params);
+                long latencyMs = Math.max(0L, System.currentTimeMillis() - startedAt);
+                LlmTelemetry.recordStructuredResponse(
+                        "tier3_rerank",
+                        nonBlank(request.surface, "unknown"),
+                        null,
+                        model,
+                        response,
+                        latencyMs,
+                        800L);
                 RerankResult parsed = extractPayload(response);
                 if (parsed == null) {
                     continue;
@@ -85,6 +95,15 @@ public final class MatchReranker {
             } catch (Exception ex) {
                 lastError = ex;
                 LOG.warn("Match reranker failed with model {}. Trying fallback if available.", model.asString(), ex);
+                long latencyMs = Math.max(0L, System.currentTimeMillis() - startedAt);
+                LlmTelemetry.recordFailure(
+                        "tier3_rerank",
+                        nonBlank(request.surface, "unknown"),
+                        null,
+                        model,
+                        latencyMs,
+                        800L,
+                        ex);
             }
         }
         if (lastError != null) {

@@ -585,6 +585,19 @@ public class CalypsoApiController {
         return Mono.fromFuture(manager.getSilhouette(accountId, accountId));
     }
 
+    @GetMapping("/api/accounts/{id}/admin/llm-telemetry")
+    public Mono<Map<String, Object>> getAdminLlmTelemetry(
+            @PathVariable("id") String idStr,
+            @RequestParam(value = "limit", required = false, defaultValue = "120") int limit,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getLlmTelemetry(accountId, limit));
+    }
+
     @GetMapping("/api/accounts/{id}/admin/signal-concepts")
     public Mono<GetSignalConceptRegistry> getSignalConceptRegistry(
             @PathVariable("id") String idStr,
@@ -648,12 +661,16 @@ public class CalypsoApiController {
         }
         String rawToken = payload == null ? null : payload.rawToken;
         String canonicalToken = payload == null ? null : payload.canonicalToken;
-        return Mono.fromFuture(manager.promoteSignalConceptWithDebug(rawToken, canonicalToken))
+        String category = payload == null ? null : payload.category;
+        return Mono.fromFuture(manager.promoteSignalConceptWithDebug(rawToken, canonicalToken, category))
                 .map(result -> {
                     Map<String, Object> out = new LinkedHashMap<>();
                     out.put("changed", result == null ? Boolean.FALSE : result.changed);
                     out.put("rawToken", result == null ? null : result.rawToken);
                     out.put("canonicalToken", result == null ? null : result.canonicalToken);
+                    out.put("category", result == null || result.canonicalToken == null
+                            ? null
+                            : now.calypso.backendapi.signals.SignalConceptRegistry.categoryForConcept(result.canonicalToken));
                     out.put("migratedStoredAccounts", result == null ? 0 : result.migratedStoredAccounts);
                     out.put("replayedObservedAccounts", result == null ? 0 : result.replayedObservedAccounts);
                     out.put("replayedContextualOwners", result == null ? 0 : result.replayedContextualOwners);
@@ -693,12 +710,13 @@ public class CalypsoApiController {
         }
         String rawToken = payload == null ? null : payload.rawToken;
         String canonicalToken = payload == null ? null : payload.canonicalToken;
+        String category = payload == null ? null : payload.category;
         CalypsoApiManager.SignalConceptCandidateAction action = CalypsoApiManager.SignalConceptCandidateAction
                 .parse(payload == null ? null : payload.action);
         if (action == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "action required (create|map|reject|block|unblock)");
         }
-        return Mono.fromFuture(manager.actOnSignalConceptCandidate(rawToken, canonicalToken, action))
+        return Mono.fromFuture(manager.actOnSignalConceptCandidate(rawToken, canonicalToken, category, action))
                 .onErrorMap(IllegalArgumentException.class,
                         ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
     }

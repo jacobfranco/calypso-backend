@@ -44,11 +44,13 @@ public final class SignalConceptRegistry {
 
     public static final class ConceptEntry {
         public final String concept;
+        public final String category;
         public final List<String> aliases;
         public final Map<String, Double> parents;
 
-        public ConceptEntry(String concept, List<String> aliases, Map<String, Double> parents) {
+        public ConceptEntry(String concept, String category, List<String> aliases, Map<String, Double> parents) {
             this.concept = concept;
+            this.category = category;
             this.aliases = aliases == null ? List.of() : List.copyOf(aliases);
             this.parents = parents == null ? Map.of() : Map.copyOf(parents);
         }
@@ -64,11 +66,12 @@ public final class SignalConceptRegistry {
         public final List<CandidateAccountIntentObservation> observedAccountIntents;
         public final String suggestedCanonical;
         public final Double suggestionScore;
+        public final String suggestedCategory;
         public final boolean autoReady;
 
         public CandidateEntry(String rawToken, int seenCount, long firstSeen, long lastSeen, String lastSource,
                 List<String> exampleContexts, List<CandidateAccountIntentObservation> observedAccountIntents,
-                String suggestedCanonical, Double suggestionScore, boolean autoReady) {
+                String suggestedCanonical, Double suggestionScore, String suggestedCategory, boolean autoReady) {
             this.rawToken = rawToken;
             this.seenCount = seenCount;
             this.firstSeen = firstSeen;
@@ -78,6 +81,7 @@ public final class SignalConceptRegistry {
             this.observedAccountIntents = observedAccountIntents == null ? List.of() : List.copyOf(observedAccountIntents);
             this.suggestedCanonical = suggestedCanonical;
             this.suggestionScore = suggestionScore;
+            this.suggestedCategory = suggestedCategory;
             this.autoReady = autoReady;
         }
     }
@@ -93,11 +97,12 @@ public final class SignalConceptRegistry {
         public final List<CandidateAccountIntentObservation> observedAccountIntents;
         public final String suggestedCanonical;
         public final Double suggestionScore;
+        public final String suggestedCategory;
 
         public BlockedCandidateEntry(String rawToken, long blockedAt, int seenCount, long firstSeen, long lastSeen,
                 String lastSource, List<String> exampleContexts,
                 List<CandidateAccountIntentObservation> observedAccountIntents, String suggestedCanonical,
-                Double suggestionScore) {
+                Double suggestionScore, String suggestedCategory) {
             this.rawToken = rawToken;
             this.blockedAt = blockedAt;
             this.seenCount = seenCount;
@@ -108,6 +113,7 @@ public final class SignalConceptRegistry {
             this.observedAccountIntents = observedAccountIntents == null ? List.of() : List.copyOf(observedAccountIntents);
             this.suggestedCanonical = suggestedCanonical;
             this.suggestionScore = suggestionScore;
+            this.suggestedCategory = suggestedCategory;
         }
     }
 
@@ -165,6 +171,7 @@ public final class SignalConceptRegistry {
         final LinkedHashMap<String, AccountIntentStats> accountIntentStatsByKey = new LinkedHashMap<>();
         String suggestedCanonical;
         Double suggestionScore;
+        String suggestedCategory;
 
         CandidateStats(String rawToken) {
             this.rawToken = rawToken;
@@ -214,6 +221,10 @@ public final class SignalConceptRegistry {
             Suggestion suggestion = suggestCanonical(rawToken);
             this.suggestedCanonical = suggestion == null ? null : suggestion.canonical;
             this.suggestionScore = suggestion == null ? null : suggestion.score;
+            String basisToken = this.suggestedCanonical == null || this.suggestedCanonical.isBlank()
+                    ? rawToken
+                    : this.suggestedCanonical;
+            this.suggestedCategory = categoryForConcept(basisToken);
         }
 
         synchronized CandidateEntry snapshot() {
@@ -232,6 +243,7 @@ public final class SignalConceptRegistry {
                     snapshotAccountIntentObservations(),
                     suggestedCanonical,
                     suggestionScore,
+                    suggestedCategory,
                     autoReady);
         }
 
@@ -299,15 +311,18 @@ public final class SignalConceptRegistry {
                     candidate.exampleContexts,
                     candidate.observedAccountIntents,
                     candidate.suggestedCanonical,
-                    candidate.suggestionScore);
+                    candidate.suggestionScore,
+                    candidate.suggestedCategory);
         }
     }
 
     private static final Map<String, ConceptSeed> BASE_CONCEPTS;
     private static final Map<String, String> BASE_ALIAS_TO_CANONICAL;
+    private static final Map<String, String> BASE_CATEGORY_BY_CONCEPT;
 
     private static final Set<String> DYNAMIC_CANONICAL_CONCEPTS = ConcurrentHashMap.newKeySet();
     private static final ConcurrentHashMap<String, String> DYNAMIC_ALIAS_TO_CANONICAL = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, String> DYNAMIC_CATEGORY_BY_CONCEPT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, CandidateStats> CANDIDATE_BY_RAW = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, BlockedCandidateStats> BLOCKED_CANDIDATE_BY_RAW = new ConcurrentHashMap<>();
     private static final AtomicLong REGISTRY_VERSION = new AtomicLong(1L);
@@ -318,9 +333,10 @@ public final class SignalConceptRegistry {
 
         addConcepts(seeds,
                 "travel", "fashion", "anime", "manga", "gaming", "video_games", "sports", "soccer",
-                "basketball", "football", "baseball", "hockey", "tennis", "fitness", "gym",
+                "basketball", "football", "baseball", "hockey", "tennis", "nfl", "nhl",
+                "carolina_panthers", "florida_panthers", "fitness", "gym",
                 "bodybuilding", "powerlifting", "running", "hiking", "yoga", "pilates", "cycling",
-                "swimming", "martial_arts", "nutrition", "science", "cooking", "reading", "books",
+                "swimming", "martial_arts", "nutrition", "science", "sci_fi", "cooking", "reading", "books",
                 "writing", "music", "concerts", "nightlife", "club", "socializing",
                 "coffee", "tea", "wine", "beer", "foodie", "baking", "entrepreneurship",
                 "startup", "career", "ambition", "academics", "education", "phd",
@@ -349,7 +365,7 @@ public final class SignalConceptRegistry {
                 "backpacking", "language_exchange",
                 "street_food", "fine_dining",
                 "long_term_planning", "commitment", "loyalty", "honesty", "empathy", "respect",
-                "red_rising");
+                "red_rising", "frieren_beyond_journeys_end");
 
         // Keep aliases intentionally small and high-confidence.
         // We avoid broad shape canonicalization here so prompt outputs remain raw by
@@ -358,7 +374,13 @@ public final class SignalConceptRegistry {
         addAliases(seeds, "anime", "anime_fan", "otaku", "weeb", "shonen", "shounen");
         addAliases(seeds, "manga", "manga_fan");
         addAliases(seeds, "elden_ring", "eldenring");
+        addAliases(seeds, "sci_fi", "science_fiction", "science fiction", "scifi", "sci fi");
+        addAliases(seeds, "nfl", "national_football_league");
+        addAliases(seeds, "nhl", "national_hockey_league");
+        addAliases(seeds, "carolina_panthers", "carolina panthers");
+        addAliases(seeds, "florida_panthers", "florida panthers");
         addAliases(seeds, "red_rising", "red rising");
+        addAliases(seeds, "frieren_beyond_journeys_end", "frieren", "sousou_no_frieren");
         addAliases(seeds, "reality_tv", "reality tv", "reality_show", "reality_shows", "reality-television");
 
         // Hierarchy edges for stage-2 propagation.
@@ -368,7 +390,10 @@ public final class SignalConceptRegistry {
         addParent(seeds, "modeling", "fashion", 0.58);
         addParent(seeds, "jojos_bizarre_adventure", "anime", 0.88);
         addParent(seeds, "manga", "anime", 0.62);
-        addParent(seeds, "red_rising", "books", 0.74);
+        addParent(seeds, "red_rising", "sci_fi", 0.88);
+        addParent(seeds, "red_rising", "books", 0.62);
+        addParent(seeds, "sci_fi", "books", 0.78);
+        addParent(seeds, "frieren_beyond_journeys_end", "anime", 0.86);
         addParent(seeds, "elden_ring", "soulslike", 0.86);
         addParent(seeds, "soulslike", "gaming", 0.78);
         addParent(seeds, "pc_gaming", "gaming", 0.72);
@@ -377,6 +402,12 @@ public final class SignalConceptRegistry {
         addParent(seeds, "playstation", "gaming", 0.68);
         addParent(seeds, "board_games", "gaming", 0.52);
         addParent(seeds, "world_cup", "soccer", 0.90);
+        addParent(seeds, "carolina_panthers", "nfl", 0.94);
+        addParent(seeds, "florida_panthers", "nhl", 0.94);
+        addParent(seeds, "nfl", "football", 0.92);
+        addParent(seeds, "nfl", "sports", 0.84);
+        addParent(seeds, "nhl", "hockey", 0.92);
+        addParent(seeds, "nhl", "sports", 0.84);
         addParent(seeds, "soccer", "sports", 0.78);
         addParent(seeds, "football", "sports", 0.78);
         addParent(seeds, "basketball", "sports", 0.78);
@@ -442,6 +473,15 @@ public final class SignalConceptRegistry {
             }
         }
         BASE_ALIAS_TO_CANONICAL = Collections.unmodifiableMap(aliasMap);
+
+        LinkedHashMap<String, String> categoryByConcept = new LinkedHashMap<>();
+        for (ConceptSeed seed : seeds.values()) {
+            if (seed == null || seed.concept == null || seed.concept.isBlank()) {
+                continue;
+            }
+            categoryByConcept.put(seed.concept, SignalTaxonomy.categoryForToken(seed.concept));
+        }
+        BASE_CATEGORY_BY_CONCEPT = Collections.unmodifiableMap(categoryByConcept);
     }
 
     private SignalConceptRegistry() {
@@ -515,6 +555,10 @@ public final class SignalConceptRegistry {
     }
 
     public static boolean promoteAlias(String rawToken, String canonicalToken) {
+        return promoteAlias(rawToken, canonicalToken, null);
+    }
+
+    public static boolean promoteAlias(String rawToken, String canonicalToken, String category) {
         String raw = SignalNormalizer.normalizeOne(rawToken);
         String canonical = SignalNormalizer.normalizeOne(canonicalToken);
         if (raw == null || raw.isBlank() || canonical == null || canonical.isBlank()) {
@@ -524,8 +568,28 @@ public final class SignalConceptRegistry {
             DYNAMIC_CANONICAL_CONCEPTS.add(canonical);
         }
         DYNAMIC_ALIAS_TO_CANONICAL.put(raw, canonical);
+        if (category != null) {
+            setCanonicalCategory(canonical, category);
+        }
         CANDIDATE_BY_RAW.remove(raw);
         BLOCKED_CANDIDATE_BY_RAW.remove(raw);
+        REGISTRY_VERSION.incrementAndGet();
+        return true;
+    }
+
+    public static boolean setCanonicalCategory(String canonicalToken, String category) {
+        String canonical = SignalNormalizer.normalizeOne(canonicalToken);
+        String normalizedCategory = SignalTaxonomy.normalizeCategory(category);
+        if (canonical == null || canonical.isBlank() || normalizedCategory == null) {
+            return false;
+        }
+        if (!isCanonicalConcept(canonical)) {
+            return false;
+        }
+        String existing = DYNAMIC_CATEGORY_BY_CONCEPT.put(canonical, normalizedCategory);
+        if (Objects.equals(existing, normalizedCategory)) {
+            return false;
+        }
         REGISTRY_VERSION.incrementAndGet();
         return true;
     }
@@ -536,6 +600,32 @@ public final class SignalConceptRegistry {
             return false;
         }
         return BASE_CONCEPTS.containsKey(normalized) || DYNAMIC_CANONICAL_CONCEPTS.contains(normalized);
+    }
+
+    public static String categoryForConcept(String token) {
+        String normalized = SignalNormalizer.normalizeOne(token);
+        if (normalized == null || normalized.isBlank()) {
+            return SignalTaxonomy.OTHER;
+        }
+        Resolution resolution = resolve(normalized);
+        String canonical = resolution == null || resolution.canonicalToken() == null || resolution.canonicalToken().isBlank()
+                ? normalized
+                : resolution.canonicalToken();
+        String dynamic = DYNAMIC_CATEGORY_BY_CONCEPT.get(canonical);
+        if (dynamic != null && !dynamic.isBlank()) {
+            return dynamic;
+        }
+        String base = BASE_CATEGORY_BY_CONCEPT.get(canonical);
+        if (base != null && !base.isBlank()) {
+            return base;
+        }
+        return SignalTaxonomy.categoryForToken(canonical);
+    }
+
+    public static Set<String> canonicalConceptsSnapshot() {
+        LinkedHashSet<String> out = new LinkedHashSet<>(BASE_CONCEPTS.keySet());
+        out.addAll(DYNAMIC_CANONICAL_CONCEPTS);
+        return out;
     }
 
     public static boolean rejectCandidate(String rawToken) {
@@ -679,7 +769,7 @@ public final class SignalConceptRegistry {
         for (ConceptSeed seed : BASE_CONCEPTS.values()) {
             List<String> aliases = new ArrayList<>(aliasesByCanonical.getOrDefault(seed.concept, new LinkedHashSet<>()));
             aliases.sort(String::compareTo);
-            out.put(seed.concept, new ConceptEntry(seed.concept, aliases, seed.parents));
+            out.put(seed.concept, new ConceptEntry(seed.concept, categoryForConcept(seed.concept), aliases, seed.parents));
         }
 
         for (String dynamic : DYNAMIC_CANONICAL_CONCEPTS) {
@@ -688,7 +778,7 @@ public final class SignalConceptRegistry {
             }
             List<String> aliases = new ArrayList<>(aliasesByCanonical.getOrDefault(dynamic, new LinkedHashSet<>()));
             aliases.sort(String::compareTo);
-            out.put(dynamic, new ConceptEntry(dynamic, aliases, Map.of()));
+            out.put(dynamic, new ConceptEntry(dynamic, categoryForConcept(dynamic), aliases, Map.of()));
         }
 
         ArrayList<ConceptEntry> sorted = new ArrayList<>(out.values());

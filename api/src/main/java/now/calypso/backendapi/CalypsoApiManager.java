@@ -25,6 +25,8 @@ import com.rpl.rama.cluster.ClusterManagerBase;
 import now.calypso.backendapi.agent.AgentResponder;
 import now.calypso.backendapi.agent.PrivatePromptTurnResponder;
 import now.calypso.backendapi.llm.MatchReranker;
+import now.calypso.backendapi.llm.LlmTelemetry;
+import now.calypso.backendapi.llm.PrivatePromptUnderstanding;
 import now.calypso.backendapi.pojos.*;
 import now.calypso.backendapi.prompts.*;
 import now.calypso.backendapi.signals.*;
@@ -163,6 +165,42 @@ public class CalypsoApiManager {
     private static final int SILHOUETTE_MAX_EVENT_ATTEMPTS = 3;
     private static final int SILHOUETTE_MIN_ANSWER_CHARS = 8;
     private static final int SILHOUETTE_PUBLIC_MIN_ANSWER_CHARS = 28;
+    private static final Set<String> SILHOUETTE_GENERIC_META_SUBSTRINGS = Set.of(
+            "focuses on lifestyle",
+            "lifestyle and cultural markers",
+            "cultural markers",
+            "primary filters",
+            "relationship compatibility",
+            "filter for compatibility",
+            "activity-based community",
+            "social belonging",
+            "specific activity-based community");
+    private static final Set<String> SILHOUETTE_ABSTRACT_CUE_TERMS = Set.of(
+            "ambition",
+            "reciprocity",
+            "communication",
+            "emotional",
+            "trajectory",
+            "intellectual",
+            "values",
+            "character",
+            "reliab",
+            "integrity",
+            "growth",
+            "independent",
+            "headstrong",
+            "flirty",
+            "playful",
+            "equal");
+    private static final Set<String> SILHOUETTE_SIGNAL_FIRST_PROMPT_IDS = Set.of(
+            "private.hobbies",
+            "private.communities.scene",
+            "private.great.night",
+            "private.places.home",
+            "private.popular.dislike",
+            "private.not.my.person");
+    private static final boolean PRIVATE_UNIFIED_UNDERSTANDING_ENABLED = !"false"
+            .equalsIgnoreCase(System.getenv("CALYPSO_PRIVATE_UNIFIED_UNDERSTANDING_ENABLED"));
     private static final SecureRandom PHONE_CODE_RANDOM = new SecureRandom();
     private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
     private static final String SMS_FALLBACK_ENV = "CALYPSO_SMS_FALLBACK";
@@ -455,6 +493,17 @@ public class CalypsoApiManager {
                 });
     }
 
+    public CompletableFuture<Map<String, Object>> getLlmTelemetry(long accountId, int limit) {
+        if (accountId < 0L) {
+            return CompletableFuture.completedFuture(Map.of(
+                    "generatedAt", System.currentTimeMillis(),
+                    "totals", Map.of(),
+                    "byStage", List.of(),
+                    "events", List.of()));
+        }
+        return CompletableFuture.completedFuture(LlmTelemetry.snapshot(limit));
+    }
+
     private CompletableFuture<Map<String, Object>> readSilhouetteSnapshot(long accountId) {
         if (accountId < 0L) {
             return CompletableFuture.completedFuture(defaultSilhouetteMap(accountId));
@@ -485,13 +534,45 @@ public class CalypsoApiManager {
             String answer,
             List<String> conversationLines,
             String contextMaybe) {
+        queueSilhouetteUpdateAsync(accountId,
+                source,
+                sourceId,
+                promptId,
+                question,
+                answer,
+                conversationLines,
+                contextMaybe,
+                null,
+                null);
+    }
+
+    private void queueSilhouetteUpdateAsync(long accountId,
+            String source,
+            String sourceId,
+            String promptId,
+            String question,
+            String answer,
+            List<String> conversationLines,
+            String contextMaybe,
+            SilhouettePatch precomputedPatch,
+            String semanticDelta) {
         if (!SILHOUETTE_WRITE_ENABLED || accountId < 0L) {
             return;
         }
         if (!shouldQueueSilhouetteEvent(source, promptId, answer)) {
             return;
         }
-        enqueueSilhouetteUpdate(accountId, source, sourceId, promptId, question, answer, conversationLines, contextMaybe)
+        enqueueSilhouetteUpdate(
+                accountId,
+                source,
+                sourceId,
+                promptId,
+                question,
+                answer,
+                conversationLines,
+                contextMaybe,
+                precomputedPatch,
+                semanticDelta)
                 .exceptionally(ex -> {
                     LOG.warn("Failed to enqueue silhouette update for account {} ({})", accountId, source, ex);
                     return false;
@@ -505,12 +586,14 @@ public class CalypsoApiManager {
             String question,
             String answer,
             List<String> conversationLines,
-            String contextMaybe) {
+            String contextMaybe,
+            SilhouettePatch precomputedPatch,
+            String semanticDelta) {
         if (!SILHOUETTE_WRITE_ENABLED || accountId < 0L) {
             return CompletableFuture.completedFuture(false);
         }
         Map<String, Object> event = buildSilhouetteEvent(accountId, source, sourceId, promptId, question, answer,
-                conversationLines, contextMaybe);
+                conversationLines, contextMaybe, precomputedPatch, semanticDelta);
         return silhouetteUpdateEventDepot.appendAsync(event)
                 .thenApply(ignored -> true);
     }
@@ -545,9 +628,21 @@ public class CalypsoApiManager {
                     if (events == null || events.isEmpty()) {
                         return CompletableFuture.completedFuture(null);
                     }
-                    CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+                    ArrayList<Map<String, Object>> precomputed = new ArrayList<>();
+                    ArrayList<Map<String, Object>> unresolved = new ArrayList<>();
                     for (Map<String, Object> event : events) {
+                        if (hasPrecomputedSilhouettePatch(event)) {
+                            precomputed.add(event);
+                        } else {
+                            unresolved.add(event);
+                        }
+                    }
+                    CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+                    for (Map<String, Object> event : precomputed) {
                         chain = chain.thenCompose(ignored -> processSilhouetteEvent(accountId, event).thenApply(done -> null));
+                    }
+                    if (!unresolved.isEmpty()) {
+                        chain = chain.thenCompose(ignored -> processMergedSilhouetteEvents(accountId, unresolved).thenApply(done -> null));
                     }
                     if (events.size() >= SILHOUETTE_PENDING_BATCH_LIMIT) {
                         chain = chain.thenCompose(ignored -> drainSilhouetteUpdates(accountId));
@@ -571,7 +666,10 @@ public class CalypsoApiManager {
 
         CompletableFuture<Boolean> work = readSilhouetteSnapshot(accountId).thenCompose(snapshot -> {
             SilhouetteState base = SilhouetteState.fromMap(snapshot, accountId);
-            SilhouettePatch patch = SilhouetteEditor.buildPatch(openAI, base, event);
+            SilhouettePatch patch = precomputedSilhouettePatch(event);
+            if (patch == null || patch.isEmpty()) {
+                patch = SilhouetteEditor.buildPatch(openAI, base, event);
+            }
             String source = mapString(event, "source");
             String sourceId = mapString(event, "sourceId");
             String promptId = mapString(event, "promptId");
@@ -606,6 +704,80 @@ public class CalypsoApiManager {
         }).thenCompose(future -> future);
     }
 
+    private CompletableFuture<Boolean> processMergedSilhouetteEvents(long accountId, List<Map<String, Object>> events) {
+        if (events == null || events.isEmpty()) {
+            return CompletableFuture.completedFuture(false);
+        }
+        ArrayList<Map<String, Object>> eligible = new ArrayList<>();
+        ArrayList<String> ackImmediately = new ArrayList<>();
+        for (Map<String, Object> event : events) {
+            if (event == null || event.isEmpty()) {
+                continue;
+            }
+            String eventId = mapString(event, "eventId");
+            if (eventId == null) {
+                continue;
+            }
+            long attempts = mapLong(event, "attemptCount", 0L);
+            if (attempts >= SILHOUETTE_MAX_EVENT_ATTEMPTS) {
+                ackImmediately.add(eventId);
+                continue;
+            }
+            eligible.add(event);
+        }
+        CompletableFuture<Void> immediateAckFuture = ackSilhouetteEvents(accountId, ackImmediately);
+        if (eligible.isEmpty()) {
+            return immediateAckFuture.thenApply(ignored -> false);
+        }
+        return immediateAckFuture.thenCompose(ignored -> readSilhouetteSnapshot(accountId).thenCompose(snapshot -> {
+            SilhouetteState base = SilhouetteState.fromMap(snapshot, accountId);
+            Map<String, Object> mergedEvent = mergeSilhouetteEvents(accountId, eligible);
+            SilhouettePatch patch = SilhouetteEditor.buildPatch(openAI, base, mergedEvent);
+            if (patch == null || patch.isEmpty()) {
+                return ackSilhouetteEvents(accountId, eventIds(eligible)).thenApply(done -> false);
+            }
+            String source = mapString(mergedEvent, "source");
+            String sourceId = mapString(mergedEvent, "sourceId");
+            String promptId = mapString(mergedEvent, "promptId");
+            String answer = mapString(mergedEvent, "answer");
+            String eventId = mapString(mergedEvent, "eventId");
+            SilhouetteState merged = SilhouetteMerger.apply(
+                    base,
+                    patch,
+                    silhouetteSourceWeight(source),
+                    source,
+                    sourceId,
+                    promptId,
+                    eventId,
+                    answer,
+                    System.currentTimeMillis());
+            Map<String, Object> payload = sanitizeSilhouetteMap(merged.toMap(), accountId);
+            return silhouetteDepot.appendAsync(payload)
+                    .thenCompose(v -> ackSilhouetteEvents(accountId, eventIds(eligible)))
+                    .thenApply(v -> true);
+        }).handle((ok, ex) -> {
+            if (ex == null) {
+                return CompletableFuture.completedFuture(Boolean.TRUE.equals(ok));
+            }
+            ArrayList<CompletableFuture<Void>> recoveries = new ArrayList<>();
+            for (Map<String, Object> event : eligible) {
+                long nextAttempt = mapLong(event, "attemptCount", 0L) + 1L;
+                if (nextAttempt >= SILHOUETTE_MAX_EVENT_ATTEMPTS) {
+                    String eventId = mapString(event, "eventId");
+                    if (eventId != null) {
+                        recoveries.add(ackSilhouetteEvent(accountId, eventId));
+                    }
+                } else {
+                    recoveries.add(requeueSilhouetteEvent(event, nextAttempt));
+                }
+            }
+            if (recoveries.isEmpty()) {
+                return CompletableFuture.completedFuture(false);
+            }
+            return CompletableFuture.allOf(recoveries.toArray(new CompletableFuture[0])).thenApply(v -> false);
+        }).thenCompose(f -> f));
+    }
+
     private CompletableFuture<Void> requeueSilhouetteEvent(Map<String, Object> original, long nextAttempt) {
         if (original == null || original.isEmpty()) {
             return CompletableFuture.completedFuture(null);
@@ -634,7 +806,9 @@ public class CalypsoApiManager {
             String question,
             String answer,
             List<String> conversationLines,
-            String contextMaybe) {
+            String contextMaybe,
+            SilhouettePatch precomputedPatch,
+            String semanticDelta) {
         HashMap<String, Object> out = new HashMap<>();
         out.put("eventId", "ev_" + UUID.randomUUID().toString().replace("-", ""));
         out.put("accountId", accountId);
@@ -644,10 +818,160 @@ public class CalypsoApiManager {
         out.put("question", clampShort(question, 220));
         out.put("answer", clampShort(answer, 360));
         out.put("conversation", String.join(" | ", clampConversationLines(conversationLines, 12, 140)));
-        out.put("context", clampShort(contextMaybe, 180));
+        String compactContext = compactSilhouetteEventContext(promptId, question, answer, contextMaybe, semanticDelta);
+        out.put("context", clampShort(compactContext, 220));
+        String delta = compactSilhouetteDelta(promptId, question, answer, clampConversationLines(conversationLines, 8, 180));
+        if (delta != null && !delta.isBlank()) {
+            out.put("delta", clampShort(delta, 220));
+        }
+        if (precomputedPatch != null && !precomputedPatch.isEmpty()) {
+            out.put("precomputedPatch", precomputedPatch.toMap());
+        }
         out.put("createdAt", System.currentTimeMillis());
         out.put("attemptCount", 0L);
         return out;
+    }
+
+    private static String compactSilhouetteEventContext(
+            String promptId,
+            String question,
+            String answer,
+            String contextMaybe,
+            String semanticDelta) {
+        String context = clampContext(contextMaybe);
+        String delta = clampContext(semanticDelta);
+        if (delta == null || delta.isBlank()) {
+            delta = compactSilhouetteDelta(promptId, question, answer, List.of());
+        }
+        if (context == null || context.isBlank()) {
+            return delta;
+        }
+        if (delta == null || delta.isBlank()) {
+            return context;
+        }
+        return clampContext(context + " | " + delta);
+    }
+
+    private static boolean hasPrecomputedSilhouettePatch(Map<String, Object> event) {
+        if (event == null || event.isEmpty()) {
+            return false;
+        }
+        Object raw = event.get("precomputedPatch");
+        if (!(raw instanceof Map<?, ?> map)) {
+            return false;
+        }
+        SilhouettePatch parsed = SilhouettePatch.fromMap(castStringObjectMap(map));
+        return parsed != null && !parsed.isEmpty();
+    }
+
+    private static SilhouettePatch precomputedSilhouettePatch(Map<String, Object> event) {
+        if (event == null || event.isEmpty()) {
+            return SilhouettePatch.empty();
+        }
+        Object raw = event.get("precomputedPatch");
+        if (!(raw instanceof Map<?, ?> map)) {
+            return SilhouettePatch.empty();
+        }
+        return SilhouettePatch.fromMap(castStringObjectMap(map));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> castStringObjectMap(Map<?, ?> raw) {
+        HashMap<String, Object> out = new HashMap<>();
+        if (raw == null || raw.isEmpty()) {
+            return out;
+        }
+        for (Map.Entry<?, ?> entry : raw.entrySet()) {
+            if (entry == null || entry.getKey() == null) {
+                continue;
+            }
+            out.put(entry.getKey().toString(), deepMutableCopy(entry.getValue()));
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Object deepMutableCopy(Object raw) {
+        if (raw instanceof Map<?, ?> map) {
+            return castStringObjectMap(map);
+        }
+        if (raw instanceof List<?> list) {
+            ArrayList<Object> out = new ArrayList<>(list.size());
+            for (Object item : list) {
+                out.add(deepMutableCopy(item));
+            }
+            return out;
+        }
+        return raw;
+    }
+
+    private CompletableFuture<Void> ackSilhouetteEvents(long accountId, Collection<String> eventIds) {
+        if (eventIds == null || eventIds.isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+        for (String eventId : eventIds) {
+            if (eventId == null || eventId.isBlank()) {
+                continue;
+            }
+            chain = chain.thenCompose(ignored -> ackSilhouetteEvent(accountId, eventId));
+        }
+        return chain;
+    }
+
+    private static List<String> eventIds(List<Map<String, Object>> events) {
+        if (events == null || events.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        for (Map<String, Object> event : events) {
+            String id = mapString(event, "eventId");
+            if (id != null && !id.isBlank()) {
+                ids.add(id);
+            }
+        }
+        return new ArrayList<>(ids);
+    }
+
+    private static Map<String, Object> mergeSilhouetteEvents(long accountId, List<Map<String, Object>> events) {
+        HashMap<String, Object> merged = new HashMap<>();
+        merged.put("eventId", "batch_" + UUID.randomUUID().toString().replace("-", ""));
+        merged.put("accountId", accountId);
+        if (events == null || events.isEmpty()) {
+            return merged;
+        }
+        Map<String, Object> latest = events.get(events.size() - 1);
+        String source = mapString(latest, "source");
+        String sourceId = mapString(latest, "sourceId");
+        String promptId = mapString(latest, "promptId");
+        String question = mapString(latest, "question");
+        String answer = mapString(latest, "answer");
+        ArrayList<String> snippets = new ArrayList<>();
+        for (Map<String, Object> event : events) {
+            String delta = mapString(event, "delta");
+            String context = mapString(event, "context");
+            String eventAnswer = mapString(event, "answer");
+            if (delta != null && !delta.isBlank()) {
+                snippets.add(delta);
+            } else if (context != null && !context.isBlank()) {
+                snippets.add(context);
+            } else if (eventAnswer != null && !eventAnswer.isBlank()) {
+                snippets.add(eventAnswer);
+            }
+            if (snippets.size() >= 8) {
+                break;
+            }
+        }
+        merged.put("source", source == null ? "private_prompt_batch" : source);
+        merged.put("sourceId", sourceId);
+        merged.put("promptId", promptId);
+        merged.put("question", question);
+        merged.put("answer", answer);
+        merged.put("conversation", "");
+        merged.put("context", clampContext(String.join(" | ", snippets)));
+        merged.put("createdAt", System.currentTimeMillis());
+        merged.put("attemptCount", 0L);
+        return merged;
     }
 
     private static boolean shouldQueueSilhouetteEvent(String source, String promptId, String answer) {
@@ -896,12 +1220,16 @@ public class CalypsoApiManager {
     }
 
     public CompletableFuture<SignalConceptPromotionResult> createSignalConceptWithDebug(String rawToken) {
+        return createSignalConceptWithDebug(rawToken, null);
+    }
+
+    public CompletableFuture<SignalConceptPromotionResult> createSignalConceptWithDebug(String rawToken, String category) {
         String normalizedRaw = SignalNormalizer.normalizeOne(rawToken);
         if (normalizedRaw == null || normalizedRaw.isBlank()) {
             return CompletableFuture.completedFuture(
                     new SignalConceptPromotionResult(false, normalizedRaw, normalizedRaw, 0, 0, 0, List.of()));
         }
-        return promoteSignalConceptWithDebug(normalizedRaw, normalizedRaw);
+        return promoteSignalConceptWithDebug(normalizedRaw, normalizedRaw, category);
     }
 
     public CompletableFuture<Boolean> createSignalConcept(String rawToken) {
@@ -911,6 +1239,13 @@ public class CalypsoApiManager {
     public CompletableFuture<SignalConceptPromotionResult> mapSignalConceptToExistingCanonicalWithDebug(
             String rawToken,
             String canonicalToken) {
+        return mapSignalConceptToExistingCanonicalWithDebug(rawToken, canonicalToken, null);
+    }
+
+    public CompletableFuture<SignalConceptPromotionResult> mapSignalConceptToExistingCanonicalWithDebug(
+            String rawToken,
+            String canonicalToken,
+            String category) {
         String normalizedCanonical = SignalNormalizer.normalizeOne(canonicalToken);
         if (normalizedCanonical == null || normalizedCanonical.isBlank()) {
             return CompletableFuture.failedFuture(new IllegalArgumentException("canonicalToken required."));
@@ -919,7 +1254,7 @@ public class CalypsoApiManager {
             return CompletableFuture.failedFuture(
                     new IllegalArgumentException("canonicalToken must map to an existing canonical concept."));
         }
-        return promoteSignalConceptWithDebug(rawToken, normalizedCanonical);
+        return promoteSignalConceptWithDebug(rawToken, normalizedCanonical, category);
     }
 
     public CompletableFuture<Boolean> mapSignalConceptToExistingCanonical(String rawToken, String canonicalToken) {
@@ -930,6 +1265,14 @@ public class CalypsoApiManager {
     public CompletableFuture<Map<String, Object>> actOnSignalConceptCandidate(
             String rawToken,
             String canonicalToken,
+            SignalConceptCandidateAction action) {
+        return actOnSignalConceptCandidate(rawToken, canonicalToken, null, action);
+    }
+
+    public CompletableFuture<Map<String, Object>> actOnSignalConceptCandidate(
+            String rawToken,
+            String canonicalToken,
+            String category,
             SignalConceptCandidateAction action) {
         if (action == null) {
             return CompletableFuture.failedFuture(new IllegalArgumentException("action required."));
@@ -948,6 +1291,7 @@ public class CalypsoApiManager {
                 out.put("changed", changed);
                 out.put("rawToken", SignalNormalizer.normalizeOne(rawToken));
                 out.put("canonicalToken", null);
+                out.put("category", null);
                 out.put("migratedStoredAccounts", 0);
                 out.put("replayedObservedAccounts", 0);
                 out.put("replayedContextualOwners", 0);
@@ -956,14 +1300,17 @@ public class CalypsoApiManager {
             });
         }
         CompletableFuture<SignalConceptPromotionResult> changeFuture = action == SignalConceptCandidateAction.CREATE
-                ? createSignalConceptWithDebug(rawToken)
-                : mapSignalConceptToExistingCanonicalWithDebug(rawToken, canonicalToken);
+                ? createSignalConceptWithDebug(rawToken, category)
+                : mapSignalConceptToExistingCanonicalWithDebug(rawToken, canonicalToken, category);
         return changeFuture.thenApply(result -> {
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("action", action.name().toLowerCase(Locale.ROOT));
             out.put("changed", result == null ? Boolean.FALSE : result.changed);
             out.put("rawToken", result == null ? null : result.rawToken);
             out.put("canonicalToken", result == null ? null : result.canonicalToken);
+            out.put("category", result == null || result.canonicalToken == null
+                    ? null
+                    : SignalConceptRegistry.categoryForConcept(result.canonicalToken));
             out.put("migratedStoredAccounts", result == null ? 0 : result.migratedStoredAccounts);
             out.put("replayedObservedAccounts", result == null ? 0 : result.replayedObservedAccounts);
             out.put("replayedContextualOwners", result == null ? 0 : result.replayedContextualOwners);
@@ -974,6 +1321,12 @@ public class CalypsoApiManager {
 
     public CompletableFuture<SignalConceptPromotionResult> promoteSignalConceptWithDebug(String rawToken,
             String canonicalToken) {
+        return promoteSignalConceptWithDebug(rawToken, canonicalToken, null);
+    }
+
+    public CompletableFuture<SignalConceptPromotionResult> promoteSignalConceptWithDebug(String rawToken,
+            String canonicalToken,
+            String category) {
         final String normalizedRaw = SignalNormalizer.normalizeOne(rawToken);
         final String normalizedCanonical = SignalNormalizer.normalizeOne(canonicalToken);
         if (normalizedRaw == null || normalizedRaw.isBlank()
@@ -993,7 +1346,7 @@ public class CalypsoApiManager {
                 }
             }
         }
-        boolean changed = SignalConceptRegistry.promoteAlias(normalizedRaw, normalizedCanonical);
+        boolean changed = SignalConceptRegistry.promoteAlias(normalizedRaw, normalizedCanonical, category);
         if (!changed) {
             return CompletableFuture.completedFuture(new SignalConceptPromotionResult(
                     false,
@@ -2121,22 +2474,71 @@ public class CalypsoApiManager {
                     answer.setBody(normalizedBody);
                     answer.setAnsweredAt(now);
 
-                    CompletableFuture<List<String>> signalTokensFuture = extractAndAppendSignalsFromPrompt(
-                            accountId,
-                            current.getPromptId(),
-                            prompt.getText(),
-                            normalizedBody,
-                            normalizedConversation,
-                            "private_prompt",
-                            current.getInstanceId()).exceptionally(ex -> {
-                                LOG.warn("Signal extraction failed for private prompt answer {}", current.getInstanceId(),
-                                        ex);
-                                return List.of();
-                            });
+                    CompletableFuture<PrivatePromptProcessingResult> processingFuture = PRIVATE_UNIFIED_UNDERSTANDING_ENABLED
+                            ? extractAndAppendFromUnifiedPrivateUnderstanding(
+                                    accountId,
+                                    current.getPromptId(),
+                                    prompt.getText(),
+                                    normalizedBody,
+                                    normalizedConversation,
+                                    "private_prompt",
+                                    current.getInstanceId()).exceptionally(ex -> {
+                                        LOG.warn("Unified private understanding failed for {}", current.getInstanceId(), ex);
+                                        return PrivatePromptProcessingResult.empty(false, compactSilhouetteDelta(
+                                                current.getPromptId(),
+                                                prompt.getText(),
+                                                normalizedBody,
+                                                normalizedConversation));
+                                    }).thenCompose(result -> {
+                                        if (result != null && result.parsed) {
+                                            return CompletableFuture.completedFuture(result);
+                                        }
+                                        return extractAndAppendSignalsFromPrompt(
+                                                accountId,
+                                                current.getPromptId(),
+                                                prompt.getText(),
+                                                normalizedBody,
+                                                normalizedConversation,
+                                                "private_prompt",
+                                                current.getInstanceId()).thenApply(tokens -> new PrivatePromptProcessingResult(
+                                                        tokens,
+                                                        SilhouettePatch.empty(),
+                                                        false,
+                                                        compactSilhouetteDelta(
+                                                                current.getPromptId(),
+                                                                prompt.getText(),
+                                                                normalizedBody,
+                                                                normalizedConversation)));
+                                    })
+                            : extractAndAppendSignalsFromPrompt(
+                                    accountId,
+                                    current.getPromptId(),
+                                    prompt.getText(),
+                                    normalizedBody,
+                                    normalizedConversation,
+                                    "private_prompt",
+                                    current.getInstanceId()).thenApply(tokens -> new PrivatePromptProcessingResult(
+                                            tokens,
+                                            SilhouettePatch.empty(),
+                                            false,
+                                            compactSilhouetteDelta(
+                                                    current.getPromptId(),
+                                                    prompt.getText(),
+                                                    normalizedBody,
+                                                    normalizedConversation)))
+                                    .exceptionally(ex -> {
+                                        LOG.warn("Signal extraction failed for private prompt answer {}", current.getInstanceId(),
+                                                ex);
+                                        return PrivatePromptProcessingResult.empty(false, compactSilhouetteDelta(
+                                                current.getPromptId(),
+                                                prompt.getText(),
+                                                normalizedBody,
+                                                normalizedConversation));
+                                    });
 
-                    return signalTokensFuture.thenCompose(tokens -> {
-                        if (tokens != null && !tokens.isEmpty()) {
-                            answer.setSignalTokens(tokens);
+                    return processingFuture.thenCompose(processing -> {
+                        if (processing != null && processing.signalTokens != null && !processing.signalTokens.isEmpty()) {
+                            answer.setSignalTokens(processing.signalTokens);
                         }
                         PrivatePromptAssignment updated = new PrivatePromptAssignment(current);
                         updated.setStatus(PrivatePromptStatus.ANSWERED);
@@ -2151,15 +2553,31 @@ public class CalypsoApiManager {
                             if (ex == null) {
                                 String context = normalizedConversation.isEmpty() ? normalizedBody
                                         : String.join(" | ", normalizedConversation);
-                                queueSilhouetteUpdateAsync(
-                                        accountId,
-                                        "private_prompt",
-                                        current.getInstanceId(),
-                                        current.getPromptId(),
-                                        prompt.getText(),
-                                        normalizedBody,
-                                        normalizedConversation,
-                                        context);
+                                if (processing != null && processing.parsed) {
+                                    if (processing.patch != null && !processing.patch.isEmpty()) {
+                                        queueSilhouetteUpdateAsync(
+                                                accountId,
+                                                "private_prompt",
+                                                current.getInstanceId(),
+                                                current.getPromptId(),
+                                                prompt.getText(),
+                                                normalizedBody,
+                                                normalizedConversation,
+                                                context,
+                                                processing.patch,
+                                                processing.delta);
+                                    }
+                                } else {
+                                    queueSilhouetteUpdateAsync(
+                                            accountId,
+                                            "private_prompt",
+                                            current.getInstanceId(),
+                                            current.getPromptId(),
+                                            prompt.getText(),
+                                            normalizedBody,
+                                            normalizedConversation,
+                                            context);
+                                }
                             }
                         });
                     });
@@ -2434,22 +2852,72 @@ public class CalypsoApiManager {
                     answer.setBody(normalizedBody);
                     answer.setAnsweredAt(now);
 
-                    CompletableFuture<List<String>> signalTokensFuture = extractAndAppendSignalsFromPrompt(
-                            accountId,
-                            MATCHMAKING_FOLLOWUP_PROMPT_ID,
-                            question,
-                            normalizedBody,
-                            normalizedConversation,
-                            "matchmaking_followup",
-                            current.getInstanceId()).exceptionally(ex -> {
-                                LOG.warn("Signal extraction failed for matchmaking followup {}", current.getInstanceId(),
-                                        ex);
-                                return List.of();
-                            });
+                    CompletableFuture<PrivatePromptProcessingResult> processingFuture = PRIVATE_UNIFIED_UNDERSTANDING_ENABLED
+                            ? extractAndAppendFromUnifiedPrivateUnderstanding(
+                                    accountId,
+                                    MATCHMAKING_FOLLOWUP_PROMPT_ID,
+                                    question,
+                                    normalizedBody,
+                                    normalizedConversation,
+                                    "matchmaking_followup",
+                                    current.getInstanceId()).exceptionally(ex -> {
+                                        LOG.warn("Unified understanding failed for matchmaking followup {}", current.getInstanceId(),
+                                                ex);
+                                        return PrivatePromptProcessingResult.empty(false, compactSilhouetteDelta(
+                                                MATCHMAKING_FOLLOWUP_PROMPT_ID,
+                                                question,
+                                                normalizedBody,
+                                                normalizedConversation));
+                                    }).thenCompose(result -> {
+                                        if (result != null && result.parsed) {
+                                            return CompletableFuture.completedFuture(result);
+                                        }
+                                        return extractAndAppendSignalsFromPrompt(
+                                                accountId,
+                                                MATCHMAKING_FOLLOWUP_PROMPT_ID,
+                                                question,
+                                                normalizedBody,
+                                                normalizedConversation,
+                                                "matchmaking_followup",
+                                                current.getInstanceId()).thenApply(tokens -> new PrivatePromptProcessingResult(
+                                                        tokens,
+                                                        SilhouettePatch.empty(),
+                                                        false,
+                                                        compactSilhouetteDelta(
+                                                                MATCHMAKING_FOLLOWUP_PROMPT_ID,
+                                                                question,
+                                                                normalizedBody,
+                                                                normalizedConversation)));
+                                    })
+                            : extractAndAppendSignalsFromPrompt(
+                                    accountId,
+                                    MATCHMAKING_FOLLOWUP_PROMPT_ID,
+                                    question,
+                                    normalizedBody,
+                                    normalizedConversation,
+                                    "matchmaking_followup",
+                                    current.getInstanceId()).thenApply(tokens -> new PrivatePromptProcessingResult(
+                                            tokens,
+                                            SilhouettePatch.empty(),
+                                            false,
+                                            compactSilhouetteDelta(
+                                                    MATCHMAKING_FOLLOWUP_PROMPT_ID,
+                                                    question,
+                                                    normalizedBody,
+                                                    normalizedConversation)))
+                                    .exceptionally(ex -> {
+                                        LOG.warn("Signal extraction failed for matchmaking followup {}", current.getInstanceId(),
+                                                ex);
+                                        return PrivatePromptProcessingResult.empty(false, compactSilhouetteDelta(
+                                                MATCHMAKING_FOLLOWUP_PROMPT_ID,
+                                                question,
+                                                normalizedBody,
+                                                normalizedConversation));
+                                    });
 
-                    return signalTokensFuture.thenCompose(tokens -> {
-                        if (tokens != null && !tokens.isEmpty()) {
-                            answer.setSignalTokens(tokens);
+                    return processingFuture.thenCompose(processing -> {
+                        if (processing != null && processing.signalTokens != null && !processing.signalTokens.isEmpty()) {
+                            answer.setSignalTokens(processing.signalTokens);
                         }
                         PrivatePromptAssignment updated = new PrivatePromptAssignment(current);
                         updated.setStatus(PrivatePromptStatus.ANSWERED);
@@ -2472,15 +2940,31 @@ public class CalypsoApiManager {
                             if (ex == null) {
                                 String context = normalizedConversation.isEmpty() ? normalizedBody
                                         : String.join(" | ", normalizedConversation);
-                                queueSilhouetteUpdateAsync(
-                                        accountId,
-                                        "matchmaking_followup",
-                                        current.getInstanceId(),
-                                        MATCHMAKING_FOLLOWUP_PROMPT_ID,
-                                        question,
-                                        normalizedBody,
-                                        normalizedConversation,
-                                        context);
+                                if (processing != null && processing.parsed) {
+                                    if (processing.patch != null && !processing.patch.isEmpty()) {
+                                        queueSilhouetteUpdateAsync(
+                                                accountId,
+                                                "matchmaking_followup",
+                                                current.getInstanceId(),
+                                                MATCHMAKING_FOLLOWUP_PROMPT_ID,
+                                                question,
+                                                normalizedBody,
+                                                normalizedConversation,
+                                                context,
+                                                processing.patch,
+                                                processing.delta);
+                                    }
+                                } else {
+                                    queueSilhouetteUpdateAsync(
+                                            accountId,
+                                            "matchmaking_followup",
+                                            current.getInstanceId(),
+                                            MATCHMAKING_FOLLOWUP_PROMPT_ID,
+                                            question,
+                                            normalizedBody,
+                                            normalizedConversation,
+                                            context);
+                                }
                             }
                         });
                     });
@@ -3981,6 +4465,304 @@ public class CalypsoApiManager {
         });
     }
 
+    private CompletableFuture<PrivatePromptProcessingResult> extractAndAppendFromUnifiedPrivateUnderstanding(
+            long accountId,
+            String promptId,
+            String question,
+            String answer,
+            List<String> conversationLines,
+            String source,
+            String sourceId) {
+        List<String> normalizedConversation = clampConversationLines(conversationLines, 40, 320);
+        String context = normalizedConversation.isEmpty() ? answer : String.join(" | ", normalizedConversation);
+        if (promptId != null && !promptId.isBlank()) {
+            context = appendContextField(context, "prompt_id", promptId.trim());
+        }
+        final String finalContext = context;
+        return CompletableFuture.supplyAsync(() -> PrivatePromptUnderstanding.generate(
+                openAI,
+                promptId,
+                question,
+                answer,
+                normalizedConversation,
+                Set.of())).thenCompose(understanding -> {
+                    if (understanding == null || !understanding.parsed) {
+                        return CompletableFuture.completedFuture(
+                                PrivatePromptProcessingResult.empty(false, compactSilhouetteDelta(promptId, question, answer,
+                                        normalizedConversation)));
+                    }
+                    List<ExtractedSignal> rawSignals = understanding.signals == null ? List.of() : understanding.signals;
+                    List<ExtractedSignal> signals = SignalExtractor.augmentWithExplicitTitleMentions(
+                            promptId,
+                            question,
+                            answer,
+                            Set.of(),
+                            rawSignals);
+                    observePromptDisambiguationCandidates(
+                            accountId,
+                            promptId,
+                            question,
+                            answer,
+                            normalizedConversation,
+                            signals,
+                            source,
+                            sourceId,
+                            finalContext);
+                    SilhouettePatch residualPatch = sanitizeSilhouettePatchForResidualSemantics(
+                            understanding.patch,
+                            signals,
+                            promptId);
+                    if (signals.isEmpty()) {
+                        return CompletableFuture.completedFuture(
+                                new PrivatePromptProcessingResult(
+                                        List.of(),
+                                        residualPatch,
+                                        true,
+                                        compactSilhouetteDelta(promptId, question, answer, normalizedConversation)));
+                    }
+                    List<String> extractedTokens = tokens(signals);
+                    return persistSignals(accountId, signals, source, sourceId, finalContext)
+                            .thenApply(ok -> new PrivatePromptProcessingResult(
+                                    extractedTokens,
+                                    residualPatch,
+                                    true,
+                                    compactSilhouetteDelta(promptId, question, answer, normalizedConversation)));
+                });
+    }
+
+    private static SilhouettePatch sanitizeSilhouettePatchForResidualSemantics(
+            SilhouettePatch patch,
+            List<ExtractedSignal> extractedSignals,
+            String promptId) {
+        if (patch == null || patch.isEmpty() || patch.ops == null || patch.ops.isEmpty()) {
+            return SilhouettePatch.empty();
+        }
+        Set<String> concreteTokens = concreteSignalTokens(extractedSignals);
+        boolean signalFirstPrompt = isSilhouetteSignalFirstPrompt(promptId);
+        SilhouettePatch out = new SilhouettePatch();
+        for (SilhouettePatch.Op op : patch.ops) {
+            if (op == null || op.op == null || op.op.isBlank()) {
+                continue;
+            }
+            if (isLowValueMetaObservationOp(op)) {
+                continue;
+            }
+            if (shouldSuppressSilhouetteOpAsConcreteEcho(op, concreteTokens)) {
+                continue;
+            }
+            if (signalFirstPrompt && shouldSuppressSignalFirstSilhouetteOp(op, concreteTokens)) {
+                continue;
+            }
+            out.ops.add(op);
+        }
+        return out;
+    }
+
+    private static boolean isSilhouetteSignalFirstPrompt(String promptId) {
+        if (promptId == null || promptId.isBlank()) {
+            return false;
+        }
+        String normalized = promptId.trim().toLowerCase(Locale.ROOT);
+        return SILHOUETTE_SIGNAL_FIRST_PROMPT_IDS.contains(normalized);
+    }
+
+    private static boolean shouldSuppressSignalFirstSilhouetteOp(
+            SilhouettePatch.Op op,
+            Set<String> concreteTokens) {
+        if (op == null) {
+            return false;
+        }
+        String facet = SignalNormalizer.normalizeOne(op.key);
+        if ("partner_comps".equals(facet) || "narrative".equals(facet)) {
+            return false;
+        }
+        String text = asTrimmedString(op.text);
+        if (text == null) {
+            text = asTrimmedString(op.summary);
+        }
+        if (text == null) {
+            text = asTrimmedString(op.label);
+        }
+        if (text == null || text.isBlank()) {
+            return true;
+        }
+        String lowered = text.toLowerCase(Locale.ROOT);
+        for (String cue : SILHOUETTE_ABSTRACT_CUE_TERMS) {
+            if (cue != null && !cue.isBlank() && lowered.contains(cue)) {
+                return false;
+            }
+        }
+        if (concreteTokens == null || concreteTokens.isEmpty()) {
+            return true;
+        }
+        String normalizedText = normalizePhraseText(text);
+        for (String token : concreteTokens) {
+            if (token == null || token.isBlank()) {
+                continue;
+            }
+            if (containsPhrase(normalizedText, token.replace('_', ' '))) {
+                return true;
+            }
+        }
+        return true;
+    }
+
+    private static Set<String> concreteSignalTokens(List<ExtractedSignal> extractedSignals) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (extractedSignals == null || extractedSignals.isEmpty()) {
+            return out;
+        }
+        for (ExtractedSignal signal : extractedSignals) {
+            if (signal == null || signal.token() == null || signal.token().isBlank()) {
+                continue;
+            }
+            String token = SignalNormalizer.normalizeOne(signal.token());
+            if (token == null || token.isBlank()) {
+                continue;
+            }
+            String category = SignalConceptRegistry.categoryForConcept(token);
+            if (SignalTaxonomy.isConcreteCategory(category)) {
+                out.add(token);
+            }
+        }
+        return out;
+    }
+
+    private static boolean shouldSuppressSilhouetteOpAsConcreteEcho(
+            SilhouettePatch.Op op,
+            Set<String> concreteTokens) {
+        if (op == null) {
+            return false;
+        }
+        String facet = SignalNormalizer.normalizeOne(op.key);
+        if ("partner_comps".equals(facet) || "narrative".equals(facet)) {
+            return false;
+        }
+        if (concreteTokens == null || concreteTokens.isEmpty()) {
+            return false;
+        }
+        String text = asTrimmedString(op.text);
+        if (text == null) {
+            text = asTrimmedString(op.summary);
+        }
+        if (text == null) {
+            text = asTrimmedString(op.label);
+        }
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+
+        LinkedHashSet<String> matched = new LinkedHashSet<>();
+        String normalizedText = normalizePhraseText(text);
+        for (String token : concreteTokens) {
+            if (token == null || token.isBlank()) {
+                continue;
+            }
+            String phrase = token.replace('_', ' ');
+            if (containsPhrase(normalizedText, phrase)) {
+                matched.add(token);
+            }
+        }
+        if (matched.isEmpty()) {
+            return false;
+        }
+        String lowered = text.toLowerCase(Locale.ROOT);
+        for (String cue : SILHOUETTE_ABSTRACT_CUE_TERMS) {
+            if (cue != null && !cue.isBlank() && lowered.contains(cue)) {
+                return false;
+            }
+        }
+        String residual = normalizedText;
+        for (String token : matched) {
+            residual = residual.replace(token.replace('_', ' '), " ");
+        }
+        residual = residual
+                .replaceAll(
+                        "\\b(prefers?|prefer|exclude|excluding|dislike|dislikes|disliked|hate|hates|avoid|avoids|turn\\s+off|people|person|partners?|who|engage|with|into|culture|scene|vibes?|social|community|belonging|home|primary|identif(?:y|ies)|strongly|around|for|to|and|or|the|a|an|of|on|in|is|are|be|not|no|get|dont|don't|just)\\b",
+                        " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+
+        if ("hard_boundaries".equals(facet)) {
+            return residual.length() <= 28;
+        }
+        return residual.length() <= 18;
+    }
+
+    private static boolean isLowValueMetaObservationOp(SilhouettePatch.Op op) {
+        if (op == null) {
+            return false;
+        }
+        String facet = SignalNormalizer.normalizeOne(op.key);
+        String kind = SignalNormalizer.normalizeOne(op.kind);
+        if (!"meta_observation".equals(facet) && !"meta_observation".equals(kind)) {
+            return false;
+        }
+        String text = asTrimmedString(op.text);
+        if (text == null) {
+            text = asTrimmedString(op.summary);
+        }
+        if (text == null || text.isBlank()) {
+            return true;
+        }
+        String lowered = text.toLowerCase(Locale.ROOT);
+        for (String generic : SILHOUETTE_GENERIC_META_SUBSTRINGS) {
+            if (generic != null && !generic.isBlank() && lowered.contains(generic)) {
+                return true;
+            }
+        }
+        return lowered.contains("focuses on")
+                && (lowered.contains("lifestyle")
+                        || lowered.contains("filters")
+                        || lowered.contains("compatibility"));
+    }
+
+    private static String normalizePhraseText(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        return raw.toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9 ]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private static boolean containsPhrase(String normalizedText, String phrase) {
+        if (normalizedText == null || normalizedText.isBlank() || phrase == null || phrase.isBlank()) {
+            return false;
+        }
+        String normalizedPhrase = phrase.toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9 ]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (normalizedPhrase.isBlank()) {
+            return false;
+        }
+        return (" " + normalizedText + " ").contains(" " + normalizedPhrase + " ");
+    }
+
+    private static String compactSilhouetteDelta(
+            String promptId,
+            String question,
+            String answer,
+            List<String> conversationLines) {
+        String prompt = clampPromptText(promptId, 96);
+        String q = clampPromptText(question, 120);
+        String a = clampPromptText(answer, 180);
+        String convo = "";
+        if (conversationLines != null && !conversationLines.isEmpty()) {
+            int start = Math.max(0, conversationLines.size() - 4);
+            List<String> tail = conversationLines.subList(start, conversationLines.size());
+            convo = clampPromptText(String.join(" | ", tail), 180);
+        }
+        String delta = null;
+        delta = appendContextField(delta, "prompt_id", prompt == null ? "" : prompt);
+        delta = appendContextField(delta, "q", q == null ? "" : q);
+        delta = appendContextField(delta, "a", a == null ? "" : a);
+        delta = appendContextField(delta, "tail", convo == null ? "" : convo);
+        return clampContext(delta);
+    }
+
     private static List<String> tokens(List<ExtractedSignal> signals) {
         if (signals == null || signals.isEmpty())
             return List.of();
@@ -3996,6 +4778,24 @@ public class CalypsoApiManager {
             unique.add(normalized);
         }
         return new ArrayList<>(unique);
+    }
+
+    private static final class PrivatePromptProcessingResult {
+        final List<String> signalTokens;
+        final SilhouettePatch patch;
+        final boolean parsed;
+        final String delta;
+
+        PrivatePromptProcessingResult(List<String> signalTokens, SilhouettePatch patch, boolean parsed, String delta) {
+            this.signalTokens = signalTokens == null ? List.of() : List.copyOf(signalTokens);
+            this.patch = patch == null ? SilhouettePatch.empty() : patch;
+            this.parsed = parsed;
+            this.delta = delta;
+        }
+
+        static PrivatePromptProcessingResult empty(boolean parsed, String delta) {
+            return new PrivatePromptProcessingResult(List.of(), SilhouettePatch.empty(), parsed, delta);
+        }
     }
 
     private CompletableFuture<Void> requestRefill(long viewerId, int targetSize) {

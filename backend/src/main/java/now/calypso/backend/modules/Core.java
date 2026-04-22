@@ -786,12 +786,13 @@ public class Core implements RamaModule {
             out.put("accountId", accountId);
             out.put("version", 1L);
             out.put("maturity", "empty");
-            out.put("story", "");
-            out.put("facets", new ArrayList<>());
-            out.put("anchors", new ArrayList<>());
-            out.put("metaObservations", new ArrayList<>());
-            out.put("evidence", new ArrayList<>());
-            out.put("history", new ArrayList<>());
+            out.put("claims", new ArrayList<>());
+            HashMap<String, Object> summary = new HashMap<>();
+            summary.put("rerankerShort", "");
+            summary.put("adminLong", "");
+            summary.put("generatedFromVersion", 0L);
+            summary.put("updatedAt", 0L);
+            out.put("summaryCache", summary);
             out.put("updatedAt", now);
             return out;
       }
@@ -803,12 +804,34 @@ public class Core implements RamaModule {
             if (payload.isEmpty()) {
                   return defaultSilhouette(accountId, now);
             }
-            HashMap<String, Object> out = new HashMap<>(defaultSilhouette(accountId, now));
-            out.putAll(payload);
+            HashMap<String, Object> out = new HashMap<>();
             out.put("accountId", accountId);
-            out.put("maturity", asStringTrimmed(out.get("maturity")) == null ? "empty" : out.get("maturity"));
-            out.put("story", asStringTrimmed(out.get("story")) == null ? "" : out.get("story"));
-            out.put("updatedAt", asLong(out.get("updatedAt"), now));
+            out.put("version", asLong(payload.get("version"), 1L));
+            out.put("maturity", asStringTrimmed(payload.get("maturity")) == null ? "empty" : payload.get("maturity"));
+            Object claims = payload.get("claims");
+            if (!(claims instanceof List<?>)) {
+                  claims = payload.get("claimLedger");
+            }
+            if (!(claims instanceof List<?>)) {
+                  out.put("claims", new ArrayList<>());
+            } else {
+                  out.put("claims", claims);
+            }
+            Object summary = payload.get("summaryCache");
+            if (!(summary instanceof Map<?, ?>)) {
+                  summary = payload.get("summary_cache");
+            }
+            if (!(summary instanceof Map<?, ?>)) {
+                  HashMap<String, Object> fallbackSummary = new HashMap<>();
+                  fallbackSummary.put("rerankerShort", "");
+                  fallbackSummary.put("adminLong", "");
+                  fallbackSummary.put("generatedFromVersion", 0L);
+                  fallbackSummary.put("updatedAt", 0L);
+                  out.put("summaryCache", fallbackSummary);
+            } else {
+                  out.put("summaryCache", summary);
+            }
+            out.put("updatedAt", asLong(payload.get("updatedAt"), now));
             return out;
       }
 

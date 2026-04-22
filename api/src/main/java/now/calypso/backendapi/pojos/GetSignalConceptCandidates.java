@@ -24,6 +24,7 @@ public class GetSignalConceptCandidates {
                 out.add(new Candidate(entry.rawToken, entry.seenCount, entry.firstSeen, entry.lastSeen,
                         entry.lastSource, entry.exampleContexts, toObservedAccounts(entry.observedAccountIntents),
                         entry.suggestedCanonical, entry.suggestionScore,
+                        entry.suggestedCategory,
                         entry.autoReady, null));
             }
         }
@@ -42,6 +43,7 @@ public class GetSignalConceptCandidates {
                 out.add(new Candidate(entry.rawToken, entry.seenCount, entry.firstSeen, entry.lastSeen,
                         entry.lastSource, entry.exampleContexts, toObservedAccounts(entry.observedAccountIntents),
                         entry.suggestedCanonical, entry.suggestionScore,
+                        entry.suggestedCategory,
                         false, entry.blockedAt));
             }
         }
@@ -85,6 +87,7 @@ public class GetSignalConceptCandidates {
         public final List<ObservedAccount> observedAccounts;
         public final String suggestedCanonical;
         public final Double suggestionScore;
+        public final String suggestedCategory;
         public final boolean autoReady;
         public final Long blockedAt;
 
@@ -99,6 +102,7 @@ public class GetSignalConceptCandidates {
                 @JsonProperty("observedAccounts") List<ObservedAccount> observedAccounts,
                 @JsonProperty("suggestedCanonical") String suggestedCanonical,
                 @JsonProperty("suggestionScore") Double suggestionScore,
+                @JsonProperty("suggestedCategory") String suggestedCategory,
                 @JsonProperty("autoReady") boolean autoReady,
                 @JsonProperty("blockedAt") Long blockedAt) {
             this.rawToken = rawToken;
@@ -112,6 +116,7 @@ public class GetSignalConceptCandidates {
                     : Collections.unmodifiableList(new ArrayList<>(observedAccounts));
             this.suggestedCanonical = suggestedCanonical;
             this.suggestionScore = suggestionScore;
+            this.suggestedCategory = suggestedCategory;
             this.autoReady = autoReady;
             this.blockedAt = blockedAt;
         }

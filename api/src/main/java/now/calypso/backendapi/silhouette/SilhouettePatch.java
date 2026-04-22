@@ -1,6 +1,7 @@
 package now.calypso.backendapi.silhouette;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -60,6 +61,22 @@ public final class SilhouettePatch {
         return ops.isEmpty();
     }
 
+    public Map<String, Object> toMap() {
+        List<Map<String, Object>> outOps = new ArrayList<>();
+        for (Op op : ops) {
+            if (op == null) {
+                continue;
+            }
+            Map<String, Object> opMap = op.toMap();
+            if (!opMap.isEmpty()) {
+                outOps.add(opMap);
+            }
+        }
+        HashMap<String, Object> out = new HashMap<>();
+        out.put("ops", outOps);
+        return out;
+    }
+
     public static final class Op {
         public final String op;
         public final String key;
@@ -79,7 +96,7 @@ public final class SilhouettePatch {
             this.label = label;
             this.kind = kind;
             this.confidence = confidence;
-            this.evidenceIds = evidenceIds == null ? List.of() : List.copyOf(evidenceIds);
+            this.evidenceIds = evidenceIds == null ? new ArrayList<>() : new ArrayList<>(evidenceIds);
         }
 
         @SuppressWarnings("unchecked")
@@ -117,6 +134,35 @@ public final class SilhouettePatch {
                 }
             }
             return new Op(op, key, summary, text, label, kind, confidence, new ArrayList<>(evidence));
+        }
+
+        Map<String, Object> toMap() {
+            HashMap<String, Object> out = new HashMap<>();
+            if (op != null && !op.isBlank()) {
+                out.put("op", op);
+            }
+            if (key != null && !key.isBlank()) {
+                out.put("key", key);
+            }
+            if (summary != null && !summary.isBlank()) {
+                out.put("summary", summary);
+            }
+            if (text != null && !text.isBlank()) {
+                out.put("text", text);
+            }
+            if (label != null && !label.isBlank()) {
+                out.put("label", label);
+            }
+            if (kind != null && !kind.isBlank()) {
+                out.put("kind", kind);
+            }
+            if (confidence != null && Double.isFinite(confidence.doubleValue())) {
+                out.put("confidence", confidence.doubleValue());
+            }
+            if (evidenceIds != null && !evidenceIds.isEmpty()) {
+                out.put("evidenceIds", new ArrayList<>(evidenceIds));
+            }
+            return out;
         }
 
         private static String normalizeToken(Object raw) {

@@ -8,6 +8,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openai.client.OpenAIClient;
@@ -40,7 +41,9 @@ public final class SignalExtractor {
                 List<String> already = tokens(acc.values());
                 List<ExtractedSignal> raw = call(openAI, SignalPrompts.FREEFORM_SYSTEM_PROMPT,
                         SignalPrompts.freeformUserPrompt(c, already),
-                        Math.min(PER_CALL_MAX, GLOBAL_SOFT_CAP - acc.size()));
+                        Math.min(PER_CALL_MAX, GLOBAL_SOFT_CAP - acc.size()),
+                        "freeform",
+                        null);
 
                 boolean any = merge(acc, raw);
                 if (!any)
@@ -62,7 +65,9 @@ public final class SignalExtractor {
         LinkedHashMap<String, ExtractedSignal> acc = new LinkedHashMap<>();
         List<ExtractedSignal> raw = call(openAI, SignalPrompts.AGENT_CHAT_SYSTEM_PROMPT,
                 SignalPrompts.agentChatUserPrompt(normalizedConversation, normalizedAlreadyHave),
-                PER_CALL_MAX);
+                PER_CALL_MAX,
+                "agent_chat",
+                null);
         merge(acc, raw);
         return cleanupSpecificityConflicts(filtered(acc.values(), normalizedAlreadyHave));
     }
@@ -101,13 +106,16 @@ public final class SignalExtractor {
             List<ExtractedSignal> raw = call(openAI, SignalPrompts.PROMPT_RESPONSE_SYSTEM_PROMPT,
                     SignalPrompts.promptResponseUserPrompt(promptId, profileHint, question, answer,
                             normalizedConversation, already),
-                    maxPerCall);
+                    maxPerCall,
+                    "prompt_response",
+                    promptId);
             boolean any = merge(acc, raw);
             if (!any)
                 break;
         }
 
         injectExplicitTitleMentions(promptId, question, answer, normalizedAlreadyHave, acc);
+        injectExplicitCanonicalMentions(promptId, question, answer, normalizedAlreadyHave, acc);
 
         List<ExtractedSignal> filtered = filtered(acc.values(), normalizedAlreadyHave);
         List<ExtractedSignal> adjusted = applyPromptContextAdjustments(question, answer, normalizedConversation, filtered);
@@ -123,6 +131,22 @@ public final class SignalExtractor {
                 normalizedConversation,
                 enriched);
         return cleanupSpecificityConflicts(finalAdjusted);
+    }
+
+    public static List<ExtractedSignal> augmentWithExplicitTitleMentions(
+            String promptId,
+            String question,
+            String answer,
+            Collection<String> alreadyHave,
+            List<ExtractedSignal> baseSignals) {
+        Collection<String> normalizedAlreadyHave = normalizeAlreadyHave(alreadyHave);
+        LinkedHashMap<String, ExtractedSignal> acc = new LinkedHashMap<>();
+        if (baseSignals != null && !baseSignals.isEmpty()) {
+            merge(acc, baseSignals);
+        }
+        injectExplicitTitleMentions(promptId, question, answer, normalizedAlreadyHave, acc);
+        injectExplicitCanonicalMentions(promptId, question, answer, normalizedAlreadyHave, acc);
+        return cleanupSpecificityConflicts(filtered(acc.values(), normalizedAlreadyHave));
     }
 
     private static void injectExplicitTitleMentions(
@@ -143,7 +167,70 @@ public final class SignalExtractor {
             seen.addAll(alreadyHave);
         }
         seen.addAll(tokens(acc.values()));
-        SignalIntent intent = defaultTitleIntent(promptId);
+        SignalIntent intent = defaultTitleIntent(promptId, question, answer);
+        double valence = isNegativePreferenceContext(question, answer, List.of()) ? -0.78 : 0.78;
+        int injected = 0;
+        for (String token : mentions) {
+            if (token == null || token.isBlank() || seen.contains(token)) {
+                continue;
+            }
+            ExtractedSignal forced = ExtractedSignal.from(token, intent, valence);
+            if (forced == null) {
+                continue;
+            }
+            merge(acc, List.of(forced));
+            seen.add(token);
+            injected += 1;
+            if (injected >= 3) {
+                break;
+            }
+        }
+    }
+
+    private static final Set<String> SIGNAL_FIRST_PRIVATE_PROMPTS = Set.of(
+            "private.hobbies",
+            "private.communities.scene",
+            "private.great.night",
+            "private.places.home");
+
+    private static final Set<String> CANONICAL_MENTION_INJECTION_PROMPTS = Set.of(
+            "private.hobbies",
+            "private.communities.scene",
+            "private.great.night",
+            "private.places.home",
+            "private.popular.dislike",
+            "private.not.my.person",
+            "private.drawn.to",
+            "private.fictional.characters",
+            "private.media.revisit",
+            "private.fascinating.people",
+            "matchmaking.followup",
+            "private.matchmaking.followup");
+
+    private static void injectExplicitCanonicalMentions(
+            String promptId,
+            String question,
+            String answer,
+            Collection<String> alreadyHave,
+            LinkedHashMap<String, ExtractedSignal> acc) {
+        if (acc == null || answer == null || answer.isBlank()) {
+            return;
+        }
+        String normalizedPromptId = promptId == null ? null : promptId.trim().toLowerCase(Locale.ROOT);
+        if (normalizedPromptId == null || !CANONICAL_MENTION_INJECTION_PROMPTS.contains(normalizedPromptId)) {
+            return;
+        }
+        boolean concreteOnly = normalizedPromptId != null && SIGNAL_FIRST_PRIVATE_PROMPTS.contains(normalizedPromptId);
+        LinkedHashSet<String> mentions = detectExplicitCanonicalMentions(answer, 5, concreteOnly);
+        if (mentions.isEmpty()) {
+            return;
+        }
+        HashSet<String> seen = new HashSet<>();
+        if (alreadyHave != null) {
+            seen.addAll(alreadyHave);
+        }
+        seen.addAll(tokens(acc.values()));
+        SignalIntent intent = defaultTitleIntent(promptId, question, answer);
         double valence = isNegativePreferenceContext(question, answer, List.of()) ? -0.78 : 0.78;
         int injected = 0;
         for (String token : mentions) {
@@ -174,13 +261,47 @@ public final class SignalExtractor {
                 || "private.fascinating.people".equals(normalized);
     }
 
-    private static SignalIntent defaultTitleIntent(String promptId) {
-        if (promptId == null || promptId.isBlank()) {
-            return SignalIntent.SELF;
-        }
-        String normalized = promptId.trim().toLowerCase(Locale.ROOT);
-        if ("private.drawn.to".equals(normalized) || "private.fictional.characters".equals(normalized)) {
+    private static SignalIntent defaultTitleIntent(String promptId, String question, String answer) {
+        String normalized = promptId == null || promptId.isBlank() ? "" : promptId.trim().toLowerCase(Locale.ROOT);
+        if ("private.drawn.to".equals(normalized)
+                || "private.not.my.person".equals(normalized)
+                || "private.popular.dislike".equals(normalized)
+                || "matchmaking.followup".equals(normalized)
+                || "private.matchmaking.followup".equals(normalized)) {
             return SignalIntent.SEEKING;
+        }
+        if ("private.fictional.characters".equals(normalized)) {
+            String context = combinedLowerText(question, answer, List.of());
+            boolean selfCue = containsAny(
+                    context,
+                    "relate to",
+                    "related to",
+                    "i relate",
+                    "see myself",
+                    "like me",
+                    "i'm like",
+                    "im like");
+            boolean seekingCue = containsAny(
+                    context,
+                    "drawn to",
+                    "attracted",
+                    "pulls you in",
+                    "romantically",
+                    "into them");
+            if (selfCue && seekingCue) {
+                return SignalIntent.BOTH;
+            }
+            if (selfCue) {
+                return SignalIntent.SELF;
+            }
+            if (seekingCue) {
+                return SignalIntent.SEEKING;
+            }
+            return SignalIntent.BOTH;
+        }
+        if (question != null
+                && question.toLowerCase(Locale.ROOT).contains("share with your partner")) {
+            return SignalIntent.BOTH;
         }
         return SignalIntent.SELF;
     }
@@ -207,7 +328,7 @@ public final class SignalExtractor {
         }
         int boundedMax = Math.max(1, maxMentions);
         for (int i = 0; i < words.size(); i++) {
-            for (int n = 2; n <= 4; n++) {
+            for (int n = 1; n <= 4; n++) {
                 int end = i + n;
                 if (end > words.size()) {
                     break;
@@ -219,6 +340,57 @@ public final class SignalExtractor {
                 }
                 String canonical = resolution.canonicalToken();
                 if (!looksLikeExplicitTitleToken(canonical)) {
+                    continue;
+                }
+                out.add(canonical);
+                if (out.size() >= boundedMax) {
+                    return out;
+                }
+            }
+        }
+        return out;
+    }
+
+    private static LinkedHashSet<String> detectExplicitCanonicalMentions(
+            String text,
+            int maxMentions,
+            boolean concreteOnly) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (text == null || text.isBlank()) {
+            return out;
+        }
+        String cleaned = text.toLowerCase(Locale.ROOT)
+                .replace('\u2019', '\'')
+                .replaceAll("[^a-z0-9]+", " ")
+                .trim();
+        if (cleaned.isBlank()) {
+            return out;
+        }
+        String[] rawWords = cleaned.split("\\s+");
+        ArrayList<String> words = new ArrayList<>(rawWords.length);
+        for (String word : rawWords) {
+            if (word == null || word.isBlank() || word.length() < 2) {
+                continue;
+            }
+            words.add(word);
+        }
+        int boundedMax = Math.max(1, maxMentions);
+        for (int i = 0; i < words.size(); i++) {
+            for (int n = 1; n <= 4; n++) {
+                int end = i + n;
+                if (end > words.size()) {
+                    break;
+                }
+                String candidate = String.join("_", words.subList(i, end));
+                SignalConceptRegistry.Resolution resolution = SignalConceptRegistry.resolve(candidate);
+                if (resolution == null || resolution.kind() == SignalConceptRegistry.ResolutionKind.UNKNOWN) {
+                    continue;
+                }
+                String canonical = SignalNormalizer.normalizeOne(resolution.canonicalToken());
+                if (canonical == null || canonical.isBlank()) {
+                    continue;
+                }
+                if (concreteOnly && !SignalTaxonomy.isConcreteCategory(SignalConceptRegistry.categoryForConcept(canonical))) {
                     continue;
                 }
                 out.add(canonical);
@@ -456,7 +628,9 @@ public final class SignalExtractor {
         List<ExtractedSignal> extra = call(openAI, SignalPrompts.PROMPT_SPECIFICITY_SYSTEM_PROMPT,
                 SignalPrompts.promptSpecificityUserPrompt(promptId, promptProfileHint, question, answer, conversationLines,
                         currentSignalsForPrompt(acc.values()), existing),
-                Math.max(1, maxExtraSignals));
+                Math.max(1, maxExtraSignals),
+                "prompt_specificity",
+                promptId);
         merge(acc, extra);
         return cleanupSpecificityConflicts(new ArrayList<>(acc.values()));
     }
@@ -638,10 +812,14 @@ public final class SignalExtractor {
 
     @SuppressWarnings("unchecked")
     private static List<ExtractedSignal> call(OpenAIClient openAI, String systemPrompt, String userPrompt,
-            int maxSignals) {
+            int maxSignals, String surface, String promptId) {
         try {
             String system = maybeFormat(systemPrompt, maxSignals);
-            String raw = OpenAIJson.call(openAI, system, userPrompt);
+            String raw = OpenAIJson.call(
+                    openAI,
+                    system,
+                    userPrompt,
+                    OpenAIJson.CallSpec.signalExtract(surface, promptId, 320L));
             Object payload = parseSignalsPayload(raw);
             List<?> list = signalsArray(payload);
             if (list.isEmpty())

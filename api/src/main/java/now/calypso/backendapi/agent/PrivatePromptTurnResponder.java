@@ -21,6 +21,7 @@ import com.openai.models.responses.ResponseOutputItem;
 import com.openai.models.responses.ResponseOutputMessage;
 import com.openai.models.responses.ResponseOutputText;
 
+import now.calypso.backendapi.llm.LlmTelemetry;
 import now.calypso.backendapi.llm.OpenAIModelRouter;
 
 public final class PrivatePromptTurnResponder {
@@ -48,6 +49,10 @@ public final class PrivatePromptTurnResponder {
               (for example board games vs video games) and set needsMoreDetail=true.
             - If they describe admired traits and it's unclear whether those traits are about themselves or a partner preference,
               ask that scope clarifier and set needsMoreDetail=true.
+            - Ask at most one specific follow-up question in a turn.
+            - Never ask a standalone "Why?" or append a generic trailing "why?".
+            - Never offer rewrite/coaching like "I can help turn that into a smoother dating-app answer".
+            - If the user indicates they are done or ready to submit, acknowledge and set needsMoreDetail=false.
             - If the user's message is specific enough, acknowledge and set needsMoreDetail=false.
             - Do not repeat the full original prompt unless needed.
             - Do not include markdown or extra keys.
@@ -82,6 +87,7 @@ public final class PrivatePromptTurnResponder {
         try {
             Exception lastError = null;
             for (ChatModel model : OpenAIModelRouter.modelChain(MODEL_ENV, MODEL_DEFAULT)) {
+                long startedAt = System.currentTimeMillis();
                 try {
                     ResponseCreateParams params = ResponseCreateParams.builder()
                             .model(model)
@@ -91,6 +97,15 @@ public final class PrivatePromptTurnResponder {
                             .maxOutputTokens(220L)
                             .build();
                     Response resp = client.responses().create(params);
+                    long latencyMs = Math.max(0L, System.currentTimeMillis() - startedAt);
+                    LlmTelemetry.recordResponse(
+                            "chat_turn",
+                            telemetrySurface(input),
+                            null,
+                            model,
+                            resp,
+                            latencyMs,
+                            220L);
                     TurnResult parsed = parseTurnResult(collectOutputText(resp));
                     if (parsed == null) {
                         continue;
@@ -100,6 +115,15 @@ public final class PrivatePromptTurnResponder {
                     lastError = ex;
                     LOG.warn("Private turn generation failed with model {}. Trying fallback if available.",
                             model.asString(), ex);
+                    long latencyMs = Math.max(0L, System.currentTimeMillis() - startedAt);
+                    LlmTelemetry.recordFailure(
+                            "chat_turn",
+                            telemetrySurface(input),
+                            null,
+                            model,
+                            latencyMs,
+                            220L,
+                            ex);
                 }
             }
             if (lastError != null) {
@@ -151,6 +175,17 @@ public final class PrivatePromptTurnResponder {
         return out;
     }
 
+    private static String telemetrySurface(TurnInput input) {
+        if (input == null) {
+            return "private_prompt_chat";
+        }
+        String prompt = safe(input.promptText).toLowerCase(Locale.ROOT);
+        if (prompt.startsWith("quick matchmaking check:")) {
+            return "matchmaking_followup_chat";
+        }
+        return "private_prompt_chat";
+    }
+
     private static TurnResult forcedClarification(TurnInput input) {
         if (input == null || input.userMessage == null)
             return null;
@@ -174,9 +209,6 @@ public final class PrivatePromptTurnResponder {
         if (!containsAny(promptContext,
                 "fascinating",
                 "historical",
-                "fictional",
-                "drawn to",
-                "pulls you in",
                 "admire")) {
             return false;
         }
@@ -297,10 +329,20 @@ public final class PrivatePromptTurnResponder {
         if (message.length() > 320) {
             message = message.substring(0, 320).trim();
         }
-        boolean needsMore = raw.needsMoreDetail || looksLikeClarifierRequest(message);
+        boolean userReadyToSubmit = isSubmissionIntent(input == null ? null : input.userMessage);
+        boolean clarifierRequest = looksLikeClarifierRequest(message);
+        boolean needsMore = !userReadyToSubmit && clarifierRequest;
+
+        if (isSubstantiveAnswer(input == null ? null : input.userMessage)
+                && hasGenericWhyClause(message)) {
+            message = stripGenericWhyClause(message);
+        }
         if (needsMore
                 && isGenericWhyQuestion(message)
                 && isSubstantiveAnswer(input == null ? null : input.userMessage)) {
+            needsMore = false;
+        }
+        if (needsMore && containsRewriteOffer(message)) {
             needsMore = false;
         }
         return new TurnResult(message, needsMore);
@@ -310,9 +352,10 @@ public final class PrivatePromptTurnResponder {
         if (message == null || message.isBlank())
             return false;
         String text = message.toLowerCase(Locale.ROOT);
-        return containsAny(text,
+        boolean hasClarifierCue = containsAny(text,
                 "do you mean",
                 "can you",
+                "could you",
                 "what kind",
                 "which kind",
                 "tell me more",
@@ -320,8 +363,53 @@ public final class PrivatePromptTurnResponder {
                 "share a little more",
                 "can you clarify",
                 "could you clarify",
+                "which one",
+                "is that mostly",
+                "both, or neither",
                 "board games",
                 "video games");
+        if (!hasClarifierCue) {
+            return false;
+        }
+        if (text.contains("?")) {
+            return true;
+        }
+        return text.startsWith("can you")
+                || text.startsWith("could you")
+                || text.startsWith("share ")
+                || text.startsWith("tell me ");
+    }
+
+    private static boolean containsRewriteOffer(String message) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        String text = message.toLowerCase(Locale.ROOT);
+        return containsAny(text,
+                "dating-app style",
+                "dating app style",
+                "i can help turn that into",
+                "i can help you turn that into",
+                "rewrite",
+                "rephrase");
+    }
+
+    private static boolean isSubmissionIntent(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String normalized = text.toLowerCase(Locale.ROOT).trim();
+        return containsAny(normalized,
+                "ready to submit",
+                "let me submit",
+                "submit this",
+                "submit now",
+                "that's all",
+                "that is all",
+                "i'm done",
+                "im done",
+                "done here",
+                "final answer");
     }
 
     private static boolean isGenericWhyQuestion(String message) {
@@ -336,6 +424,39 @@ public final class PrivatePromptTurnResponder {
             return text.length() <= 96;
         }
         return false;
+    }
+
+    private static boolean hasGenericWhyClause(String message) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        String text = message.toLowerCase(Locale.ROOT).trim();
+        return text.equals("why?")
+                || text.endsWith(". why?")
+                || text.endsWith(" why?");
+    }
+
+    private static String stripGenericWhyClause(String message) {
+        if (message == null || message.isBlank()) {
+            return message;
+        }
+        String text = message.trim();
+        if (text.equalsIgnoreCase("why?") || text.equalsIgnoreCase("why")) {
+            return "Thanks, that helps.";
+        }
+        String lowered = text.toLowerCase(Locale.ROOT);
+        int idx = lowered.lastIndexOf(" why?");
+        if (idx <= 0) {
+            idx = lowered.lastIndexOf(". why?");
+        }
+        if (idx <= 0) {
+            return text;
+        }
+        String trimmed = text.substring(0, idx).trim();
+        if (trimmed.endsWith(".")) {
+            return trimmed;
+        }
+        return trimmed + ".";
     }
 
     private static boolean isSubstantiveAnswer(String text) {

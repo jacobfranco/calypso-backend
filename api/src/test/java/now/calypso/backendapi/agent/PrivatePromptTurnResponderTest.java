@@ -1,6 +1,7 @@
 package now.calypso.backendapi.agent;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -28,6 +29,7 @@ class PrivatePromptTurnResponderTest {
 
         PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
         assertFalse(result.needsMoreDetail, "A substantive answer should not trigger a redundant generic why loop.");
+        assertNotEquals("That totally makes sense. Why?", result.agentMessage);
     }
 
     @Test
@@ -77,6 +79,20 @@ class PrivatePromptTurnResponderTest {
     }
 
     @Test
+    void generate_doesNotForceScopeClarifierForDrawnToPrompt() {
+        PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
+                "Describe the kind of person you tend to be drawn to.",
+                "Describe the kind of person you tend to be drawn to.",
+                List.of(),
+                "Someone confident, emotionally steady, and ambitious who feels like an equal.");
+
+        PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
+        assertFalse(result.needsMoreDetail,
+                "Drawn-to prompt is already partner-directed and should not trigger self-vs-partner clarification.");
+        assertFalse(result.agentMessage.toLowerCase().contains("both, or neither"));
+    }
+
+    @Test
     void generate_skipsScopeClarifierWhenUserAlreadySpecifiesBothScopes() {
         PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
                 "Who are some people (historical or living) that you find fascinating? Why?",
@@ -86,5 +102,35 @@ class PrivatePromptTurnResponderTest {
 
         PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
         assertFalse(result.needsMoreDetail, "Explicit self+partner scope should not be re-clarified.");
+    }
+
+    @Test
+    void generate_respectsExplicitSubmitIntent() {
+        PrivatePromptTurnResponder.setTestOverride(input -> new PrivatePromptTurnResponder.TurnResult(
+                "Want to share one more detail so I can tune this better?",
+                true));
+        PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
+                "What are your hobbies?",
+                "What are your hobbies?",
+                List.of(),
+                "That's all for now, I'm ready to submit.");
+
+        PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
+        assertFalse(result.needsMoreDetail, "Explicit submit intent should allow finishing the flow.");
+    }
+
+    @Test
+    void generate_doesNotBlockOnRewriteOffer() {
+        PrivatePromptTurnResponder.setTestOverride(input -> new PrivatePromptTurnResponder.TurnResult(
+                "If you want, I can help turn that into a smoother dating-app style answer for you.",
+                true));
+        PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
+                "What are your hobbies?",
+                "What are your hobbies?",
+                List.of(),
+                "Bouldering, reading sci-fi, and weekend cooking projects.");
+
+        PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
+        assertFalse(result.needsMoreDetail, "Rewrite/coaching offer should not lock the user into follow-up mode.");
     }
 }

@@ -21,7 +21,7 @@ public class GetSignalConceptRegistry {
                 if (entry == null || entry.concept == null || entry.concept.isBlank()) {
                     continue;
                 }
-                out.add(new Concept(entry.concept, entry.aliases, entry.parents));
+                out.add(new Concept(entry.concept, entry.category, entry.aliases, entry.parents));
             }
         }
         return new GetSignalConceptRegistry(version, out);
@@ -37,15 +37,18 @@ public class GetSignalConceptRegistry {
 
     public static final class Concept {
         public final String concept;
+        public final String category;
         public final List<String> aliases;
         public final Map<String, Double> parents;
 
         @JsonCreator
         public Concept(
                 @JsonProperty("concept") String concept,
+                @JsonProperty("category") String category,
                 @JsonProperty("aliases") List<String> aliases,
                 @JsonProperty("parents") Map<String, Double> parents) {
             this.concept = concept;
+            this.category = category;
             this.aliases = aliases == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(aliases));
             this.parents = parents == null ? Collections.emptyMap() : Collections.unmodifiableMap(parents);
         }
