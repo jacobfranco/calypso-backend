@@ -50,6 +50,8 @@ public final class PrivatePromptUnderstanding {
               self_core, seeking_core, relationship_dynamic, energy_style,
               communication_style, emotional_style, trajectory, hard_boundaries,
               partner_comps, meta_observation, narrative.
+            - Keep each claim text concise (about 6-16 words).
+            - Keep silhouette abstract; concrete hobbies/titles belong in signals.
             - Comparative references should use key=partner_comps with kind=partner_comp.
             - Meta observations must be neutral and non-moralizing.
             - confidence in [0,1].
@@ -83,7 +85,7 @@ public final class PrivatePromptUnderstanding {
                             normalizedPromptId == null || normalizedPromptId.isBlank() ? "private_prompt_answer"
                                     : normalizedPromptId,
                             normalizedPromptId,
-                            300L));
+                            200L));
             ParsedPayload parsed = parse(raw);
             if (!parsed.parsed) {
                 return Result.empty(false);
@@ -118,11 +120,25 @@ public final class PrivatePromptUnderstanding {
                 already_have: %s
                 """.formatted(
                 jsonQuote(promptId),
-                jsonQuote(profileHint),
-                jsonQuote(question),
-                jsonQuote(answer),
+                jsonQuote(clampForPrompt(profileHint, 140)),
+                jsonQuote(clampForPrompt(question, 220)),
+                jsonQuote(clampForPrompt(answer, 260)),
                 conversation,
                 already);
+    }
+
+    private static String clampForPrompt(String raw, int maxLen) {
+        if (raw == null) {
+            return null;
+        }
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) {
+            return "";
+        }
+        if (trimmed.length() <= maxLen) {
+            return trimmed;
+        }
+        return trimmed.substring(0, maxLen).trim();
     }
 
     @SuppressWarnings("unchecked")

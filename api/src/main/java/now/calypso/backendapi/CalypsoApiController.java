@@ -598,6 +598,28 @@ public class CalypsoApiController {
         return Mono.fromFuture(manager.getLlmTelemetry(accountId, limit));
     }
 
+    @GetMapping("/api/accounts/{id}/admin/pair-score")
+    public Mono<Map<String, Object>> getAdminPairScore(
+            @PathVariable("id") String idStr,
+            @RequestParam(value = "targetId", required = false) String targetIdStr,
+            @RequestParam(value = "limit", required = false, defaultValue = "12") int limit,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        Long targetId = null;
+        if (targetIdStr != null && !targetIdStr.isBlank()) {
+            try {
+                targetId = CalypsoHelpers.parseAccountId(targetIdStr.trim());
+            } catch (RuntimeException ex) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid targetId", ex);
+            }
+        }
+        return Mono.fromFuture(manager.getAdminPairScoreDebug(accountId, accountId, targetId, limit));
+    }
+
     @GetMapping("/api/accounts/{id}/admin/signal-concepts")
     public Mono<GetSignalConceptRegistry> getSignalConceptRegistry(
             @PathVariable("id") String idStr,

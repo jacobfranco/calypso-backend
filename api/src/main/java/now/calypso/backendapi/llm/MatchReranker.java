@@ -152,8 +152,8 @@ public final class MatchReranker {
             return;
         }
         String trimmed = digest.trim();
-        if (trimmed.length() > 1400) {
-            trimmed = trimmed.substring(0, 1400).trim();
+        if (trimmed.length() > 420) {
+            trimmed = trimmed.substring(0, 420).trim();
         }
         String[] lines = trimmed.split("\\R");
         if (lines.length == 0) {
@@ -169,12 +169,12 @@ public final class MatchReranker {
             if (cleaned.isEmpty()) {
                 continue;
             }
-            if (cleaned.length() > 180) {
-                cleaned = cleaned.substring(0, 180).trim();
+            if (cleaned.length() > 120) {
+                cleaned = cleaned.substring(0, 120).trim();
             }
             buf.append("  ").append(cleaned).append("\n");
             count++;
-            if (count >= 12) {
+            if (count >= 6) {
                 break;
             }
         }

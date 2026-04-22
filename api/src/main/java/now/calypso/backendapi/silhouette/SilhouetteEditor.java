@@ -14,8 +14,8 @@ import now.calypso.backendapi.llm.OpenAIJson;
 
 public final class SilhouetteEditor {
     private static final int MIN_LLM_ANSWER_CHARS = 36;
-    private static final long LLM_MAX_OUTPUT_TOKENS_PRIMARY = 170L;
-    private static final long LLM_MAX_OUTPUT_TOKENS_RETRY = 300L;
+    private static final long LLM_MAX_OUTPUT_TOKENS_PRIMARY = 120L;
+    private static final long LLM_MAX_OUTPUT_TOKENS_RETRY = 190L;
     private static final Pattern COMPARATIVE_FROM_PATTERN = Pattern.compile(
             "(?i)([a-z0-9'\\- ]{2,84})\\s+from\\s+([a-z0-9'\\- ]{2,56})");
     private static final String SYSTEM_PROMPT = """
@@ -40,6 +40,8 @@ public final class SilhouetteEditor {
               self_core, seeking_core, relationship_dynamic, energy_style,
               communication_style, emotional_style, trajectory, hard_boundaries,
               partner_comps, meta_observation, narrative.
+            - Keep each claim text concise (about 6-16 words).
+            - Avoid repeating concrete tags (hobbies/media/franchises) already captured as signals.
             - Comparative references (characters/figures/examples) should be `key=partner_comps` and `kind=partner_comp`.
             - Meta observations should be neutral and non-moralizing.
             - Confidence in [0,1].
@@ -328,17 +330,17 @@ public final class SilhouetteEditor {
     private static String buildUserPrompt(SilhouetteState current, Map<String, Object> event) {
         StringBuilder buf = new StringBuilder();
         buf.append("current_silhouette:\n");
-        buf.append(current == null ? "maturity=empty\n" : current.digest(520)).append('\n');
+        buf.append(current == null ? "maturity=empty\n" : current.digest(320)).append('\n');
         buf.append("event:\n");
         appendField(buf, "event_id", event.get("eventId"), 40);
         appendField(buf, "source", event.get("source"), 48);
         appendField(buf, "source_id", event.get("sourceId"), 96);
         appendField(buf, "prompt_id", event.get("promptId"), 96);
-        appendField(buf, "question", event.get("question"), 180);
-        appendField(buf, "answer", event.get("answer"), 260);
-        appendField(buf, "conversation", event.get("conversation"), 220);
-        appendField(buf, "context", event.get("context"), 180);
-        appendField(buf, "delta", event.get("delta"), 180);
+        appendField(buf, "question", event.get("question"), 140);
+        appendField(buf, "answer", event.get("answer"), 180);
+        appendField(buf, "conversation", event.get("conversation"), 160);
+        appendField(buf, "context", event.get("context"), 140);
+        appendField(buf, "delta", event.get("delta"), 140);
         return buf.toString();
     }
 

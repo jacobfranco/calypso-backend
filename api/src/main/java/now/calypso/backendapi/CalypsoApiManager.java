@@ -4905,6 +4905,21 @@ public class CalypsoApiManager {
         return null;
     }
 
+    private static MatchCandidate candidateFromHeap(Object rawHeap, long targetAccountId) {
+        if (!(rawHeap instanceof List<?> heap) || targetAccountId < 0L) {
+            return null;
+        }
+        for (Object entry : heap) {
+            if (!(entry instanceof MatchCandidate candidate)) {
+                continue;
+            }
+            if (candidate.getTargetAccountId() == targetAccountId) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
     private static void putFiniteMetric(Map<String, Object> out, String key, Double value) {
         if (out == null || key == null || key.isBlank() || value == null || !Double.isFinite(value.doubleValue())) {
             return;
@@ -4953,6 +4968,65 @@ public class CalypsoApiManager {
             putFiniteMetric(out, key, value);
         }
         return out.isEmpty() ? null : out;
+    }
+
+    private static String normalizeModeForDebug(String mode) {
+        if ("focused".equalsIgnoreCase(mode)) {
+            return "focused";
+        }
+        if ("exploratory".equalsIgnoreCase(mode)) {
+            return "exploratory";
+        }
+        return "balanced";
+    }
+
+    private static Map<String, Object> thresholdsMap(double matchThreshold, double autoPassThreshold) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<>();
+        out.put("match", matchThreshold);
+        out.put("autoPass", autoPassThreshold);
+        return out;
+    }
+
+    private static Map<String, Object> directionalPairScoreRow(
+            MatchCandidate candidate,
+            GetAccount account,
+            double matchThreshold,
+            double autoPassThreshold) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<>();
+        out.put("present", candidate != null);
+        if (candidate == null) {
+            return out;
+        }
+        double score = candidate.getStage0Score();
+        out.put("account", account);
+        out.put("score", score);
+        out.put("computedAt", candidate.getComputedAt());
+        out.put("deltaToMatchThreshold", score - matchThreshold);
+        out.put("deltaToAutoPassThreshold", score - autoPassThreshold);
+        Map<String, Object> debug = scorerDebugFromCandidate(candidate);
+        if (debug != null && !debug.isEmpty()) {
+            out.put("scorerDebug", debug);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> topCandidateRow(
+            GetMatch match,
+            double matchThreshold,
+            double autoPassThreshold) {
+        if (match == null) {
+            return Map.of();
+        }
+        LinkedHashMap<String, Object> row = new LinkedHashMap<>();
+        row.put("account", match.account);
+        row.put("score", match.score);
+        row.put("computedAt", match.computedAt);
+        row.put("deltaToMatchThreshold", match.score - matchThreshold);
+        row.put("deltaToAutoPassThreshold", match.score - autoPassThreshold);
+        if (match.scorerDebug != null && !match.scorerDebug.isEmpty()) {
+            row.put("scorerDebug", match.scorerDebug);
+        }
+        return row;
     }
 
     private static List<MatchCandidate> normalizeHeap(Object rawHeap, int limit) {
@@ -5259,7 +5333,7 @@ public class CalypsoApiManager {
             request.surface = surface;
             request.viewerSignals = toRerankSignals(viewerSignals, MATCH_RERANK_SIGNAL_LIMIT_VIEWER);
             if (SILHOUETTE_RERANK_ENABLED) {
-                request.viewerSilhouetteDigest = silhouetteDigest(viewerSilhouette, 560);
+                request.viewerSilhouetteDigest = silhouetteDigest(viewerSilhouette, 320);
                 request.viewerSilhouetteMaturity = silhouetteMaturity(viewerSilhouette);
             } else {
                 request.viewerSilhouetteDigest = "";
@@ -5280,7 +5354,7 @@ public class CalypsoApiManager {
                 entry.signals = toRerankSignals(targetSignalsById.get(targetId), MATCH_RERANK_SIGNAL_LIMIT_CANDIDATE);
                 if (SILHOUETTE_RERANK_ENABLED) {
                     Map<String, Object> candidateSilhouette = targetSilhouettesById.get(targetId);
-                    entry.silhouetteDigest = silhouetteDigest(candidateSilhouette, 260);
+                    entry.silhouetteDigest = silhouetteDigest(candidateSilhouette, 160);
                     entry.silhouetteMaturity = silhouetteMaturity(candidateSilhouette);
                 } else {
                     entry.silhouetteDigest = "";
@@ -5700,6 +5774,142 @@ public class CalypsoApiManager {
                     LOG.warn("Failed to load facecards for account {}", viewerId, ex);
                     return List.<GetMatch>of();
                 });
+    }
+
+    public CompletableFuture<Map<String, Object>> getAdminPairScoreDebug(
+            long requesterId,
+            long viewerId,
+            Long targetIdMaybe,
+            int limit) {
+        int clamped = clampMatchLimit(limit);
+        long generatedAt = System.currentTimeMillis();
+
+        CompletableFuture<Filters> viewerFiltersFuture = getFiltersFromAccountId
+                .invokeAsync(requesterId, viewerId)
+                .completeOnTimeout(null, 2, TimeUnit.SECONDS)
+                .exceptionally(ex -> null);
+        CompletableFuture<List<GetMatch>> topCandidatesFuture = loadRawRankedCandidates(viewerId, clamped)
+                .completeOnTimeout(List.of(), 4, TimeUnit.SECONDS)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to load top candidate rows for admin pair-score {}", viewerId, ex);
+                    return List.of();
+                });
+
+        CompletableFuture<Map<String, Object>> pairFuture;
+        if (targetIdMaybe == null || targetIdMaybe.longValue() < 0L) {
+            pairFuture = CompletableFuture.completedFuture(null);
+        } else {
+            long targetId = targetIdMaybe.longValue();
+            CompletableFuture<Object> viewerHeapFuture = accountIdToCandidateHeap
+                    .selectOneAsync(Path.key(viewerId))
+                    .completeOnTimeout(null, 2, TimeUnit.SECONDS)
+                    .exceptionally(ex -> null);
+            CompletableFuture<Object> targetHeapFuture = accountIdToCandidateHeap
+                    .selectOneAsync(Path.key(targetId))
+                    .completeOnTimeout(null, 2, TimeUnit.SECONDS)
+                    .exceptionally(ex -> null);
+            CompletableFuture<Filters> targetFiltersFuture = getFiltersFromAccountId
+                    .invokeAsync(requesterId, targetId)
+                    .completeOnTimeout(null, 2, TimeUnit.SECONDS)
+                    .exceptionally(ex -> null);
+            CompletableFuture<AccountWithId> viewerAccountFuture = getAccountWithId(requesterId, viewerId)
+                    .completeOnTimeout(null, 2, TimeUnit.SECONDS)
+                    .exceptionally(ex -> null);
+            CompletableFuture<AccountWithId> targetAccountFuture = getAccountWithId(requesterId, targetId)
+                    .completeOnTimeout(null, 2, TimeUnit.SECONDS)
+                    .exceptionally(ex -> null);
+
+            CompletableFuture<Void> pairAll = CompletableFuture.allOf(
+                    viewerHeapFuture,
+                    targetHeapFuture,
+                    viewerFiltersFuture,
+                    targetFiltersFuture,
+                    viewerAccountFuture,
+                    targetAccountFuture);
+            pairFuture = pairAll.thenApply(ignored -> {
+                String viewerMode = normalizeModeForDebug(CalypsoHelpers.getModeSelfOrNull(viewerFiltersFuture.join()));
+                String targetMode = normalizeModeForDebug(CalypsoHelpers.getModeSelfOrNull(targetFiltersFuture.join()));
+                double viewerMatchThreshold = modeAwareMatchThreshold(viewerMode);
+                double viewerAutoPassThreshold = modeAwareAutoPassThreshold(viewerMode);
+                double targetMatchThreshold = modeAwareMatchThreshold(targetMode);
+                double targetAutoPassThreshold = modeAwareAutoPassThreshold(targetMode);
+
+                MatchCandidate viewerToTarget = candidateFromHeap(viewerHeapFuture.join(), targetId);
+                MatchCandidate targetToViewer = candidateFromHeap(targetHeapFuture.join(), viewerId);
+                AccountWithId viewerRaw = viewerAccountFuture.join();
+                AccountWithId targetRaw = targetAccountFuture.join();
+                GetAccount viewerAccount = viewerRaw == null ? null : new GetAccount(viewerRaw);
+                GetAccount targetAccount = targetRaw == null ? null : new GetAccount(targetRaw);
+
+                Map<String, Object> pair = new LinkedHashMap<>();
+                pair.put("targetAccountId", CalypsoHelpers.serializeAccountId(targetId));
+                pair.put("viewerMode", viewerMode);
+                pair.put("targetMode", targetMode);
+                pair.put("viewerThresholds", thresholdsMap(viewerMatchThreshold, viewerAutoPassThreshold));
+                pair.put("targetThresholds", thresholdsMap(targetMatchThreshold, targetAutoPassThreshold));
+                pair.put("viewerToTarget", directionalPairScoreRow(
+                        viewerToTarget, targetAccount, viewerMatchThreshold, viewerAutoPassThreshold));
+                pair.put("targetToViewer", directionalPairScoreRow(
+                        targetToViewer, viewerAccount, targetMatchThreshold, targetAutoPassThreshold));
+
+                if (viewerToTarget != null && targetToViewer != null) {
+                    double viewerToTargetScore = viewerToTarget.getStage0Score();
+                    double targetToViewerScore = targetToViewer.getStage0Score();
+                    double mutualMin = Math.min(viewerToTargetScore, targetToViewerScore);
+                    pair.put("mutualMinScore", mutualMin);
+                    pair.put("mutualDeltaToThreshold",
+                            Math.min(viewerToTargetScore - viewerMatchThreshold, targetToViewerScore - targetMatchThreshold));
+                    pair.put("bothMeetMatchThreshold",
+                            viewerToTargetScore >= viewerMatchThreshold && targetToViewerScore >= targetMatchThreshold);
+                    pair.put("bothMeetAutoPassThreshold",
+                            viewerToTargetScore >= viewerAutoPassThreshold && targetToViewerScore >= targetAutoPassThreshold);
+                } else {
+                    pair.put("bothMeetMatchThreshold", false);
+                    pair.put("bothMeetAutoPassThreshold", false);
+                }
+                return pair;
+            }).exceptionally(ex -> {
+                LOG.warn("Failed to resolve admin pair debug snapshot {} -> {}", viewerId, targetId, ex);
+                return null;
+            });
+        }
+
+        CompletableFuture<Void> all = CompletableFuture.allOf(viewerFiltersFuture, topCandidatesFuture, pairFuture);
+        return all.thenApply(ignored -> {
+            String viewerMode = normalizeModeForDebug(CalypsoHelpers.getModeSelfOrNull(viewerFiltersFuture.join()));
+            double viewerMatchThreshold = modeAwareMatchThreshold(viewerMode);
+            double viewerAutoPassThreshold = modeAwareAutoPassThreshold(viewerMode);
+
+            List<GetMatch> topCandidates = topCandidatesFuture.join();
+            ArrayList<Map<String, Object>> topRows = new ArrayList<>();
+            if (topCandidates != null) {
+                for (GetMatch match : topCandidates) {
+                    Map<String, Object> row = topCandidateRow(match, viewerMatchThreshold, viewerAutoPassThreshold);
+                    if (!row.isEmpty()) {
+                        topRows.add(row);
+                    }
+                }
+            }
+
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("generatedAt", generatedAt);
+            out.put("viewerId", CalypsoHelpers.serializeAccountId(viewerId));
+            out.put("viewerMode", viewerMode);
+            out.put("viewerThresholds", thresholdsMap(viewerMatchThreshold, viewerAutoPassThreshold));
+            out.put("topCandidates", topRows);
+            out.put("pair", pairFuture.join());
+            return out;
+        }).exceptionally(ex -> {
+            LOG.warn("Failed to build admin pair-score payload for account {}", viewerId, ex);
+            Map<String, Object> fallback = new LinkedHashMap<>();
+            fallback.put("generatedAt", generatedAt);
+            fallback.put("viewerId", CalypsoHelpers.serializeAccountId(viewerId));
+            fallback.put("viewerMode", "balanced");
+            fallback.put("viewerThresholds", thresholdsMap(MATCH_MIN_BALANCED, MATCH_AUTOPASS_BALANCED));
+            fallback.put("topCandidates", List.of());
+            fallback.put("pair", null);
+            return fallback;
+        });
     }
 
     private static final class ParsedSignalToken {

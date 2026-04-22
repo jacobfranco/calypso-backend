@@ -388,73 +388,58 @@ public final class SilhouetteMerger {
         if (out == null || out.claims == null || out.claims.isEmpty()) {
             return "";
         }
-        StringBuilder buf = new StringBuilder(560);
-        appendTopFacet(buf, out.claims, "self_core", "self", 1);
-        appendTopFacet(buf, out.claims, "seeking_core", "seeking", 1);
-        appendTopFacet(buf, out.claims, "relationship_dynamic", "dynamic", 1);
-        appendTopFacet(buf, out.claims, "communication_style", "communication", 1);
-        appendTopFacet(buf, out.claims, "energy_style", "energy", 1);
-        appendTopFacet(buf, out.claims, "emotional_style", "emotional", 1);
-        appendTopFacet(buf, out.claims, "trajectory", "trajectory", 1);
-        appendTopFacet(buf, out.claims, "hard_boundaries", "boundaries", 1);
-
-        String comps = joinFacetClaims(out.claims, "partner_comps", 3, true);
-        if (!comps.isBlank()) {
-            buf.append("comps: ").append(comps).append('\n');
+        ArrayList<String> segments = new ArrayList<>();
+        addSummarySegment(segments, "self", joinFacetClaims(out.claims, "self_core", 1, false));
+        addSummarySegment(segments, "seeking", joinFacetClaims(out.claims, "seeking_core", 1, false));
+        addSummarySegment(segments, "dynamic", joinFacetClaims(out.claims, "relationship_dynamic", 1, false));
+        addSummarySegment(segments, "boundaries", joinFacetClaims(out.claims, "hard_boundaries", 1, false));
+        addSummarySegment(segments, "comps", joinFacetClaims(out.claims, "partner_comps", 2, true));
+        if (segments.isEmpty()) {
+            addSummarySegment(segments, "notes", joinFacetClaims(out.claims, "general", 2, false));
         }
-
-        if (buf.length() == 0) {
-            String general = joinFacetClaims(out.claims, "general", 3, false);
-            if (!general.isBlank()) {
-                buf.append("notes: ").append(general).append('\n');
-            }
-        }
-        return clampText(buf.toString().trim(), 520);
+        return clampText(String.join(" | ", segments), 260);
     }
 
     private static String buildAdminSummary(SilhouetteState out) {
         if (out == null || out.claims == null || out.claims.isEmpty()) {
             return "";
         }
-        StringBuilder buf = new StringBuilder(1400);
+        StringBuilder buf = new StringBuilder(760);
         String reranker = buildRerankerSummary(out);
         if (!reranker.isBlank()) {
-            buf.append(reranker).append('\n');
+            buf.append("summary: ").append(reranker).append('\n');
         }
-        buf.append("recent_claims:\n");
+        buf.append("recent_claims: ");
         int added = 0;
+        ArrayList<String> rows = new ArrayList<>();
         for (SilhouetteState.Claim claim : out.claims) {
             if (claim == null || claim.text == null || claim.text.isBlank()) {
                 continue;
             }
-            buf.append("- ")
-                    .append(claim.facet == null || claim.facet.isBlank() ? "general" : claim.facet)
-                    .append(" ")
+            StringBuilder row = new StringBuilder(140);
+            row.append(claim.facet == null || claim.facet.isBlank() ? "general" : claim.facet)
+                    .append("@")
                     .append(String.format(Locale.ROOT, "%.2f", clamp01(claim.confidence)))
-                    .append(": ")
-                    .append(clampText(claim.text, 180));
+                    .append(":")
+                    .append(clampText(claim.text, 96));
             if (claim.kind != null && !claim.kind.isBlank()) {
-                buf.append(" [").append(clampText(claim.kind, 36)).append("]");
+                row.append(" [").append(clampText(claim.kind, 24)).append("]");
             }
-            buf.append('\n');
+            rows.add(row.toString());
             added += 1;
-            if (added >= 12) {
+            if (added >= 8) {
                 break;
             }
         }
-        return clampText(buf.toString().trim(), 1400);
+        buf.append(String.join(" | ", rows));
+        return clampText(buf.toString().trim(), 700);
     }
 
-    private static void appendTopFacet(
-            StringBuilder buf,
-            List<SilhouetteState.Claim> claims,
-            String facet,
-            String label,
-            int maxItems) {
-        String joined = joinFacetClaims(claims, facet, maxItems, false);
-        if (!joined.isBlank()) {
-            buf.append(label).append(": ").append(joined).append('\n');
+    private static void addSummarySegment(List<String> segments, String label, String value) {
+        if (segments == null || label == null || label.isBlank() || value == null || value.isBlank()) {
+            return;
         }
+        segments.add(label + "=" + value);
     }
 
     private static String joinFacetClaims(
@@ -489,7 +474,7 @@ public final class SilhouetteMerger {
 
         LinkedHashSet<String> lines = new LinkedHashSet<>();
         for (SilhouetteState.Claim claim : pool) {
-            String text = clampText(claim.text, preferLabelBeforeColon ? 80 : 160);
+            String text = clampText(claim.text, preferLabelBeforeColon ? 54 : 84);
             if (text.isBlank()) {
                 continue;
             }

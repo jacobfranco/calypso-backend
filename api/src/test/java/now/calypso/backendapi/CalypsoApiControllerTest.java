@@ -1077,6 +1077,44 @@ class CalypsoApiControllerTest {
         // --------- Matches endpoint tests (new) ---------
 
         @Test
+        void getAdminPairScore_returns200AndBody() {
+                String id = CalypsoHelpers.serializeAccountId(7L);
+                String targetId = CalypsoHelpers.serializeAccountId(9L);
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("viewerId", id);
+                payload.put("viewerMode", "balanced");
+                payload.put("viewerThresholds", Map.of("match", 64.0, "autoPass", 72.0));
+                payload.put("topCandidates", List.of());
+                payload.put("pair", Map.of("targetAccountId", targetId));
+
+                when(mockManager.getAdminPairScoreDebug(eq(7L), eq(7L), eq(9L), eq(6)))
+                                .thenReturn(CompletableFuture.completedFuture(payload));
+
+                client.get()
+                                .uri("/api/accounts/" + id + "/admin/pair-score?targetId=" + targetId + "&limit=6")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.viewerId").isEqualTo(id)
+                                .jsonPath("$.pair.targetAccountId").isEqualTo(targetId);
+
+                verify(mockManager).getAdminPairScoreDebug(eq(7L), eq(7L), eq(9L), eq(6));
+        }
+
+        @Test
+        void getAdminPairScore_invalidTarget_returns400() {
+                String id = CalypsoHelpers.serializeAccountId(7L);
+                client.get()
+                                .uri("/api/accounts/" + id + "/admin/pair-score?targetId=9")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+
+                verify(mockManager, never()).getAdminPairScoreDebug(anyLong(), anyLong(), any(), anyInt());
+        }
+
+        @Test
         void getMatches_unauthenticated_returns403() {
                 String id = CalypsoHelpers.serializeAccountId(7L);
                 client.get()
