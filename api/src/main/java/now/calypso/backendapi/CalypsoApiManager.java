@@ -2103,21 +2103,25 @@ public class CalypsoApiManager {
         return phrase;
     }
 
-    private static String buildMatchmakingFollowupQuestion(String token, Double missingValenceMaybe) {
-        String normalized = SignalNormalizer.normalizeOne(token);
-        if (normalized == null) {
-            return "Quick matchmaking check: can you share a little more about your preferences here?";
-        }
-        double missingValence = missingValenceMaybe == null ? 1.0 : missingValenceMaybe.doubleValue();
-        if (missingValence < 0.0 && normalized.startsWith("anti_") && normalized.length() > "anti_".length()) {
-            normalized = normalized.substring("anti_".length());
-        }
-        String phrase = humanizeSignalToken(normalized);
-        if (missingValence < 0.0) {
-            return "Quick matchmaking check: how much of a turn-off is " + phrase + " for you in a partner?";
-        }
-        return "Quick matchmaking check: how important is " + phrase + " in your lifestyle or dating preferences?";
+   private static String buildMatchmakingFollowupQuestion(String token, Double missingValenceMaybe) {
+    String normalized = SignalNormalizer.normalizeOne(token);
+    if (normalized == null) {
+        return "Quick matchmaking check: say a little more about what matters here.";
     }
+
+    double missingValence = missingValenceMaybe == null ? 1.0 : missingValenceMaybe.doubleValue();
+    if (missingValence < 0.0 && normalized.startsWith("anti_") && normalized.length() > "anti_".length()) {
+        normalized = normalized.substring("anti_".length());
+    }
+
+    String phrase = humanizeSignalToken(normalized);
+
+    if (missingValence < 0.0) {
+        return "Quick matchmaking check: how much does " + phrase + " put you off?";
+    }
+
+    return "Quick matchmaking check: how much does " + phrase + " matter to you?";
+}
 
     private static PromptDefinition matchmakingFollowupPromptDefinition(String questionText) {
         PromptDefinition prompt = new PromptDefinition();

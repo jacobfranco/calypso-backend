@@ -32,31 +32,46 @@ public final class PrivatePromptTurnResponder {
     private static final String MODEL_DEFAULT = "gpt-5.4-mini";
 
     private static final String SYSTEM_PROMPT = """
-            You are Calypso's private matchmaking prompt guide.
-            This is a short, natural chat for one private question.
+        You are Calypso's private matchmaking guide.
 
-            You must output JSON only in this exact shape:
-            {"agentMessage":"...","needsMoreDetail":false}
+        You must output JSON only in this exact shape:
+        {"agentMessage":"...","needsMoreDetail":false}
 
-            Rules:
-            - agentMessage must be 1-2 short sentences.
-            - Sound warm, genuine, and conversational.
-            - Use a subtle young-adult / lightly Gen Z voice without trying too hard.
-            - No emojis and no heavy internet slang.
-            - Avoid slang like "rizz", "no cap", "bro", "mid", "slay", "bestie", or "fr fr".
-            - If the user's latest message is too vague, too short, or unclear, ask for a little more detail and set needsMoreDetail=true.
-            - If the user gives an ambiguous category (for example "games"), ask a quick clarifier
-              (for example board games vs video games) and set needsMoreDetail=true.
-            - If they describe admired traits and it's unclear whether those traits are about themselves or a partner preference,
-              ask that scope clarifier and set needsMoreDetail=true.
-            - Ask at most one specific follow-up question in a turn.
-            - Never ask a standalone "Why?" or append a generic trailing "why?".
-            - Never offer rewrite/coaching like "I can help turn that into a smoother dating-app answer".
-            - If the user indicates they are done or ready to submit, acknowledge and set needsMoreDetail=false.
-            - If the user's message is specific enough, acknowledge and set needsMoreDetail=false.
-            - Do not repeat the full original prompt unless needed.
-            - Do not include markdown or extra keys.
-            """;
+        Identity:
+        - Calm, perceptive, and restrained.
+        - You observe patterns as they form, but do not over-interpret.
+        - You feel slightly distant, but attentive.
+
+        Tone:
+        - Soft, composed, and natural.
+        - Slightly feminine in presence: gentle, not overly warm.
+        - Never sounds like an essay, narrator, or analysis.
+        - No emojis. No slang.
+
+        Response rules:
+        - agentMessage must be 1–2 short sentences.
+        - Keep sentences simple and clean.
+        - Do not stack clauses or use complex phrasing.
+        - Do not escalate into abstract language.
+        - Keep observations light and grounded.
+        - Do not sound overly certain or definitive.
+
+        Behavior:
+        - Brief acknowledgment.
+        - Optional small observation.
+        - Ask at most one clean follow-up question if needed.
+        - If the answer is sufficient, move forward cleanly.
+
+        Avoid:
+        - polished or “written” sounding lines
+        - layered metaphors
+        - strong conclusions from limited data
+        - generic validation
+
+        Clarification rules:
+        - If vague, ask one specific clarifier and set needsMoreDetail=true.
+        - If clear, acknowledge and set needsMoreDetail=false.
+        """;
 
     private PrivatePromptTurnResponder() {
     }
@@ -155,18 +170,21 @@ public final class PrivatePromptTurnResponder {
     }
 
     private static List<String> trimConversation(List<String> conversation) {
-        if (conversation == null || conversation.isEmpty())
+        if (conversation == null || conversation.isEmpty()) {
             return List.of();
+        }
         int size = conversation.size();
         int start = Math.max(0, size - 16);
         List<String> recent = conversation.subList(start, size);
         ArrayList<String> out = new ArrayList<>(recent.size());
         for (String line : recent) {
-            if (line == null)
+            if (line == null) {
                 continue;
+            }
             String trimmed = line.trim();
-            if (trimmed.isEmpty())
+            if (trimmed.isEmpty()) {
                 continue;
+            }
             if (trimmed.length() > 280) {
                 trimmed = trimmed.substring(0, 280);
             }
@@ -187,15 +205,16 @@ public final class PrivatePromptTurnResponder {
     }
 
     private static TurnResult forcedClarification(TurnInput input) {
-        if (input == null || input.userMessage == null)
+        if (input == null || input.userMessage == null) {
             return null;
+        }
         String userText = input.userMessage.toLowerCase(Locale.ROOT);
         if (mentionsGenericGames(userText) && !mentionsSpecificGameType(userText)) {
-            return new TurnResult("Got you. Do you mean board games, video games, or both?", true);
+            return new TurnResult("Do you mean board games, video games, or both?", true);
         }
         if (isSelfVsPartnerAmbiguous(input)) {
             return new TurnResult(
-                    "Quick clarify: are those traits mostly about you, what you want in a partner, both, or neither?",
+                    "Quick clarify: are those traits mostly about you, what draws you in, both, or neither?",
                     true);
         }
         return null;
@@ -257,7 +276,8 @@ public final class PrivatePromptTurnResponder {
                 String normalized = line.toLowerCase(Locale.ROOT);
                 if (normalized.contains("both, or neither")
                         || normalized.contains("about you")
-                        || normalized.contains("in a partner")) {
+                        || normalized.contains("in a partner")
+                        || normalized.contains("what draws you in")) {
                     return false;
                 }
             }
@@ -266,24 +286,27 @@ public final class PrivatePromptTurnResponder {
     }
 
     private static boolean mentionsGenericGames(String text) {
-        if (text == null || text.isBlank())
+        if (text == null || text.isBlank()) {
             return false;
+        }
         return text.contains(" game ") || text.startsWith("game ") || text.endsWith(" game")
                 || text.contains(" games ") || text.startsWith("games ") || text.endsWith(" games")
                 || text.equals("game") || text.equals("games");
     }
 
     private static boolean mentionsSpecificGameType(String text) {
-        if (text == null || text.isBlank())
+        if (text == null || text.isBlank()) {
             return false;
+        }
         return containsAny(text, "board game", "board games", "video game", "video games", "tabletop", "card game",
                 "card games", "nintendo", "switch", "xbox", "playstation", "ps5", "pc gaming", "steam", "rpg",
                 "fps", "dnd");
     }
 
     private static boolean containsAny(String text, String... needles) {
-        if (text == null || text.isBlank() || needles == null || needles.length == 0)
+        if (text == null || text.isBlank() || needles == null || needles.length == 0) {
             return false;
+        }
         for (String needle : needles) {
             if (needle != null && !needle.isBlank() && text.contains(needle)) {
                 return true;
@@ -293,15 +316,17 @@ public final class PrivatePromptTurnResponder {
     }
 
     private static TurnResult parseTurnResult(String raw) {
-        if (raw == null || raw.isBlank())
+        if (raw == null || raw.isBlank()) {
             return null;
+        }
         try {
             Map<String, Object> parsed = JSON.readValue(raw, new TypeReference<>() {
             });
             String message = parsed.get("agentMessage") == null ? null : String.valueOf(parsed.get("agentMessage"));
             Boolean needsMore = asBoolean(parsed.get("needsMoreDetail"));
-            if (message == null || message.isBlank())
+            if (message == null || message.isBlank()) {
                 return null;
+            }
             return new TurnResult(message.trim(), needsMore != null && needsMore.booleanValue());
         } catch (Exception ignored) {
             return null;
@@ -309,15 +334,19 @@ public final class PrivatePromptTurnResponder {
     }
 
     private static Boolean asBoolean(Object raw) {
-        if (raw == null)
+        if (raw == null) {
             return null;
-        if (raw instanceof Boolean b)
+        }
+        if (raw instanceof Boolean b) {
             return b;
+        }
         String s = String.valueOf(raw).trim().toLowerCase(Locale.ROOT);
-        if ("true".equals(s))
+        if ("true".equals(s)) {
             return Boolean.TRUE;
-        if ("false".equals(s))
+        }
+        if ("false".equals(s)) {
             return Boolean.FALSE;
+        }
         return null;
     }
 
@@ -349,8 +378,9 @@ public final class PrivatePromptTurnResponder {
     }
 
     private static boolean looksLikeClarifierRequest(String message) {
-        if (message == null || message.isBlank())
+        if (message == null || message.isBlank()) {
             return false;
+        }
         String text = message.toLowerCase(Locale.ROOT);
         boolean hasClarifierCue = containsAny(text,
                 "do you mean",
@@ -367,7 +397,8 @@ public final class PrivatePromptTurnResponder {
                 "is that mostly",
                 "both, or neither",
                 "board games",
-                "video games");
+                "video games",
+                "what draws you in");
         if (!hasClarifierCue) {
             return false;
         }
@@ -442,7 +473,7 @@ public final class PrivatePromptTurnResponder {
         }
         String text = message.trim();
         if (text.equalsIgnoreCase("why?") || text.equalsIgnoreCase("why")) {
-            return "Thanks, that helps.";
+            return "That gives me enough to work with.";
         }
         String lowered = text.toLowerCase(Locale.ROOT);
         int idx = lowered.lastIndexOf(" why?");
@@ -473,20 +504,23 @@ public final class PrivatePromptTurnResponder {
     private static TurnResult fallback(String userMessage) {
         if (isTooShort(userMessage)) {
             return new TurnResult(
-                    "Got it. Can you share a little more detail so I can match you better?",
+                    "Give me a little more to work with here.",
                     true);
         }
-        return new TurnResult("That helps a lot. Anything else you'd add?", false);
+        return new TurnResult("That gives me something real to work with.", false);
     }
 
     private static boolean isTooShort(String text) {
-        if (text == null)
+        if (text == null) {
             return true;
+        }
         String trimmed = text.trim();
-        if (trimmed.isEmpty())
+        if (trimmed.isEmpty()) {
             return true;
-        if (trimmed.length() < 12)
+        }
+        if (trimmed.length() < 12) {
             return true;
+        }
         return wordCount(trimmed) < 3;
     }
 
@@ -513,25 +547,31 @@ public final class PrivatePromptTurnResponder {
     }
 
     private static String collectOutputText(Response resp) {
-        if (resp == null || resp.output() == null)
+        if (resp == null || resp.output() == null) {
             return "";
+        }
         StringBuilder buf = new StringBuilder();
         for (ResponseOutputItem item : resp.output()) {
-            if (item == null)
+            if (item == null) {
                 continue;
+            }
 
             Optional<ResponseOutputMessage> msg = item.message();
-            if (msg.isEmpty())
+            if (msg.isEmpty()) {
                 continue;
+            }
             for (ResponseOutputMessage.Content content : msg.get().content()) {
-                if (content == null)
+                if (content == null) {
                     continue;
+                }
                 Optional<ResponseOutputText> text = content.outputText();
-                if (text.isEmpty())
+                if (text.isEmpty()) {
                     continue;
+                }
                 String chunk = text.get().text();
-                if (chunk != null)
+                if (chunk != null) {
                     buf.append(chunk);
+                }
             }
         }
         return buf.toString().trim();
