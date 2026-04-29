@@ -25,6 +25,10 @@ public final class SignalExtractor {
     private static final int PER_CHUNK_PASSES = 3;
     private static final int SPECIFICITY_ENRICH_MAX = 4;
     private static final int GLOBAL_SOFT_CAP = 200;
+    private static final double FORCED_MENTION_VALENCE = 0.52;
+    private static final double EXPLICIT_ANSWER_FLOOR_YAP_HOURS = 0.68;
+    private static final double EXPLICIT_ANSWER_FLOOR_TALK_HOURS = 0.62;
+    private static final double NEGATIVE_PREFERENCE_MIN_MAGNITUDE = 0.45;
 
     private SignalExtractor() {
     }
@@ -130,7 +134,7 @@ public final class SignalExtractor {
                 answer,
                 normalizedConversation,
                 enriched);
-        return cleanupSpecificityConflicts(finalAdjusted);
+        return applyPromptPostProcessing(promptId, question, answer, cleanupSpecificityConflicts(finalAdjusted));
     }
 
     public static List<ExtractedSignal> augmentWithExplicitTitleMentions(
@@ -146,7 +150,11 @@ public final class SignalExtractor {
         }
         injectExplicitTitleMentions(promptId, question, answer, normalizedAlreadyHave, acc);
         injectExplicitCanonicalMentions(promptId, question, answer, normalizedAlreadyHave, acc);
-        return cleanupSpecificityConflicts(filtered(acc.values(), normalizedAlreadyHave));
+        return applyPromptPostProcessing(
+                promptId,
+                question,
+                answer,
+                cleanupSpecificityConflicts(filtered(acc.values(), normalizedAlreadyHave)));
     }
 
     private static void injectExplicitTitleMentions(
@@ -168,7 +176,9 @@ public final class SignalExtractor {
         }
         seen.addAll(tokens(acc.values()));
         SignalIntent intent = defaultTitleIntent(promptId, question, answer);
-        double valence = isNegativePreferenceContext(question, answer, List.of()) ? -0.78 : 0.78;
+        double valence = isNegativePreferenceContext(question, answer, List.of())
+                ? -FORCED_MENTION_VALENCE
+                : FORCED_MENTION_VALENCE;
         int injected = 0;
         for (String token : mentions) {
             if (token == null || token.isBlank() || seen.contains(token)) {
@@ -198,12 +208,12 @@ public final class SignalExtractor {
             "private.communities.scene",
             "private.great.night",
             "private.places.home",
+            "private.rabbit.hole",
             "private.popular.dislike",
             "private.not.my.person",
             "private.drawn.to",
             "private.fictional.characters",
             "private.media.revisit",
-            "private.fascinating.people",
             "matchmaking.followup",
             "private.matchmaking.followup");
 
@@ -231,7 +241,9 @@ public final class SignalExtractor {
         }
         seen.addAll(tokens(acc.values()));
         SignalIntent intent = defaultTitleIntent(promptId, question, answer);
-        double valence = isNegativePreferenceContext(question, answer, List.of()) ? -0.78 : 0.78;
+        double valence = isNegativePreferenceContext(question, answer, List.of())
+                ? -FORCED_MENTION_VALENCE
+                : FORCED_MENTION_VALENCE;
         int injected = 0;
         for (String token : mentions) {
             if (token == null || token.isBlank() || seen.contains(token)) {
@@ -257,8 +269,7 @@ public final class SignalExtractor {
         String normalized = promptId.trim().toLowerCase(Locale.ROOT);
         return "private.drawn.to".equals(normalized)
                 || "private.fictional.characters".equals(normalized)
-                || "private.media.revisit".equals(normalized)
-                || "private.fascinating.people".equals(normalized);
+                || "private.media.revisit".equals(normalized);
     }
 
     private static SignalIntent defaultTitleIntent(String promptId, String question, String answer) {
@@ -544,6 +555,140 @@ public final class SignalExtractor {
         return cleanupSpecificityConflicts(adjusted);
     }
 
+    private static List<ExtractedSignal> applyPromptPostProcessing(
+            String promptId,
+            String question,
+            String answer,
+            List<ExtractedSignal> signals) {
+        if (signals == null || signals.isEmpty()) {
+            return List.of();
+        }
+        List<ExtractedSignal> adjusted = cleanupSpecificityConflicts(signals);
+        adjusted = applyHobbyShareMirroring(promptId, question, answer, adjusted);
+        adjusted = applyDrawnToMediaIntentRouting(promptId, adjusted);
+        return cleanupSpecificityConflicts(adjusted);
+    }
+
+    private static List<ExtractedSignal> applyHobbyShareMirroring(
+            String promptId,
+            String question,
+            String answer,
+            List<ExtractedSignal> signals) {
+        if (signals == null || signals.isEmpty()) {
+            return List.of();
+        }
+        String normalizedPromptId = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
+        String normalizedQuestion = question == null ? "" : question.toLowerCase(Locale.ROOT);
+        if (!"private.hobbies".equals(normalizedPromptId) && !normalizedQuestion.contains("share with your partner")) {
+            return signals;
+        }
+        if (!mentionsMirrorAllPreviouslyMentionedHobbies(answer)) {
+            return signals;
+        }
+        LinkedHashMap<String, ExtractedSignal> acc = new LinkedHashMap<>();
+        merge(acc, signals);
+        for (ExtractedSignal signal : signals) {
+            if (signal == null || signal.token() == null || signal.token().isBlank()) {
+                continue;
+            }
+            if (signal.intent() != SignalIntent.SELF) {
+                continue;
+            }
+            if (signal.valence() == null || signal.valence().doubleValue() <= 0.0) {
+                continue;
+            }
+            if (!isConcreteShareableToken(signal.token())) {
+                continue;
+            }
+            ExtractedSignal mirrored = ExtractedSignal.from(signal.token(), SignalIntent.SEEKING, signal.valence());
+            if (mirrored != null) {
+                merge(acc, List.of(mirrored));
+            }
+        }
+        return new ArrayList<>(acc.values());
+    }
+
+    private static boolean mentionsMirrorAllPreviouslyMentionedHobbies(String answer) {
+        if (answer == null || answer.isBlank()) {
+            return false;
+        }
+        String lowered = answer.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim();
+        return containsAny(lowered,
+                "all of those",
+                "all those",
+                "all of them",
+                "all of the above",
+                "all i mentioned",
+                "all i just mentioned",
+                "all of what i mentioned",
+                "same ones",
+                "same as above",
+                "everything i mentioned");
+    }
+
+    private static List<ExtractedSignal> applyDrawnToMediaIntentRouting(
+            String promptId,
+            List<ExtractedSignal> signals) {
+        if (signals == null || signals.isEmpty()) {
+            return List.of();
+        }
+        if (!isDrawnToPrompt(promptId)) {
+            return signals;
+        }
+        LinkedHashMap<String, ExtractedSignal> acc = new LinkedHashMap<>();
+        for (ExtractedSignal signal : signals) {
+            if (signal == null || signal.token() == null || signal.token().isBlank()) {
+                continue;
+            }
+            if (signal.intent() == SignalIntent.SEEKING && isMediaToken(signal.token())) {
+                ExtractedSignal rerouted = ExtractedSignal.from(signal.token(), SignalIntent.SELF, signal.valence());
+                if (rerouted != null) {
+                    merge(acc, List.of(rerouted));
+                }
+                continue;
+            }
+            merge(acc, List.of(signal));
+        }
+        return new ArrayList<>(acc.values());
+    }
+
+    private static boolean isDrawnToPrompt(String promptId) {
+        if (promptId == null || promptId.isBlank()) {
+            return false;
+        }
+        return "private.drawn.to".equals(promptId.trim().toLowerCase(Locale.ROOT));
+    }
+
+    private static boolean isMediaToken(String token) {
+        if (token == null || token.isBlank()) {
+            return false;
+        }
+        String normalized = SignalNormalizer.normalizeOne(token);
+        if (normalized == null || normalized.isBlank()) {
+            return false;
+        }
+        String category = SignalTaxonomy.normalizeCategory(SignalConceptRegistry.categoryForConcept(normalized));
+        if (category == null) {
+            category = SignalTaxonomy.normalizeCategory(SignalTaxonomy.categoryForToken(normalized));
+        }
+        return SignalTaxonomy.MEDIA.equals(category);
+    }
+
+    private static boolean isConcreteShareableToken(String token) {
+        if (token == null || token.isBlank()) {
+            return false;
+        }
+        String normalized = SignalNormalizer.normalizeOne(token);
+        if (normalized == null || normalized.isBlank()) {
+            return false;
+        }
+        String category = SignalTaxonomy.normalizeCategory(SignalConceptRegistry.categoryForConcept(normalized));
+        if (category == null) {
+            category = SignalTaxonomy.normalizeCategory(SignalTaxonomy.categoryForToken(normalized));
+        }
+        return SignalTaxonomy.isConcreteCategory(category);
+    }
+
     private static List<ExtractedSignal> applyExplicitAnswerFocusBoost(String question, String answer,
             List<ExtractedSignal> signals) {
         if (signals == null || signals.isEmpty()) {
@@ -603,12 +748,12 @@ public final class SignalExtractor {
         }
         String q = question.toLowerCase(Locale.ROOT);
         if (q.contains("yap") && q.contains("hours")) {
-            return 0.90;
+            return EXPLICIT_ANSWER_FLOOR_YAP_HOURS;
         }
         if (q.contains("talk for hours")
                 || (q.contains("could talk") && q.contains("hours"))
                 || q.contains("rabbit hole")) {
-            return 0.84;
+            return EXPLICIT_ANSWER_FLOOR_TALK_HOURS;
         }
         return 0.0;
     }
@@ -692,7 +837,7 @@ public final class SignalExtractor {
         double v = currentValence.doubleValue();
         if (v < 0.0)
             return v;
-        double magnitude = Math.max(0.65, Math.abs(v));
+        double magnitude = Math.max(NEGATIVE_PREFERENCE_MIN_MAGNITUDE, Math.abs(v));
         return -magnitude;
     }
 

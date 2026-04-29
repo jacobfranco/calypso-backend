@@ -30,6 +30,20 @@ public final class PrivatePromptTurnResponder {
     private static final AtomicReference<Function<TurnInput, TurnResult>> TEST_OVERRIDE = new AtomicReference<>();
     private static final String MODEL_ENV = "CALYPSO_MODEL_PRIVATE_TURN";
     private static final String MODEL_DEFAULT = "gpt-5.4-mini";
+    private static final String[] NEXT_PART_ACK_MESSAGES = {
+            "Got it.",
+            "Noted.",
+            "Makes sense."
+    };
+    private static final String[] FORWARD_PROMPT_MESSAGES = {
+            "Got it. Anything else you want to share? If not, you can press submit.",
+            "Understood. Add anything else if you want, or press submit when you're ready.",
+            "Noted. Share more if you want, or press submit when you're ready."
+    };
+    private static final String[] READY_TO_SUBMIT_MESSAGES = {
+            "Got it. You can go ahead and press submit.",
+            "Understood. You can press submit whenever you're ready."
+    };
 
     private static final String SYSTEM_PROMPT = """
         You are Calypso's private matchmaking guide.
@@ -212,86 +226,20 @@ public final class PrivatePromptTurnResponder {
         if (mentionsGenericGames(userText) && !mentionsSpecificGameType(userText)) {
             return new TurnResult("Do you mean board games, video games, or both?", true);
         }
-        if (isSelfVsPartnerAmbiguous(input)) {
-            return new TurnResult(
-                    "Quick clarify: are those traits mostly about you, what draws you in, both, or neither?",
-                    true);
-        }
         return null;
-    }
-
-    private static boolean isSelfVsPartnerAmbiguous(TurnInput input) {
-        if (input == null || input.userMessage == null) {
-            return false;
-        }
-        String promptContext = (safe(input.promptText) + " " + safe(input.questionPart)).toLowerCase(Locale.ROOT);
-        if (!containsAny(promptContext,
-                "fascinating",
-                "historical",
-                "admire")) {
-            return false;
-        }
-        String userText = input.userMessage.toLowerCase(Locale.ROOT);
-        if (!isSubstantiveAnswer(userText)) {
-            return false;
-        }
-        if (!containsAny(userText,
-                "because",
-                "trait",
-                "quality",
-                "strong",
-                "capable",
-                "independent",
-                "independence",
-                "driven",
-                "disciplined",
-                "focused",
-                "focus",
-                "intelligent",
-                "ambitious",
-                "loyal",
-                "confident")) {
-            return false;
-        }
-        if (containsAny(userText,
-                "in a partner",
-                "want in a partner",
-                "looking for",
-                "drawn to",
-                "i see this in myself",
-                "i see these in myself",
-                "in myself",
-                "about me",
-                "i am",
-                "i'm",
-                "both",
-                "neither")) {
-            return false;
-        }
-        if (input.conversation != null) {
-            for (String line : input.conversation) {
-                if (line == null) {
-                    continue;
-                }
-                String normalized = line.toLowerCase(Locale.ROOT);
-                if (normalized.contains("both, or neither")
-                        || normalized.contains("about you")
-                        || normalized.contains("in a partner")
-                        || normalized.contains("what draws you in")) {
-                    return false;
-                }
-            }
-        }
-        return true;
     }
 
     private static boolean mentionsGenericGames(String text) {
         if (text == null || text.isBlank()) {
             return false;
         }
-        return text.contains(" game ") || text.startsWith("game ") || text.endsWith(" game")
-                || text.contains(" games ") || text.startsWith("games ") || text.endsWith(" games")
-                || text.equals("game") || text.equals("games");
+        String normalized = text.toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        return normalized.contains(" game ") || normalized.startsWith("game ") || normalized.endsWith(" game")
+                || normalized.contains(" games ") || normalized.startsWith("games ") || normalized.endsWith(" games")
+                || normalized.equals("game") || normalized.equals("games");
     }
 
     private static boolean mentionsSpecificGameType(String text) {
@@ -358,23 +306,174 @@ public final class PrivatePromptTurnResponder {
         if (message.length() > 320) {
             message = message.substring(0, 320).trim();
         }
-        boolean userReadyToSubmit = isSubmissionIntent(input == null ? null : input.userMessage);
+        boolean hasPendingPromptPart = hasPendingPromptPart(input);
+        boolean userReadyToSubmit = !hasPendingPromptPart && isSubmissionIntent(input == null ? null : input.userMessage);
         boolean clarifierRequest = looksLikeClarifierRequest(message);
         boolean needsMore = !userReadyToSubmit && clarifierRequest;
+        boolean substantiveUserAnswer = isSubstantiveAnswer(input == null ? null : input.userMessage);
+        boolean conciseConcreteUserAnswer = isConciseConcreteAnswer(input == null ? null : input.userMessage);
 
-        if (isSubstantiveAnswer(input == null ? null : input.userMessage)
-                && hasGenericWhyClause(message)) {
+        if (substantiveUserAnswer && hasGenericWhyClause(message)) {
             message = stripGenericWhyClause(message);
         }
         if (needsMore
                 && isGenericWhyQuestion(message)
-                && isSubstantiveAnswer(input == null ? null : input.userMessage)) {
+                && substantiveUserAnswer) {
             needsMore = false;
+        }
+        if (needsMore && hasPendingPromptPart && substantiveUserAnswer) {
+            needsMore = false;
+            message = toAcknowledgement(message);
         }
         if (needsMore && containsRewriteOffer(message)) {
             needsMore = false;
         }
+        if (needsMore && (substantiveUserAnswer || conciseConcreteUserAnswer) && !requiresForcedClarifier(input)) {
+            needsMore = false;
+        }
+
+        if (needsMore) {
+            message = neutralizeFollowupMessage(message, input);
+        } else {
+            message = completionMessage(userReadyToSubmit, hasPendingPromptPart, input);
+        }
         return new TurnResult(message, needsMore);
+    }
+
+    private static boolean hasPendingPromptPart(TurnInput input) {
+        if (input == null) {
+            return false;
+        }
+        List<String> parts = splitPromptIntoParts(input.promptText);
+        if (parts.size() < 2) {
+            return false;
+        }
+        String current = normalizePartForMatch(input.questionPart);
+        if (current.isEmpty()) {
+            return false;
+        }
+        for (int idx = 0; idx < parts.size(); idx++) {
+            if (normalizePartForMatch(parts.get(idx)).equals(current)) {
+                return idx < (parts.size() - 1);
+            }
+        }
+        return false;
+    }
+
+    private static List<String> splitPromptIntoParts(String promptText) {
+        String trimmed = safe(promptText);
+        if (trimmed.isEmpty()) {
+            return List.of();
+        }
+        List<String> questions = mergeTrailingWhyFragments(splitAndTrim(trimmed, "(?<=\\?)\\s+"));
+        if (questions.size() > 1) {
+            return questions;
+        }
+        List<String> sentences = mergeTrailingWhyFragments(splitAndTrim(trimmed, "(?<=\\.)\\s+"));
+        if (sentences.size() > 1) {
+            return sentences;
+        }
+        if (!questions.isEmpty()) {
+            return questions;
+        }
+        return List.of(trimmed);
+    }
+
+    private static List<String> splitAndTrim(String text, String delimiterRegex) {
+        if (text == null || text.isBlank()) {
+            return List.of();
+        }
+        String[] raw = text.split(delimiterRegex);
+        ArrayList<String> out = new ArrayList<>(raw.length);
+        for (String part : raw) {
+            String trimmed = safe(part);
+            if (!trimmed.isEmpty()) {
+                out.add(trimmed);
+            }
+        }
+        return out;
+    }
+
+    private static List<String> mergeTrailingWhyFragments(List<String> parts) {
+        if (parts == null || parts.isEmpty()) {
+            return List.of();
+        }
+        ArrayList<String> merged = new ArrayList<>(parts.size());
+        for (String part : parts) {
+            String trimmed = safe(part);
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            if (isStandaloneWhyFragment(trimmed) && !merged.isEmpty()) {
+                int lastIdx = merged.size() - 1;
+                merged.set(lastIdx, (merged.get(lastIdx) + " " + trimmed).trim());
+                continue;
+            }
+            merged.add(trimmed);
+        }
+        return merged;
+    }
+
+    private static boolean isStandaloneWhyFragment(String part) {
+        if (part == null || part.isBlank()) {
+            return false;
+        }
+        String normalized = part.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim();
+        if (!normalized.startsWith("why")) {
+            return false;
+        }
+        String wordsOnly = normalized.replaceAll("[^a-z0-9'\\s]", " ").trim();
+        if (wordsOnly.isEmpty()) {
+            return false;
+        }
+        return wordCount(wordsOnly) <= 4;
+    }
+
+    private static String normalizePartForMatch(String part) {
+        return safe(part).toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim();
+    }
+
+    private static String toAcknowledgement(String message) {
+        if (message == null || message.isBlank()) {
+            return "That gives me enough to work with.";
+        }
+        String text = message.trim();
+        int questionIdx = text.indexOf('?');
+        if (questionIdx < 0) {
+            return ensureSentenceEnding(text);
+        }
+        String beforeQuestion = text.substring(0, questionIdx).trim();
+        int sentenceBoundary = Math.max(beforeQuestion.lastIndexOf(". "), beforeQuestion.lastIndexOf("! "));
+        if (sentenceBoundary >= 0) {
+            String candidate = beforeQuestion.substring(0, sentenceBoundary + 1).trim();
+            if (!candidate.isEmpty()) {
+                return ensureSentenceEnding(candidate);
+            }
+        }
+        String lowered = beforeQuestion.toLowerCase(Locale.ROOT);
+        if (!beforeQuestion.isEmpty()
+                && wordCount(beforeQuestion) >= 2
+                && !lowered.startsWith("can you")
+                && !lowered.startsWith("could you")
+                && !lowered.startsWith("do you mean")
+                && !lowered.startsWith("what kind")
+                && !lowered.startsWith("which kind")
+                && !lowered.startsWith("tell me")
+                && !lowered.startsWith("share ")) {
+            return ensureSentenceEnding(beforeQuestion);
+        }
+        return "That gives me enough to work with.";
+    }
+
+    private static String ensureSentenceEnding(String text) {
+        if (text == null || text.isBlank()) {
+            return "That gives me enough to work with.";
+        }
+        String trimmed = text.trim();
+        if (trimmed.endsWith(".") || trimmed.endsWith("!") || trimmed.endsWith("?")) {
+            return trimmed;
+        }
+        return trimmed + ".";
     }
 
     private static boolean looksLikeClarifierRequest(String message) {
@@ -398,7 +497,10 @@ public final class PrivatePromptTurnResponder {
                 "both, or neither",
                 "board games",
                 "video games",
-                "what draws you in");
+                "what draws you in",
+                "how much does",
+                "turn you off",
+                "dealbreaker");
         if (!hasClarifierCue) {
             return false;
         }
@@ -504,10 +606,10 @@ public final class PrivatePromptTurnResponder {
     private static TurnResult fallback(String userMessage) {
         if (isTooShort(userMessage)) {
             return new TurnResult(
-                    "Give me a little more to work with here.",
+                    "Can you share a little more detail?",
                     true);
         }
-        return new TurnResult("That gives me something real to work with.", false);
+        return new TurnResult(FORWARD_PROMPT_MESSAGES[0], false);
     }
 
     private static boolean isTooShort(String text) {
@@ -537,8 +639,147 @@ public final class PrivatePromptTurnResponder {
         return words;
     }
 
+    private static boolean isConciseConcreteAnswer(String text) {
+        if (text == null) {
+            return false;
+        }
+        String trimmed = text.trim();
+        if (trimmed.isEmpty()) {
+            return false;
+        }
+        if (containsAny(trimmed.toLowerCase(Locale.ROOT),
+                "idk",
+                "i don't know",
+                "dont know",
+                "not sure",
+                "maybe",
+                "whatever",
+                "anything",
+                "nothing",
+                "n/a")) {
+            return false;
+        }
+        int words = wordCount(trimmed);
+        if (words < 1 || words > 5) {
+            return false;
+        }
+        int alphaChars = 0;
+        for (int i = 0; i < trimmed.length(); i++) {
+            if (Character.isLetter(trimmed.charAt(i))) {
+                alphaChars++;
+            }
+        }
+        return alphaChars >= 4;
+    }
+
+    private static boolean requiresForcedClarifier(TurnInput input) {
+        if (input == null || input.userMessage == null) {
+            return false;
+        }
+        String userText = input.userMessage.toLowerCase(Locale.ROOT);
+        if (!(mentionsGenericGames(userText) && !mentionsSpecificGameType(userText))) {
+            return false;
+        }
+        String question = safe(input.questionPart).toLowerCase(Locale.ROOT);
+        return question.contains("what kind of games") || question.contains("which kind of games");
+    }
+
+    private static String neutralizeFollowupMessage(String message, TurnInput input) {
+        String topic = inferNeutralTopic(input);
+        if (topic != null && !topic.isBlank()) {
+            return "Got it. How do you feel about " + topic + "?";
+        }
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        if (lower.contains("turn you off")
+                || lower.contains("dealbreaker")
+                || lower.contains("how much does")
+                || lower.contains("how much do you")) {
+            return "Got it. How do you feel about that?";
+        }
+        if (message == null || message.isBlank()) {
+            return "Got it. Can you share a little more detail?";
+        }
+        return "Got it. " + toQuestionSentence(message);
+    }
+
+    private static String inferNeutralTopic(TurnInput input) {
+        if (input == null || input.questionPart == null) {
+            return null;
+        }
+        String question = input.questionPart.toLowerCase(Locale.ROOT);
+        String user = safe(input.userMessage);
+        if (user.isBlank()) {
+            return null;
+        }
+        String loweredUser = user.toLowerCase(Locale.ROOT);
+        if (containsAny(loweredUser, "idk", "i don't know", "dont know", "not sure", "maybe", "i guess")) {
+            return null;
+        }
+        String cleanedUser = user.replaceAll("[^A-Za-z0-9'\\-\\s]", " ").replaceAll("\\s+", " ").trim();
+        if (cleanedUser.isEmpty()) {
+            return null;
+        }
+        if (question.contains("feel about")) {
+            return cleanedUser;
+        }
+        if (question.contains("turn off")
+                || question.contains("dealbreaker")
+                || question.contains("not my person")
+                || question.contains("popular that you don't like")
+                || question.contains("popular that you dont like")) {
+            return cleanedUser;
+        }
+        return null;
+    }
+
+    private static String toQuestionSentence(String message) {
+        if (message == null || message.isBlank()) {
+            return "Can you share a little more detail?";
+        }
+        String trimmed = message.trim();
+        int questionIdx = trimmed.indexOf('?');
+        if (questionIdx >= 0) {
+            String candidate = trimmed.substring(0, questionIdx + 1).trim();
+            if (!candidate.isEmpty()) {
+                return candidate;
+            }
+        }
+        if (trimmed.endsWith("?")) {
+            return trimmed;
+        }
+        return "Can you share a little more detail?";
+    }
+
     private static String safe(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static String completionMessage(boolean userReadyToSubmit, boolean hasPendingPromptPart, TurnInput input) {
+        if (hasPendingPromptPart) {
+            return pickVariant(NEXT_PART_ACK_MESSAGES, input);
+        }
+        if (userReadyToSubmit) {
+            return pickVariant(READY_TO_SUBMIT_MESSAGES, input);
+        }
+        return pickVariant(FORWARD_PROMPT_MESSAGES, input);
+    }
+
+    private static String pickVariant(String[] variants, TurnInput input) {
+        if (variants == null || variants.length == 0) {
+            return "Got it.";
+        }
+        if (variants.length == 1) {
+            return variants[0];
+        }
+        int seed = 17;
+        if (input != null) {
+            seed = 31 * seed + safe(input.promptText).hashCode();
+            seed = 31 * seed + safe(input.questionPart).hashCode();
+            seed = 31 * seed + safe(input.userMessage).hashCode();
+            seed = 31 * seed + (input.conversation == null ? 0 : input.conversation.size());
+        }
+        int idx = Math.floorMod(seed, variants.length);
+        return variants[idx];
     }
 
     private static String jsonQuote(String value) {

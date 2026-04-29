@@ -100,9 +100,6 @@ public final class PromptLibrary {
         defs.add(def("private.communities.scene", PromptBankKind.PRIVATE,
                 "What communities or scene have you felt the most at home in?",
                 "private", null, "agent"));
-        defs.add(def("private.fascinating.people", PromptBankKind.PRIVATE,
-                "Who are some people (historical or living) that you find fascinating? Why?",
-                "private", null, "agent"));
         DEFINITIONS = Collections.unmodifiableList(defs);
 
         List<PromptDefinition> publicPrompts = new ArrayList<>();

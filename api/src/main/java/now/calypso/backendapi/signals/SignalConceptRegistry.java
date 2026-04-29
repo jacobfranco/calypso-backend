@@ -336,7 +336,7 @@ public final class SignalConceptRegistry {
                 "basketball", "football", "baseball", "hockey", "tennis", "nfl", "nhl",
                 "carolina_panthers", "florida_panthers", "fitness", "gym",
                 "bodybuilding", "powerlifting", "running", "hiking", "yoga", "pilates", "cycling",
-                "swimming", "martial_arts", "nutrition", "science", "sci_fi", "cooking", "reading", "books",
+                "swimming", "martial_arts", "nutrition", "science", "space", "sci_fi", "cooking", "reading", "books",
                 "writing", "music", "concerts", "nightlife", "club", "socializing",
                 "coffee", "tea", "wine", "beer", "foodie", "baking", "entrepreneurship",
                 "startup", "career", "ambition", "academics", "education", "phd",
@@ -354,7 +354,7 @@ public final class SignalConceptRegistry {
                 "pc_gaming", "streaming", "content_creation", "podcasts", "history", "philosophy",
                 "economics", "finance", "investing", "real_estate", "ux", "product_management",
                 "marketing", "sales", "leadership", "public_speaking", "languages",
-                "beach", "mountains", "city_life", "suburban_life", "minimalism", "luxury_lifestyle",
+                "beach", "mountains", "city_life", "suburban_life", "minimalism", "luxury_lifestyle", "y2k",
                 "thrifting", "sustainability", "vegan", "vegetarian", "meal_prep", "desserts",
                 "cocktails", "karaoke", "dance", "festivals", "museum", "theater",
                 "opera", "architecture", "cars", "motorcycles", "f1", "ufc", "wrestling",
@@ -365,7 +365,7 @@ public final class SignalConceptRegistry {
                 "backpacking", "language_exchange",
                 "street_food", "fine_dining",
                 "long_term_planning", "commitment", "loyalty", "honesty", "empathy", "respect",
-                "red_rising", "frieren_beyond_journeys_end");
+                "red_rising", "frieren_beyond_journeys_end", "leftist_politics");
 
         // Keep aliases intentionally small and high-confidence.
         // We avoid broad shape canonicalization here so prompt outputs remain raw by
@@ -375,6 +375,10 @@ public final class SignalConceptRegistry {
         addAliases(seeds, "manga", "manga_fan");
         addAliases(seeds, "elden_ring", "eldenring");
         addAliases(seeds, "sci_fi", "science_fiction", "science fiction", "scifi", "sci fi");
+        addAliases(seeds, "space", "outer_space", "space exploration", "astronomy", "astrophysics", "cosmos");
+        addAliases(seeds, "leftist_politics", "leftism", "leftist", "leftists", "leftist politics",
+                "leftist leaders", "socialism", "socialist politics");
+        addAliases(seeds, "y2k", "y2k aesthetic", "2000s aesthetic", "millennial aesthetic");
         addAliases(seeds, "nfl", "national_football_league");
         addAliases(seeds, "nhl", "national_hockey_league");
         addAliases(seeds, "carolina_panthers", "carolina panthers");
@@ -419,6 +423,7 @@ public final class SignalConceptRegistry {
         addParent(seeds, "bodybuilding", "gym", 0.84);
         addParent(seeds, "powerlifting", "gym", 0.84);
         addParent(seeds, "gym", "fitness", 0.74);
+        addParent(seeds, "space", "science", 0.84);
         addParent(seeds, "pilates", "fitness", 0.66);
         addParent(seeds, "yoga", "fitness", 0.66);
         addParent(seeds, "running", "fitness", 0.64);
@@ -462,6 +467,9 @@ public final class SignalConceptRegistry {
         addParent(seeds, "romance_novels", "reading", 0.78);
         addParent(seeds, "romance_genre", "romance", 0.74);
         addParent(seeds, "greek_life", "community", 0.62);
+        addParent(seeds, "leftist_politics", "politics", 0.88);
+        addParent(seeds, "leftist_politics", "history", 0.62);
+        addParent(seeds, "y2k", "fashion", 0.58);
 
         BASE_CONCEPTS = Collections.unmodifiableMap(seeds);
 

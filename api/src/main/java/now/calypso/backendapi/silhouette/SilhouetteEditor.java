@@ -5,6 +5,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -18,6 +19,13 @@ public final class SilhouetteEditor {
     private static final long LLM_MAX_OUTPUT_TOKENS_RETRY = 190L;
     private static final Pattern COMPARATIVE_FROM_PATTERN = Pattern.compile(
             "(?i)([a-z0-9'\\- ]{2,84})\\s+from\\s+([a-z0-9'\\- ]{2,56})");
+    private static final Set<String> SEEKING_PRIVATE_PROMPT_IDS = Set.of(
+            "private.drawn.to",
+            "private.fictional.characters",
+            "private.not.my.person",
+            "private.popular.dislike",
+            "private.matchmaking.followup",
+            "matchmaking.followup");
     private static final String SYSTEM_PROMPT = """
             You are Calypso's silhouette claim editor.
 
@@ -124,29 +132,17 @@ public final class SilhouetteEditor {
         if (summary.length() > 280) {
             summary = summary.substring(0, 280).trim();
         }
+        summary = normalizeHeuristicClaimText(summary);
         if (summary.isBlank()) {
             return fallback;
         }
 
-        String facet;
-        double confidence;
         boolean explicitDislike = "private.popular.dislike".equals(normalizedPrompt)
                 || normalizedQuestion.contains("don't like")
                 || normalizedQuestion.contains("don't get")
                 || normalizedQuestion.contains("turn off");
-        if (explicitDislike) {
-            facet = "hard_boundaries";
-            confidence = 0.60;
-        } else if (normalizedQuestion.contains("drawn") || normalizedQuestion.contains("looking for")) {
-            facet = "seeking_core";
-            confidence = 0.58;
-        } else if (normalizedSource.contains("private") || normalizedSource.contains("matchmaking_followup")) {
-            facet = "seeking_core";
-            confidence = 0.54;
-        } else {
-            facet = "self_core";
-            confidence = 0.44;
-        }
+        String facet = heuristicFacetForPrompt(normalizedSource, normalizedPrompt, normalizedQuestion, explicitDislike);
+        double confidence = heuristicConfidenceForFacet(facet);
 
         fallback.ops.add(new SilhouettePatch.Op(
                 "upsert_claim",
@@ -159,6 +155,57 @@ public final class SilhouetteEditor {
                 List.of()));
         maybeAugmentPartnerCompClaims(fallback, promptId, question, answer);
         return fallback;
+    }
+
+    private static String heuristicFacetForPrompt(
+            String normalizedSource,
+            String normalizedPrompt,
+            String normalizedQuestion,
+            boolean explicitDislike) {
+        if (explicitDislike) {
+            return "hard_boundaries";
+        }
+        if (normalizedSource != null && normalizedSource.contains("matchmaking_followup")) {
+            return "seeking_core";
+        }
+        if (normalizedPrompt != null && SEEKING_PRIVATE_PROMPT_IDS.contains(normalizedPrompt)) {
+            return "seeking_core";
+        }
+        if (normalizedQuestion != null
+                && (normalizedQuestion.contains("drawn to")
+                        || normalizedQuestion.contains("looking for")
+                        || normalizedQuestion.contains("in a partner"))) {
+            return "seeking_core";
+        }
+        return "self_core";
+    }
+
+    private static double heuristicConfidenceForFacet(String facet) {
+        if ("hard_boundaries".equals(facet)) {
+            return 0.58;
+        }
+        if ("seeking_core".equals(facet)) {
+            return 0.52;
+        }
+        return 0.50;
+    }
+
+    private static String normalizeHeuristicClaimText(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        String normalized = raw.trim();
+        normalized = normalized.replaceAll("(?i)^i\\s*(?:'d|d|would)?\\s*say\\s*(?:like\\s*)?", "");
+        normalized = normalized.replaceAll("(?i)^it\\s*(?:is|'s)\\s*(?:like\\s*)?", "");
+        normalized = normalized.replaceAll("(?i)^i\\s*(?:am|'m)\\s+", "");
+        normalized = normalized.replaceAll("(?i)^like\\s+", "");
+        normalized = normalized.replaceAll("(?i)^kind of\\s+", "");
+        normalized = normalized.replaceAll("(?i)^sort of\\s+", "");
+        normalized = normalized.replaceAll("^[\\s,:;\\-]+", "").trim();
+        if (normalized.isEmpty()) {
+            return raw.trim();
+        }
+        return normalized;
     }
 
     private static void maybeAugmentPartnerCompClaims(
@@ -281,8 +328,7 @@ public final class SilhouetteEditor {
     private static boolean isComparativePrompt(String promptId, String question) {
         String prompt = promptId == null ? "" : promptId.toLowerCase(Locale.ROOT);
         if ("private.drawn.to".equals(prompt)
-                || "private.fictional.characters".equals(prompt)
-                || "private.fascinating.people".equals(prompt)) {
+                || "private.fictional.characters".equals(prompt)) {
             return true;
         }
         if (question == null || question.isBlank()) {
@@ -290,9 +336,7 @@ public final class SilhouetteEditor {
         }
         String lowered = question.toLowerCase(Locale.ROOT);
         return lowered.contains("drawn to")
-                || lowered.contains("fictional character")
-                || lowered.contains("historical")
-                || lowered.contains("fascinating");
+                || lowered.contains("fictional character");
     }
 
     private static String normalizeLabel(String raw) {

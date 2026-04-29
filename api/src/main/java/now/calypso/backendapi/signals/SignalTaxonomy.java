@@ -58,6 +58,7 @@ public final class SignalTaxonomy {
         overrides.put("dnd", HOBBIES);
         overrides.put("fitness", HOBBIES);
         overrides.put("gym", HOBBIES);
+        overrides.put("space", HOBBIES);
         overrides.put("running", HOBBIES);
         overrides.put("hiking", HOBBIES);
         overrides.put("yoga", HOBBIES);
@@ -95,11 +96,13 @@ public final class SignalTaxonomy {
         overrides.put("vegetarian", LIFESTYLE);
         overrides.put("city_life", LIFESTYLE);
         overrides.put("suburban_life", LIFESTYLE);
+        overrides.put("y2k", LIFESTYLE);
         overrides.put("homebody", LIFESTYLE);
         overrides.put("cozy", LIFESTYLE);
         overrides.put("faith", LIFESTYLE);
         overrides.put("spirituality", LIFESTYLE);
         overrides.put("politics", LIFESTYLE);
+        overrides.put("leftist_politics", LIFESTYLE);
 
         // Interpersonal values
         overrides.put("honesty", VALUES);

@@ -13,6 +13,12 @@ import now.calypso.backendapi.signals.SignalTaxonomy;
 
 public final class SilhouetteMerger {
     private static final int CLAIM_MAX = 96;
+    private static final int RERANKER_SUMMARY_MAX_CLAIMS = 10;
+    private static final int RERANKER_SUMMARY_MAX_CHARS = 1200;
+    private static final int ADMIN_SUMMARY_MAX_CLAIMS = 10;
+    private static final int ADMIN_SUMMARY_MAX_CHARS = 1800;
+    private static final int RERANKER_SUMMARY_ITEM_TEXT_MAX = 180;
+    private static final int ADMIN_SUMMARY_ITEM_TEXT_MAX = 180;
 
     private static final Set<String> CANONICAL_FACETS = Set.of(
             "self_core",
@@ -388,105 +394,144 @@ public final class SilhouetteMerger {
         if (out == null || out.claims == null || out.claims.isEmpty()) {
             return "";
         }
-        ArrayList<String> segments = new ArrayList<>();
-        addSummarySegment(segments, "self", joinFacetClaims(out.claims, "self_core", 1, false));
-        addSummarySegment(segments, "seeking", joinFacetClaims(out.claims, "seeking_core", 1, false));
-        addSummarySegment(segments, "dynamic", joinFacetClaims(out.claims, "relationship_dynamic", 1, false));
-        addSummarySegment(segments, "boundaries", joinFacetClaims(out.claims, "hard_boundaries", 1, false));
-        addSummarySegment(segments, "comps", joinFacetClaims(out.claims, "partner_comps", 2, true));
-        if (segments.isEmpty()) {
-            addSummarySegment(segments, "notes", joinFacetClaims(out.claims, "general", 2, false));
-        }
-        return clampText(String.join(" | ", segments), 260);
+        List<SilhouetteState.Claim> ranked = rankClaimsForSummary(out.claims);
+        String summary = compactClaimsSummary(
+                ranked,
+                RERANKER_SUMMARY_MAX_CLAIMS,
+                RERANKER_SUMMARY_MAX_CHARS,
+                false);
+        return clampText(summary, RERANKER_SUMMARY_MAX_CHARS);
     }
 
     private static String buildAdminSummary(SilhouetteState out) {
         if (out == null || out.claims == null || out.claims.isEmpty()) {
             return "";
         }
+        List<SilhouetteState.Claim> ranked = rankClaimsForSummary(out.claims);
         StringBuilder buf = new StringBuilder(760);
         String reranker = buildRerankerSummary(out);
         if (!reranker.isBlank()) {
             buf.append("summary: ").append(reranker).append('\n');
         }
-        buf.append("recent_claims: ");
-        int added = 0;
-        ArrayList<String> rows = new ArrayList<>();
-        for (SilhouetteState.Claim claim : out.claims) {
-            if (claim == null || claim.text == null || claim.text.isBlank()) {
-                continue;
-            }
-            StringBuilder row = new StringBuilder(140);
-            row.append(claim.facet == null || claim.facet.isBlank() ? "general" : claim.facet)
-                    .append("@")
-                    .append(String.format(Locale.ROOT, "%.2f", clamp01(claim.confidence)))
-                    .append(":")
-                    .append(clampText(claim.text, 96));
-            if (claim.kind != null && !claim.kind.isBlank()) {
-                row.append(" [").append(clampText(claim.kind, 24)).append("]");
-            }
-            rows.add(row.toString());
-            added += 1;
-            if (added >= 8) {
-                break;
-            }
+        String rankedSummary = compactClaimsSummary(
+                ranked,
+                ADMIN_SUMMARY_MAX_CLAIMS,
+                ADMIN_SUMMARY_MAX_CHARS - 40,
+                true);
+        if (!rankedSummary.isBlank()) {
+            buf.append("ranked_claims: ").append(rankedSummary);
         }
-        buf.append(String.join(" | ", rows));
-        return clampText(buf.toString().trim(), 700);
+        return clampText(buf.toString().trim(), ADMIN_SUMMARY_MAX_CHARS);
     }
 
-    private static void addSummarySegment(List<String> segments, String label, String value) {
-        if (segments == null || label == null || label.isBlank() || value == null || value.isBlank()) {
-            return;
+    private static List<SilhouetteState.Claim> rankClaimsForSummary(List<SilhouetteState.Claim> claims) {
+        if (claims == null || claims.isEmpty()) {
+            return List.of();
         }
-        segments.add(label + "=" + value);
-    }
-
-    private static String joinFacetClaims(
-            List<SilhouetteState.Claim> claims,
-            String facet,
-            int maxItems,
-            boolean preferLabelBeforeColon) {
-        if (claims == null || claims.isEmpty() || facet == null || facet.isBlank() || maxItems <= 0) {
-            return "";
-        }
-        ArrayList<SilhouetteState.Claim> pool = new ArrayList<>();
+        ArrayList<SilhouetteState.Claim> ranked = new ArrayList<>();
         for (SilhouetteState.Claim claim : claims) {
             if (claim == null || claim.text == null || claim.text.isBlank()) {
                 continue;
             }
-            String claimFacet = claim.facet == null ? "" : claim.facet.trim().toLowerCase(Locale.ROOT);
-            if (!facet.equals(claimFacet)) {
-                continue;
+            ranked.add(claim);
+        }
+        ranked.sort((a, b) -> {
+            int byConfidence = Double.compare(clamp01(b.confidence), clamp01(a.confidence));
+            if (byConfidence != 0) {
+                return byConfidence;
             }
-            pool.add(claim);
-        }
-        if (pool.isEmpty()) {
-            return "";
-        }
-        pool.sort((a, b) -> {
-            int byConf = Double.compare(clamp01(b.confidence), clamp01(a.confidence));
-            if (byConf != 0) {
-                return byConf;
+            int byFacet = Integer.compare(facetPriority(a.facet), facetPriority(b.facet));
+            if (byFacet != 0) {
+                return byFacet;
             }
             return Long.compare(b.createdAt, a.createdAt);
         });
+        return ranked;
+    }
 
-        LinkedHashSet<String> lines = new LinkedHashSet<>();
-        for (SilhouetteState.Claim claim : pool) {
-            String text = clampText(claim.text, preferLabelBeforeColon ? 54 : 84);
+    private static int facetPriority(String facet) {
+        if (facet == null || facet.isBlank()) {
+            return 99;
+        }
+        return switch (facet) {
+            case "hard_boundaries" -> 0;
+            case "seeking_core" -> 1;
+            case "self_core" -> 2;
+            case "relationship_dynamic" -> 3;
+            case "partner_comps" -> 4;
+            case "communication_style" -> 5;
+            case "emotional_style" -> 6;
+            case "energy_style" -> 7;
+            case "trajectory" -> 8;
+            case "narrative" -> 9;
+            default -> 10;
+        };
+    }
+
+    private static String compactClaimsSummary(
+            List<SilhouetteState.Claim> rankedClaims,
+            int maxClaims,
+            int maxChars,
+            boolean includeConfidence) {
+        if (rankedClaims == null || rankedClaims.isEmpty() || maxClaims <= 0 || maxChars <= 0) {
+            return "";
+        }
+        StringBuilder buf = new StringBuilder(Math.min(480, Math.max(64, maxChars + 24)));
+        int added = 0;
+        for (SilhouetteState.Claim claim : rankedClaims) {
+            if (claim == null || claim.text == null || claim.text.isBlank()) {
+                continue;
+            }
+            String facetLabel = facetSummaryLabel(claim.facet);
+            String text = clampText(
+                    claim.text,
+                    includeConfidence ? ADMIN_SUMMARY_ITEM_TEXT_MAX : RERANKER_SUMMARY_ITEM_TEXT_MAX);
             if (text.isBlank()) {
                 continue;
             }
-            if (preferLabelBeforeColon && text.contains(":")) {
-                text = text.substring(0, text.indexOf(':')).trim();
+            String item;
+            if (includeConfidence) {
+                item = facetLabel
+                        + "@"
+                        + String.format(Locale.ROOT, "%.2f", clamp01(claim.confidence))
+                        + ":"
+                        + text;
+            } else {
+                item = facetLabel + ":" + text;
             }
-            lines.add(text);
-            if (lines.size() >= maxItems) {
+            if (item.length() > maxChars && buf.length() == 0) {
+                return clampText(item, maxChars);
+            }
+            String prefixed = buf.length() == 0 ? item : " | " + item;
+            if (buf.length() + prefixed.length() > maxChars) {
+                break;
+            }
+            buf.append(prefixed);
+            added += 1;
+            if (added >= maxClaims) {
                 break;
             }
         }
-        return String.join("; ", lines);
+        return buf.toString().trim();
+    }
+
+    private static String facetSummaryLabel(String facet) {
+        if (facet == null || facet.isBlank()) {
+            return "general";
+        }
+        return switch (facet) {
+            case "self_core" -> "self";
+            case "seeking_core" -> "seeking";
+            case "relationship_dynamic" -> "dynamic";
+            case "hard_boundaries" -> "boundaries";
+            case "partner_comps" -> "comps";
+            case "communication_style" -> "comms";
+            case "emotional_style" -> "emotional";
+            case "energy_style" -> "energy";
+            case "trajectory" -> "trajectory";
+            case "meta_observation" -> "meta";
+            default -> facet;
+        };
     }
 
     private static boolean isLowValueMetaObservationText(String text) {
@@ -545,14 +590,14 @@ public final class SilhouetteMerger {
         }
         residual = residual
                 .replaceAll(
-                        "\\b(prefers?|prefer|exclude|excluding|dislike|dislikes|disliked|hate|hates|avoid|avoids|turn\\s+off|people|person|partners?|who|engage|with|into|culture|scene|vibes?|social|community|belonging|home|primary|identif(?:y|ies)|strongly|around|for|to|and|or|the|a|an|of|on|in|is|are|be|not|no|get|dont|don't|just)\\b",
+                        "\\b(prefers?|prefer|wants?|wanted|share|shares|shared|interests?|hobb(?:y|ies)|exclude|excluding|dislike|dislikes|disliked|hate|hates|avoid|avoids|turn\\s+off|people|person|partners?|who|engage|with|into|culture|scene|vibes?|social|community|belonging|home|primary|identif(?:y|ies)|strongly|around|for|to|and|or|the|a|an|of|on|in|is|are|be|not|no|get|dont|don't|just)\\b",
                         " ")
                 .replaceAll("\\s+", " ")
                 .trim();
         if ("hard_boundaries".equals(facet)) {
-            return residual.length() <= 28;
+            return residual.length() <= 40;
         }
-        return residual.length() <= 16;
+        return residual.length() <= 30;
     }
 
     private static String normalizePhrase(String raw) {
@@ -590,7 +635,12 @@ public final class SilhouetteMerger {
         if (trimmed.length() <= maxLen) {
             return trimmed;
         }
-        return trimmed.substring(0, maxLen).trim();
+        String clipped = trimmed.substring(0, maxLen).trim();
+        int lastSpace = clipped.lastIndexOf(' ');
+        if (lastSpace >= maxLen * 0.6) {
+            return clipped.substring(0, lastSpace).trim();
+        }
+        return clipped;
     }
 
     private static double clamp01(double value) {

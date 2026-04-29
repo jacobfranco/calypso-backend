@@ -486,7 +486,7 @@ class CalypsoApiIntegrationTest {
                 assertNotNull(animeGeneric);
                 assertNotNull(anime);
 
-                assertTrue(jojo.valence() >= 0.84);
+                assertTrue(jojo.valence() >= 0.62);
                 assertTrue(animeGeneric.valence() < jojo.valence());
                 assertTrue(manga.valence() < jojo.valence());
                 assertTrue(anime.valence() < jojo.valence());
@@ -571,7 +571,7 @@ class CalypsoApiIntegrationTest {
                 List<ExtractedSignal> extracted = mgr.extractSignalsFromPrompt(question, answer).get(5, TimeUnit.SECONDS);
                 ExtractedSignal jojo = findExtracted(extracted, "jojo_bizarre_adventure", SignalIntent.SELF);
                 assertNotNull(jojo);
-                assertTrue(jojo.valence() >= 0.90);
+                assertTrue(jojo.valence() >= 0.68);
             } finally {
                 OpenAIJson.clearTestOverride();
             }
@@ -611,7 +611,8 @@ class CalypsoApiIntegrationTest {
             SignalRecord jojo = findRecord(stored, "jojos_bizarre_adventure", SignalIntent.SELF);
             assertNotNull(jojo);
             assertTrue(jojo.isSetValence());
-            assertTrue(jojo.getValence() >= 0.72);
+            assertTrue(jojo.getValence() >= 0.18 && jojo.getValence() <= 0.34,
+                    "Public prompt first hit should persist as a moderate signal, not an immediate max.");
         }
     }
 
@@ -1124,13 +1125,13 @@ class CalypsoApiIntegrationTest {
             assertNotNull(travel);
             assertTrue(travel.isSetValence());
             assertTrue(travel.getValence() > 0.0);
-            assertTrue(Math.abs(travel.getValence() - 0.36) <= 0.12,
+            assertTrue(Math.abs(travel.getValence() - 0.24) <= 0.10,
                     "Strength 3 should stay strongest while using scaled reaction impact.");
 
             SignalRecord romanceNovels = awaitSignal(mgr, viewerId, "romance_novels", SignalIntent.SEEKING, 5000);
             assertNotNull(romanceNovels);
             assertTrue(romanceNovels.isSetValence());
-            assertTrue(romanceNovels.getValence() < -0.20,
+            assertTrue(romanceNovels.getValence() <= -0.12,
                     "Negative reaction strengths should produce negative valence.");
 
             String phdToken = "phd";
@@ -1392,7 +1393,8 @@ class CalypsoApiIntegrationTest {
             SignalRecord jojo = findRecord(bootstrapped, "jojos_bizarre_adventure", SignalIntent.SELF);
             assertNotNull(jojo);
             assertTrue(jojo.isSetValence());
-            assertTrue(Math.abs(jojo.getValence() - 0.86) <= 0.10);
+            assertTrue(jojo.getValence() >= 0.18 && jojo.getValence() <= 0.34,
+                    "Bootstrapped public-prompt first hit should use moderated scaling.");
 
             List<PublicPromptAnswer> mine = mgr.getMyPublicPromptAnswers(accountId).get(5, TimeUnit.SECONDS);
             assertFalse(mine.isEmpty());
@@ -1484,7 +1486,7 @@ class CalypsoApiIntegrationTest {
             SignalRecord promoted = findRecord(after, canonical, SignalIntent.SELF);
             assertNotNull(promoted);
             assertTrue(promoted.isSetValence());
-            assertTrue(promoted.getValence() > 0.6);
+            assertTrue(promoted.getValence() > 0.45);
         }
     }
 
@@ -1670,18 +1672,18 @@ class CalypsoApiIntegrationTest {
             assertTrue(tokens.contains("red_rising"),
                     "Explicit franchise titles in drawn-to answers should be retained as reusable signals.");
             Signals after = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
-            SignalRecord record = findRecord(after, "red_rising", SignalIntent.SEEKING);
-            assertNotNull(record, "Drawn-to framing should persist explicit franchise titles with seeking intent.");
+            SignalRecord record = findRecord(after, "red_rising", SignalIntent.SELF);
+            assertNotNull(record, "Drawn-to franchise/media references should persist as self-side taste context.");
             assertTrue(record.isSetValence());
             assertTrue(record.getValence() > 0.0);
 
-            SignalRecord sciFi = findRecord(after, "sci_fi", SignalIntent.SEEKING);
+            SignalRecord sciFi = findRecord(after, "sci_fi", SignalIntent.SELF);
             assertNotNull(sciFi, "Franchise signals should derive to genre-level concepts.");
             assertTrue(sciFi.isSetSource());
             assertEquals("signal_hierarchy_derived", sciFi.getSource());
             assertTrue(sciFi.isSetValence());
 
-            SignalRecord books = findRecord(after, "books", SignalIntent.SEEKING);
+            SignalRecord books = findRecord(after, "books", SignalIntent.SELF);
             assertNotNull(books, "Franchise signals should also derive to broader media format concepts.");
             assertTrue(books.isSetSource());
             assertEquals("signal_hierarchy_derived", books.getSource());

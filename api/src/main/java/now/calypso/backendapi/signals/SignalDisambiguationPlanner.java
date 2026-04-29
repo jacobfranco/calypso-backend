@@ -52,6 +52,11 @@ public final class SignalDisambiguationPlanner {
                     "Quick clarify: when you said \"Joker\", did you mean the DC character, Persona's Joker, or something else?"),
             Map.entry("avatar",
                     "Quick clarify: when you said \"Avatar\", did you mean Avatar: The Last Airbender, James Cameron's Avatar, or something else?"));
+    private static final Map<String, String> IDEOLOGY_AMBIGUOUS_TERM_TO_QUESTION = Map.ofEntries(
+            Map.entry("leftist",
+                    "Quick clarify: when you mentioned leftist leaders, is that mainly your own political alignment or mostly historical curiosity?"),
+            Map.entry("leftism",
+                    "Quick clarify: when you mentioned leftism, is that mainly your own political alignment or mostly historical curiosity?"));
 
     private SignalDisambiguationPlanner() {
     }
@@ -72,7 +77,7 @@ public final class SignalDisambiguationPlanner {
         addSportsAmbiguities(out, promptId, combinedLower, extractedTokens);
         addMediaAmbiguities(out, promptId, combinedLower, extractedTokens);
         addGenericWatchingAmbiguities(out, promptId, combinedLower, extractedTokens);
-        addSelfVsPartnerScopeAmbiguities(out, promptId, combinedLower);
+        addIdeologyAmbiguities(out, promptId, combinedLower, extractedTokens);
 
         if (out.isEmpty()) {
             return List.of();
@@ -187,55 +192,33 @@ public final class SignalDisambiguationPlanner {
         }
     }
 
-    private static void addSelfVsPartnerScopeAmbiguities(
+    private static void addIdeologyAmbiguities(
             LinkedHashMap<String, FollowupCandidate> out,
             String promptId,
-            String combinedLower) {
+            String combinedLower,
+            Set<String> extractedTokens) {
         if (out == null || combinedLower == null || combinedLower.isBlank()) {
             return;
         }
-        String normalizedPromptId = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
-        boolean promptSupportsScopeClarification = "private.fascinating.people".equals(normalizedPromptId);
-        if (!promptSupportsScopeClarification) {
+        if (extractedTokens.contains("leftist_politics") || extractedTokens.contains("politics")) {
             return;
         }
-        if (!containsAny(
-                combinedLower,
-                "because",
-                "quality",
-                "qualities",
-                "trait",
-                "traits",
-                "strong",
-                "capable",
-                "independent",
-                "independence",
-                "driven",
-                "disciplined",
-                "focused",
-                "focus",
-                "intelligent",
-                "ambitious",
-                "loyal",
-                "confident")) {
-            return;
+        for (Map.Entry<String, String> entry : IDEOLOGY_AMBIGUOUS_TERM_TO_QUESTION.entrySet()) {
+            String rawTerm = entry.getKey();
+            String question = entry.getValue();
+            if (rawTerm == null || rawTerm.isBlank() || question == null || question.isBlank()) {
+                continue;
+            }
+            if (!containsWholeWord(combinedLower, rawTerm)) {
+                continue;
+            }
+            String normalizedTerm = SignalNormalizer.normalizeOne(rawTerm);
+            if (normalizedTerm == null || normalizedTerm.isBlank()) {
+                continue;
+            }
+            String key = "ideology:" + normalizedTerm;
+            out.putIfAbsent(key, new FollowupCandidate(key, normalizedTerm, question, promptId));
         }
-        if (containsAny(
-                combinedLower,
-                "in a partner",
-                "want in a partner",
-                "looking for",
-                "drawn to",
-                "i see this in myself",
-                "i see these in myself",
-                "in myself",
-                "both",
-                "neither")) {
-            return;
-        }
-        String key = "scope:self_vs_partner";
-        String question = "Quick clarify: are those traits mostly about you, what you want in a partner, both, or neither?";
-        out.putIfAbsent(key, new FollowupCandidate(key, "self_vs_partner_scope", question, promptId));
     }
 
     private static String combinedLowerText(String question, String answer, Collection<String> conversationLines) {

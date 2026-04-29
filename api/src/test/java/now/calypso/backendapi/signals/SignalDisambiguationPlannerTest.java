@@ -50,24 +50,14 @@ class SignalDisambiguationPlannerTest {
     }
 
     @Test
-    void detectPromptAmbiguities_flagsSelfVsPartnerScopeWhenTraitDirectionIsUnclear() {
+    void detectPromptAmbiguities_flagsLeftistIdeologyAsClarificationCandidateWhenUnresolved() {
         List<SignalDisambiguationPlanner.FollowupCandidate> candidates = SignalDisambiguationPlanner.detectPromptAmbiguities(
-                "private.fascinating.people",
-                "Who are some people (historical or living) that you find fascinating? Why?",
-                "Nikola Tesla for his independence and obsessive focus.",
+                "private.rabbit.hole",
+                "What topic or niche have you spent way too much time exploring?",
+                "I go into rabbit holes about leftist leaders.",
                 List.of(),
-                List.of(ExtractedSignal.from("intelligence", SignalIntent.SELF, 0.6)));
-        assertTrue(candidates.stream().anyMatch(c -> c != null && "scope:self_vs_partner".equals(c.key)));
+                List.of(ExtractedSignal.from("history", SignalIntent.SELF, 0.42)));
+        assertTrue(candidates.stream().anyMatch(c -> c != null && "ideology:leftist".equals(c.key)));
     }
 
-    @Test
-    void detectPromptAmbiguities_doesNotFlagScopeForDrawnToPrompt() {
-        List<SignalDisambiguationPlanner.FollowupCandidate> candidates = SignalDisambiguationPlanner.detectPromptAmbiguities(
-                "private.drawn.to",
-                "Describe the kind of person you tend to be drawn to.",
-                "Someone independent, focused, and ambitious.",
-                List.of(),
-                List.of(ExtractedSignal.from("ambition", SignalIntent.SEEKING, 0.72)));
-        assertFalse(candidates.stream().anyMatch(c -> c != null && "scope:self_vs_partner".equals(c.key)));
-    }
 }

@@ -144,15 +144,22 @@ public class CalypsoApiManager {
     private static final double MATCH_RERANK_BLOCKER_CAP = 0.82;
     private static final double MATCH_RERANK_CONFIDENCE_MIN = 0.25;
     private static final long MATCH_RERANK_TIMEOUT_MS = 4500L;
-    private static final double PUBLIC_REACTION_LIKE_VALENCE_FLOOR = 0.62;
-    private static final double PUBLIC_REACTION_DISLIKE_VALENCE_FLOOR = 0.72;
-    private static final double PUBLIC_REACTION_VALENCE_SCALE = 0.42;
+    private static final double PUBLIC_REACTION_LIKE_VALENCE_FLOOR = 0.44;
+    private static final double PUBLIC_REACTION_DISLIKE_VALENCE_FLOOR = 0.54;
+    private static final double PUBLIC_REACTION_VALENCE_SCALE = 0.24;
     private static final int PUBLIC_REACTION_STRENGTH_MIN = -3;
     private static final int PUBLIC_REACTION_STRENGTH_MAX = 3;
     private static final String PUBLIC_REACTION_STRENGTH_PROMPT_SUFFIX = "|reaction_strength:";
-    private static final double PUBLIC_PROMPT_OWNER_CANDIDATE_FALLBACK_VALENCE = 0.82;
+    private static final double PUBLIC_PROMPT_OWNER_CANDIDATE_FALLBACK_VALENCE = 0.55;
     private static final int SIGNAL_HIERARCHY_MAX_DEPTH = 3;
-    private static final double SIGNAL_HIERARCHY_MIN_VALENCE_ABS = 0.08;
+    private static final double SIGNAL_HIERARCHY_MIN_VALENCE_ABS = 0.06;
+    private static final double SIGNAL_HIERARCHY_DERIVED_VALENCE_SCALE = 0.68;
+    private static final double PRIVATE_PROMPT_FIRST_HIT_VALENCE_SCALE = 0.30;
+    private static final double PRIVATE_PROMPT_REPEAT_VALENCE_SCALE = 0.52;
+    private static final double MATCHMAKING_FOLLOWUP_FIRST_HIT_VALENCE_SCALE = 0.32;
+    private static final double MATCHMAKING_FOLLOWUP_REPEAT_VALENCE_SCALE = 0.54;
+    private static final double PUBLIC_PROMPT_FIRST_HIT_VALENCE_SCALE = 0.32;
+    private static final double PUBLIC_PROMPT_REPEAT_VALENCE_SCALE = 0.54;
     private static final String SIGNAL_HIERARCHY_DERIVED_SOURCE = "signal_hierarchy_derived";
     private static final int DISAMBIGUATION_MAX_PER_ACCOUNT = 200;
     private static final boolean SILHOUETTE_WRITE_ENABLED = !"false"
@@ -3304,6 +3311,48 @@ public class CalypsoApiManager {
         }
     }
 
+    private static boolean shouldObserveUnresolvedCandidate(String normalizedSource, String context) {
+        if (normalizedSource == null || normalizedSource.isBlank()) {
+            return true;
+        }
+        if (!normalizedSource.startsWith("private_prompt")) {
+            return true;
+        }
+        String promptId = contextFieldValue(context, "prompt_id");
+        if (promptId == null || promptId.isBlank()) {
+            return true;
+        }
+        String normalizedPromptId = promptId.trim().toLowerCase(Locale.ROOT);
+        if ("private.visual.aesthetic".equals(normalizedPromptId)) {
+            return false;
+        }
+        if ("private.color.presence".equals(normalizedPromptId)) {
+            return false;
+        }
+        return true;
+    }
+
+    private static String contextFieldValue(String context, String key) {
+        if (context == null || context.isBlank() || key == null || key.isBlank()) {
+            return null;
+        }
+        String marker = key.trim() + "=";
+        for (String segment : context.split("\\|")) {
+            if (segment == null) {
+                continue;
+            }
+            String trimmed = segment.trim();
+            if (!trimmed.startsWith(marker)) {
+                continue;
+            }
+            String value = trimmed.substring(marker.length()).trim();
+            if (!value.isEmpty()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
     private static double clamp01(double value) {
         if (Double.isNaN(value))
             return 0.0;
@@ -3851,9 +3900,14 @@ public class CalypsoApiManager {
                     continue;
                 }
                 Double baseValenceMaybe = baseValenceByToken.get(token);
-                double signalValence = baseValenceMaybe == null
-                        ? fallbackValence
-                        : clampSigned(baseValenceMaybe.doubleValue() * reactionScale);
+                double signalValence;
+                if (baseValenceMaybe == null || !Double.isFinite(baseValenceMaybe.doubleValue())) {
+                    signalValence = fallbackValence;
+                } else {
+                    double scaledFromOwner = clampSigned(baseValenceMaybe.doubleValue() * reactionScale);
+                    double magnitude = Math.max(Math.abs(fallbackValence), Math.abs(scaledFromOwner));
+                    signalValence = Math.signum(reactionScale) * magnitude;
+                }
                 ExtractedSignal signal = ExtractedSignal.from(token, SignalIntent.SEEKING, signalValence);
                 if (signal == null || signal.token() == null || signal.token().isBlank()) {
                     continue;
@@ -4152,6 +4206,7 @@ public class CalypsoApiManager {
             CompletableFuture<Void> next = start.thenCompose(
                     v -> readCurrentSignalRecords(accountId).thenCompose(current -> {
                         LinkedHashMap<String, SignalRecord> map = toRecordMap(current);
+                        HashSet<String> seenInCurrentWrite = new HashSet<>();
                         for (ExtractedSignal sig : sanitized) {
                             SignalIntent intent = sig.intent();
                             double baseValence = sig.valence() == null ? 1.0 : clampSigned(sig.valence());
@@ -4165,13 +4220,15 @@ public class CalypsoApiManager {
                                 continue;
                             }
                             if (resolution != null && resolution.kind() == SignalConceptRegistry.ResolutionKind.UNKNOWN) {
-                                SignalConceptRegistry.observeUnresolved(
-                                        rawToken,
-                                        normalizedSource,
-                                        context,
-                                        accountId,
-                                        intent,
-                                        baseValence);
+                                if (shouldObserveUnresolvedCandidate(normalizedSource, context)) {
+                                    SignalConceptRegistry.observeUnresolved(
+                                            rawToken,
+                                            normalizedSource,
+                                            context,
+                                            accountId,
+                                            intent,
+                                            baseValence);
+                                }
                                 if (strictCanonicalSource) {
                                     continue;
                                 }
@@ -4214,15 +4271,29 @@ public class CalypsoApiManager {
                                 if (propagationWeight > 1.0) {
                                     propagationWeight = 1.0;
                                 }
-                                double scaledIncoming = clampSigned(baseValence * propagationWeight);
-                                if (Math.abs(scaledIncoming) < SIGNAL_HIERARCHY_MIN_VALENCE_ABS) {
-                                    continue;
+                                boolean derivedExpansion = !expandedToken.equals(canonicalToken);
+                                double effectiveWeight = propagationWeight;
+                                if (derivedExpansion) {
+                                    effectiveWeight *= SIGNAL_HIERARCHY_DERIVED_VALENCE_SCALE;
                                 }
                                 String key = recordKey(expandedToken, intent);
+                                boolean seenInCurrentWriteForKey = !seenInCurrentWrite.add(key);
                                 SignalRecord record = map.get(key);
                                 int priorCount = record == null
                                         ? 0
                                         : (record.isSetCount() ? Math.max(1, record.getCount()) : 1);
+                                double scaledIncoming = clampSigned(baseValence * effectiveWeight);
+                                scaledIncoming = clampSigned(
+                                        scaledIncoming
+                                                * sourceObservationValenceScale(
+                                                        normalizedSource,
+                                                        priorCount,
+                                                        derivedExpansion,
+                                                        record,
+                                                        seenInCurrentWriteForKey));
+                                if (Math.abs(scaledIncoming) < SIGNAL_HIERARCHY_MIN_VALENCE_ABS) {
+                                    continue;
+                                }
                                 int nextCount;
                                 if (record == null) {
                                     record = new SignalRecord();
@@ -4248,7 +4319,6 @@ public class CalypsoApiManager {
                                 } else {
                                     storedRawToken = expandedToken;
                                 }
-                                boolean derivedExpansion = !expandedToken.equals(canonicalToken);
                                 String effectiveSource = derivedExpansion ? SIGNAL_HIERARCHY_DERIVED_SOURCE
                                         : normalizedSource;
                                 String effectiveSourceId = derivedExpansion ? null : normalizedSourceId;
@@ -4682,15 +4752,15 @@ public class CalypsoApiManager {
         }
         residual = residual
                 .replaceAll(
-                        "\\b(prefers?|prefer|exclude|excluding|dislike|dislikes|disliked|hate|hates|avoid|avoids|turn\\s+off|people|person|partners?|who|engage|with|into|culture|scene|vibes?|social|community|belonging|home|primary|identif(?:y|ies)|strongly|around|for|to|and|or|the|a|an|of|on|in|is|are|be|not|no|get|dont|don't|just)\\b",
+                        "\\b(prefers?|prefer|wants?|wanted|share|shares|shared|interests?|hobb(?:y|ies)|exclude|excluding|dislike|dislikes|disliked|hate|hates|avoid|avoids|turn\\s+off|people|person|partners?|who|engage|with|into|culture|scene|vibes?|social|community|belonging|home|primary|identif(?:y|ies)|strongly|around|for|to|and|or|the|a|an|of|on|in|is|are|be|not|no|get|dont|don't|just)\\b",
                         " ")
                 .replaceAll("\\s+", " ")
                 .trim();
 
         if ("hard_boundaries".equals(facet)) {
-            return residual.length() <= 28;
+            return residual.length() <= 40;
         }
-        return residual.length() <= 18;
+        return residual.length() <= 30;
     }
 
     private static boolean isLowValueMetaObservationOp(SilhouettePatch.Op op) {
@@ -4842,6 +4912,59 @@ public class CalypsoApiManager {
             return 1.0;
         }
         return value;
+    }
+
+    private static double sourceObservationValenceScale(
+            String source,
+            int priorCount,
+            boolean derivedExpansion,
+            SignalRecord existingRecord,
+            boolean seenInCurrentWriteForKey) {
+        String normalized = source == null ? "" : source.trim().toLowerCase(Locale.ROOT);
+        SourceValenceScaleProfile profile = sourceValenceScaleProfile(normalized);
+        if (profile == null) {
+            return 1.0;
+        }
+        if (seenInCurrentWriteForKey) {
+            return profile.firstHitScale;
+        }
+        if (priorCount <= 0) {
+            return profile.firstHitScale;
+        }
+        boolean existingDerivedOnly = existingRecord != null
+                && existingRecord.isSetSource()
+                && SIGNAL_HIERARCHY_DERIVED_SOURCE.equals(existingRecord.getSource());
+        if (!derivedExpansion && existingDerivedOnly) {
+            return profile.firstHitScale;
+        }
+        return profile.repeatScale;
+    }
+
+    private static SourceValenceScaleProfile sourceValenceScaleProfile(String normalizedSource) {
+        if (normalizedSource == null || normalizedSource.isBlank()) {
+            return null;
+        }
+        // Public prompt reactions already carry calibrated valence via
+        // PUBLIC_REACTION_VALENCE_SCALE; do not dampen them again here.
+        if (normalizedSource.contains("public_prompt_reaction")) {
+            return null;
+        }
+        if (normalizedSource.contains("private_prompt")) {
+            return new SourceValenceScaleProfile(
+                    PRIVATE_PROMPT_FIRST_HIT_VALENCE_SCALE,
+                    PRIVATE_PROMPT_REPEAT_VALENCE_SCALE);
+        }
+        if (normalizedSource.contains("matchmaking_followup")) {
+            return new SourceValenceScaleProfile(
+                    MATCHMAKING_FOLLOWUP_FIRST_HIT_VALENCE_SCALE,
+                    MATCHMAKING_FOLLOWUP_REPEAT_VALENCE_SCALE);
+        }
+        if (normalizedSource.contains("public_prompt")) {
+            return new SourceValenceScaleProfile(
+                    PUBLIC_PROMPT_FIRST_HIT_VALENCE_SCALE,
+                    PUBLIC_PROMPT_REPEAT_VALENCE_SCALE);
+        }
+        return null;
     }
 
     private static double blendStoredValence(double previousValence, double incomingValence, int priorCount) {
@@ -5337,7 +5460,7 @@ public class CalypsoApiManager {
             request.surface = surface;
             request.viewerSignals = toRerankSignals(viewerSignals, MATCH_RERANK_SIGNAL_LIMIT_VIEWER);
             if (SILHOUETTE_RERANK_ENABLED) {
-                request.viewerSilhouetteDigest = silhouetteDigest(viewerSilhouette, 320);
+                request.viewerSilhouetteDigest = silhouetteDigest(viewerSilhouette, 420);
                 request.viewerSilhouetteMaturity = silhouetteMaturity(viewerSilhouette);
             } else {
                 request.viewerSilhouetteDigest = "";
@@ -5358,7 +5481,7 @@ public class CalypsoApiManager {
                 entry.signals = toRerankSignals(targetSignalsById.get(targetId), MATCH_RERANK_SIGNAL_LIMIT_CANDIDATE);
                 if (SILHOUETTE_RERANK_ENABLED) {
                     Map<String, Object> candidateSilhouette = targetSilhouettesById.get(targetId);
-                    entry.silhouetteDigest = silhouetteDigest(candidateSilhouette, 160);
+                    entry.silhouetteDigest = silhouetteDigest(candidateSilhouette, 280);
                     entry.silhouetteMaturity = silhouetteMaturity(candidateSilhouette);
                 } else {
                     entry.silhouetteDigest = "";
@@ -5937,6 +6060,16 @@ public class CalypsoApiManager {
             this.intent = intent;
             this.valence = valence;
             this.weight = weight;
+        }
+    }
+
+    private static final class SourceValenceScaleProfile {
+        final double firstHitScale;
+        final double repeatScale;
+
+        private SourceValenceScaleProfile(double firstHitScale, double repeatScale) {
+            this.firstHitScale = clamp01(firstHitScale);
+            this.repeatScale = clamp01(repeatScale);
         }
     }
 

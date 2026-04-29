@@ -171,4 +171,52 @@ class SilhouetteMergerClaimLedgerTest {
         assertEquals(1, merged.claims.size(), "Concrete community echoes should be filtered out of silhouette.");
         assertEquals("seeking_core", merged.claims.get(0).facet);
     }
+
+    @Test
+    void summaryCache_usesSharedRankedClaimBasisForRerankerAndAdmin() {
+        long now = System.currentTimeMillis();
+        SilhouetteState base = SilhouetteState.empty(79L);
+
+        SilhouetteState.Claim c1 = new SilhouetteState.Claim();
+        c1.id = "cl_a";
+        c1.facet = "seeking_core";
+        c1.text = "Revisits Jojo and Elden Ring often.";
+        c1.confidence = 0.78;
+        c1.createdAt = now - 5_000L;
+        base.claims.add(c1);
+
+        SilhouetteState.Claim c2 = new SilhouetteState.Claim();
+        c2.id = "cl_b";
+        c2.facet = "seeking_core";
+        c2.text = "Y2K soft-club visual aesthetic.";
+        c2.confidence = 0.74;
+        c2.createdAt = now - 4_000L;
+        base.claims.add(c2);
+
+        SilhouetteState.Claim c3 = new SilhouetteState.Claim();
+        c3.id = "cl_c";
+        c3.facet = "self_core";
+        c3.text = "Keeps a consistent gym routine.";
+        c3.confidence = 0.71;
+        c3.createdAt = now - 3_000L;
+        base.claims.add(c3);
+
+        SilhouetteState merged = SilhouetteMerger.apply(
+                base,
+                new SilhouettePatch(),
+                1.0,
+                "private_prompt",
+                "instance_79",
+                "private.media.revisit",
+                "event_79",
+                "answer",
+                now);
+
+        assertNotNull(merged.summaryCache);
+        assertTrue(merged.summaryCache.rerankerShort.toLowerCase().contains("jojo"));
+        assertTrue(merged.summaryCache.rerankerShort.toLowerCase().contains("y2k"));
+        assertTrue(merged.summaryCache.adminLong.contains("ranked_claims:"));
+        assertTrue(merged.summaryCache.adminLong.toLowerCase().contains("jojo"));
+        assertTrue(merged.summaryCache.adminLong.toLowerCase().contains("y2k"));
+    }
 }

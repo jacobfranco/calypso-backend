@@ -63,48 +63,6 @@ class PrivatePromptTurnResponderTest {
     }
 
     @Test
-    void generate_forcesScopeClarifierWhenTraitDirectionIsAmbiguous() {
-        PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
-                "Who are some people (historical or living) that you find fascinating? Why?",
-                "Who are some people (historical or living) that you find fascinating? Why?",
-                List.of(),
-                "Nikola Tesla for his independence and obsessive focus.");
-
-        PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
-        assertTrue(result.needsMoreDetail, "Ambiguous admired-trait direction should trigger a quick scope clarifier.");
-        assertTrue(
-                result.agentMessage.toLowerCase().contains("mostly about you")
-                        || result.agentMessage.toLowerCase().contains("in a partner"),
-                "Clarifier should ask self-vs-partner scope.");
-    }
-
-    @Test
-    void generate_doesNotForceScopeClarifierForDrawnToPrompt() {
-        PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
-                "Describe the kind of person you tend to be drawn to.",
-                "Describe the kind of person you tend to be drawn to.",
-                List.of(),
-                "Someone confident, emotionally steady, and ambitious who feels like an equal.");
-
-        PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
-        assertFalse(result.needsMoreDetail,
-                "Drawn-to prompt is already partner-directed and should not trigger self-vs-partner clarification.");
-        assertFalse(result.agentMessage.toLowerCase().contains("both, or neither"));
-    }
-
-    @Test
-    void generate_skipsScopeClarifierWhenUserAlreadySpecifiesBothScopes() {
-        PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
-                "Who are some people (historical or living) that you find fascinating? Why?",
-                "Who are some people (historical or living) that you find fascinating? Why?",
-                List.of(),
-                "Tesla is fascinating because I see that focus in myself and I also want it in a partner.");
-
-        PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
-        assertFalse(result.needsMoreDetail, "Explicit self+partner scope should not be re-clarified.");
-    }
-
-    @Test
     void generate_respectsExplicitSubmitIntent() {
         PrivatePromptTurnResponder.setTestOverride(input -> new PrivatePromptTurnResponder.TurnResult(
                 "Want to share one more detail so I can tune this better?",
@@ -132,5 +90,93 @@ class PrivatePromptTurnResponderTest {
 
         PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
         assertFalse(result.needsMoreDetail, "Rewrite/coaching offer should not lock the user into follow-up mode.");
+    }
+
+    @Test
+    void generate_doesNotHoldOptionalClarifierWhenAnotherPartRemains() {
+        PrivatePromptTurnResponder.setTestOverride(input -> new PrivatePromptTurnResponder.TurnResult(
+                "Got it. Could you share a little more detail on that?",
+                true));
+        PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
+                "What are your hobbies? Which hobbies would you like to share with your partner?",
+                "What are your hobbies?",
+                List.of(),
+                "I climb, cook, and play pickup soccer every week.");
+
+        PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
+        assertFalse(result.needsMoreDetail,
+                "When another explicit prompt part is still pending, optional clarifier loops should not block progress.");
+        assertFalse(result.agentMessage.toLowerCase().contains("could you share"));
+        assertFalse(result.agentMessage.toLowerCase().contains("submit"),
+                "Interim acknowledgements should not tell users to submit before the next prompt part is asked.");
+    }
+
+    @Test
+    void generate_allowsClarifierOnFinalPromptPart() {
+        PrivatePromptTurnResponder.setTestOverride(input -> new PrivatePromptTurnResponder.TurnResult(
+                "Got it. Could you share a little more detail on that?",
+                true));
+        PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
+                "What are your hobbies? Which hobbies would you like to share with your partner?",
+                "Which hobbies would you like to share with your partner?",
+                List.of(),
+                "I would love to share climbing and weekend cooking projects.");
+
+        PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
+        assertFalse(result.needsMoreDetail,
+                "Optional clarifier loops should not block completion, even on the final prompt part.");
+    }
+
+    @Test
+    void generate_replacesParrotingAcknowledgementWithNeutralForwardPrompt() {
+        PrivatePromptTurnResponder.setTestOverride(input -> new PrivatePromptTurnResponder.TurnResult(
+                "Got it, you like long walks on the beach and margaritas.",
+                false));
+        PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
+                "What are your hobbies?",
+                "What are your hobbies?",
+                List.of(),
+                "Long walks on the beach and margaritas.");
+
+        PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
+        assertFalse(result.needsMoreDetail);
+        assertTrue(result.agentMessage.toLowerCase().contains("submit"));
+        assertFalse(result.agentMessage.toLowerCase().contains("long walks"));
+        assertFalse(result.agentMessage.toLowerCase().contains("margaritas"));
+    }
+
+    @Test
+    void generate_neutralizesLoadedNegativeValenceFollowupWording() {
+        PrivatePromptTurnResponder.setTestOverride(input -> new PrivatePromptTurnResponder.TurnResult(
+                "How much does reality tv turn you off in a partner?",
+                true));
+        PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
+                "What's something popular that you really don't like?",
+                "What's something popular that you really don't like?",
+                List.of(),
+                "Idk.");
+
+        PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
+        assertTrue(result.needsMoreDetail);
+        String lowered = result.agentMessage.toLowerCase();
+        assertTrue(lowered.contains("how do you feel about that"));
+        assertFalse(lowered.contains("turn you off"));
+        assertFalse(lowered.contains("dealbreaker"));
+    }
+
+    @Test
+    void generate_doesNotAskExtraClarifierForConciseConcreteAnswer() {
+        PrivatePromptTurnResponder.setTestOverride(input -> new PrivatePromptTurnResponder.TurnResult(
+                "What about it makes it feel like home for you?",
+                true));
+        PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
+                "What communities or scenes have you felt most at home in?",
+                "What communities or scenes have you felt most at home in?",
+                List.of(),
+                "The gym.");
+
+        PrivatePromptTurnResponder.TurnResult result = PrivatePromptTurnResponder.generate(null, input);
+        assertFalse(result.needsMoreDetail);
+        assertTrue(result.agentMessage.toLowerCase().contains("submit"));
     }
 }

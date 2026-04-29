@@ -70,19 +70,57 @@ class SignalExtractorExplicitMentionTest {
                 List.of(),
                 List.of());
 
-        ExtractedSignal redRising = find(out, "red_rising");
+        ExtractedSignal redRising = find(out, "red_rising", SignalIntent.SELF);
         assertNotNull(redRising);
-        assertEquals(SignalIntent.SEEKING, redRising.intent());
+        assertEquals(SignalIntent.SELF, redRising.intent());
         assertNotNull(redRising.valence());
         assertTrue(redRising.valence().doubleValue() > 0.0);
     }
 
+    @Test
+    void augmentWithExplicitTitleMentions_extractsRabbitHoleDomainsViaCanonicalAliases() {
+        List<ExtractedSignal> out = SignalExtractor.augmentWithExplicitTitleMentions(
+                "private.rabbit.hole",
+                "What topic or niche have you spent way too much time exploring?",
+                "I go into rabbit holes about space and leftist leaders.",
+                List.of(),
+                List.of());
+
+        assertNotNull(find(out, "space", SignalIntent.SELF));
+        assertNotNull(find(out, "leftist_politics", SignalIntent.SELF));
+    }
+
+    @Test
+    void augmentWithExplicitTitleMentions_mirrorsSelfHobbiesIntoSeekingWhenAnswerSaysAllOfThose() {
+        List<ExtractedSignal> out = SignalExtractor.augmentWithExplicitTitleMentions(
+                "private.hobbies",
+                "What are your hobbies? Which hobbies would you like to share with your partner?",
+                "The gym and video games mainly, also anime. I'd like to share all of those.",
+                List.of(),
+                List.of(
+                        ExtractedSignal.from("gym", SignalIntent.SELF, 0.76),
+                        ExtractedSignal.from("video_games", SignalIntent.SELF, 0.82),
+                        ExtractedSignal.from("anime", SignalIntent.SELF, 0.74),
+                        ExtractedSignal.from("video_games", SignalIntent.SEEKING, 0.70),
+                        ExtractedSignal.from("anime", SignalIntent.SEEKING, 0.68)));
+
+        assertNotNull(find(out, "gym", SignalIntent.SEEKING),
+                "When users say they want to share all previously-mentioned hobbies, self hobby concepts should mirror to seeking.");
+    }
+
     private static ExtractedSignal find(List<ExtractedSignal> signals, String token) {
+        return find(signals, token, null);
+    }
+
+    private static ExtractedSignal find(List<ExtractedSignal> signals, String token, SignalIntent intent) {
         if (signals == null || signals.isEmpty() || token == null || token.isBlank()) {
             return null;
         }
         for (ExtractedSignal signal : signals) {
             if (signal == null || signal.token() == null) {
+                continue;
+            }
+            if (intent != null && signal.intent() != intent) {
                 continue;
             }
             if (token.equals(signal.token())) {
@@ -92,4 +130,3 @@ class SignalExtractorExplicitMentionTest {
         return null;
     }
 }
-

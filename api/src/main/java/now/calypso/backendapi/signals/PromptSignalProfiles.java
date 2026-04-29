@@ -149,9 +149,6 @@ public final class PromptSignalProfiles {
         add(byId, profile("private.communities.scene",
                 "Signal-first prompt: extract concrete communities/scenes (for example gym, gaming, dance) as durable signals. Avoid generic social-belonging abstractions.",
                 6, 1, false));
-        add(byId, profile("private.fascinating.people",
-                "Extract intellectual/cultural attraction patterns from why those figures are admired.",
-                6, 1, false));
 
         // Synthetic prompt ids.
         add(byId, profile("matchmaking.followup",

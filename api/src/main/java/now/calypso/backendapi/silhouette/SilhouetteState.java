@@ -12,8 +12,8 @@ public final class SilhouetteState {
     private static final int CLAIM_SOURCE_MAX = 60;
     private static final int CLAIM_SOURCE_ID_MAX = 96;
     private static final int CLAIM_PROMPT_ID_MAX = 96;
-    private static final int RERANKER_SUMMARY_MAX = 280;
-    private static final int ADMIN_SUMMARY_MAX = 720;
+    private static final int RERANKER_SUMMARY_MAX = 1200;
+    private static final int ADMIN_SUMMARY_MAX = 1800;
 
     public long accountId;
     public long version;
@@ -119,7 +119,7 @@ public final class SilhouetteState {
         StringBuilder buf = new StringBuilder(cap + 120);
         buf.append("maturity=").append(normalizeMaturity(maturity)).append('\n');
 
-        String cachedSummary = summaryCache == null ? "" : clampText(summaryCache.rerankerShort, 260);
+        String cachedSummary = summaryCache == null ? "" : clampText(summaryCache.rerankerShort, RERANKER_SUMMARY_MAX);
         if (!cachedSummary.isBlank()) {
             buf.append("summary: ").append(cachedSummary).append('\n');
             String digest = buf.toString().trim();
