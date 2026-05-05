@@ -1,5 +1,6 @@
 package now.calypso.backendapi.llm;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openai.client.OpenAIClient;
 import com.openai.models.ChatModel;
 import com.openai.models.responses.StructuredResponse;
@@ -10,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -17,29 +19,50 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
+import now.calypso.backendapi.silhouette.SilhouetteDigest;
+import now.calypso.backendapi.silhouette.SilhouetteState;
+
 public final class MatchReranker {
     private static final Logger LOG = LoggerFactory.getLogger(MatchReranker.class);
+    private static final ObjectMapper JSON = new ObjectMapper();
     private static final String MODEL_ENV = "CALYPSO_MODEL_MATCH_RERANK";
     private static final String MODEL_DEFAULT = "gpt-5.4-mini";
 
     private static final String SYSTEM_PROMPT = """
-            You are a matchmaking reranker that performs final manual review after deterministic scoring.
+            You are Calypso's match reranker.
+
+            You evaluate whether candidates should be ranked highly as potential matches.
+
+            You are given compressed silhouettes for a viewer and multiple candidates.
+            Each silhouette contains one or more modes. A mode is a coherent relationship configuration: how the user may show up, what they are drawn to, what creates spark, what sustains connection, what aesthetics resonate, and what tends to repel them.
+
+            Important principles:
+            - Do not treat a user as one fixed personality.
+            - Compare mode pairs, not whole users.
+            - A strong match requires bidirectional fit:
+              viewer.self should fit candidate.seeking
+              candidate.self should fit viewer.seeking
+            - Separate spark from sustainability.
+            - Spark means immediate attraction, intrigue, chemistry, aesthetic resonance, or curiosity.
+            - Sustainability means the pairing is likely to remain emotionally workable over time.
+            - Do not over-penalize sparse data.
+            - If either profile is sparse, favor plausible exploration and learning value.
+            - Anti-pattern conflicts matter more when confidence is high.
+            - Do not moralize or pathologize users.
+            - Do not expose sensitive psychological labels.
+            - Prefer concrete reasoning grounded in the supplied silhouettes.
+            - If a trait, need, anti-pattern, or attraction pattern is not present in the silhouettes or shared signals, do not infer it strongly. Mark it as missingInfo instead.
 
             Return JSON only in this exact schema:
-            {"decisions":[{"id":"...","compatibility":0.0,"confidence":0.0,"hardBlocker":false,"reason":"..."}]}
+            {"rankedCandidates":[{"candidateId":"...","finalScore":0.0,"sparkScore":0.0,"sustainabilityScore":0.0,"learningValueScore":0.0,"confidence":0.0,"bestModePair":{"viewerModeId":"...","candidateModeId":"..."},"fitSummaryInternal":"...","whyItWorks":[],"risks":[],"recommendedUse":"rank_high","conversationSeeds":[],"missingInfo":[]}]}
 
-            Rules:
-            - id must match candidate ids exactly.
-            - compatibility is [0,1] where 0.5 means neutral vs stage2.
-            - confidence is [0,1] describing certainty in your compatibility estimate.
-            - hardBlocker=true only for clear incompatibility signals.
-            - reason must be <= 12 words and concrete.
-            - Prefer small adjustments around stage2; do not ignore stage2 ranking without strong evidence.
-            - Use semantics across related concepts (for example anime/cosplay/geek overlap) when useful.
-            - viewer_silhouette and candidate_silhouette are context-rich preference/personality summaries.
-            - If silhouette_maturity is "mature", use silhouette heavily; if "sparse"/"empty", rely more on signals/stage2.
-            - Do not infer hard blockers from weak or sparse silhouette evidence.
-            - No markdown, no extra keys, no explanations outside JSON.
+            Score rules:
+            - All scores must be 0.0 to 1.0.
+            - candidateId must match supplied candidate ids exactly.
+            - recommendedUse must be rank_high, rank_mid, explore, or deprioritize.
+            - Keep fitSummaryInternal under 160 characters.
+            - Keep arrays short, concrete, and grounded in supplied data.
+            - No markdown, no prose outside JSON.
             """;
 
     private static volatile Function<RerankRequest, RerankResult> TEST_OVERRIDE = null;
@@ -74,19 +97,19 @@ public final class MatchReranker {
                         .instructions(SYSTEM_PROMPT)
                         .input(input)
                         .temperature(0.10)
-                        .maxOutputTokens(800L)
+                        .maxOutputTokens(1400L)
                         .text(RerankResult.class)
                         .build();
                 StructuredResponse<RerankResult> response = client.responses().create(params);
                 long latencyMs = Math.max(0L, System.currentTimeMillis() - startedAt);
                 LlmTelemetry.recordStructuredResponse(
-                        "tier3_rerank",
+                        "tier3_mode_pair_rerank",
                         nonBlank(request.surface, "unknown"),
                         null,
                         model,
                         response,
                         latencyMs,
-                        800L);
+                        1400L);
                 RerankResult parsed = extractPayload(response);
                 if (parsed == null) {
                     continue;
@@ -94,20 +117,21 @@ public final class MatchReranker {
                 return sanitize(parsed, request);
             } catch (Exception ex) {
                 lastError = ex;
-                LOG.warn("Match reranker failed with model {}. Trying fallback if available.", model.asString(), ex);
+                LOG.warn("Mode-pair match reranker failed with model {}. Trying fallback if available.",
+                        model.asString(), ex);
                 long latencyMs = Math.max(0L, System.currentTimeMillis() - startedAt);
                 LlmTelemetry.recordFailure(
-                        "tier3_rerank",
+                        "tier3_mode_pair_rerank",
                         nonBlank(request.surface, "unknown"),
                         null,
                         model,
                         latencyMs,
-                        800L,
+                        1400L,
                         ex);
             }
         }
         if (lastError != null) {
-            LOG.warn("Match reranker exhausted model chain; using stage2 order.");
+            LOG.warn("Mode-pair match reranker exhausted model chain; using stage2 order.");
         }
         return emptyResult();
     }
@@ -117,116 +141,89 @@ public final class MatchReranker {
     }
 
     private static String buildInput(RerankRequest request) {
-        StringBuilder buf = new StringBuilder();
-        buf.append("surface: ").append(nonBlank(request.surface, "unknown")).append("\n");
-        buf.append("viewer_silhouette_maturity: ").append(nonBlank(request.viewerSilhouetteMaturity, "empty"))
-                .append("\n");
-        buf.append("viewer_silhouette:\n");
-        appendSilhouette(buf, request.viewerSilhouetteDigest);
-        buf.append("viewer_signals:\n");
-        appendSignals(buf, request.viewerSignals);
-        buf.append("candidates:\n");
+        LinkedHashMap<String, Object> root = new LinkedHashMap<>();
+        root.put("viewer", request.viewer == null ? new SilhouetteDigest().toMap() : request.viewer.toMap());
+        ArrayList<Object> candidates = new ArrayList<>();
         if (request.candidates != null) {
             for (Candidate candidate : request.candidates) {
-                if (candidate == null || candidate.id == null || candidate.id.isBlank()) {
+                if (candidate == null || candidate.candidateId == null || candidate.candidateId.isBlank()) {
                     continue;
                 }
-                buf.append("- id=").append(candidate.id.trim())
-                        .append(" stage2=").append(format01(candidate.stage2Normalized))
-                        .append("\n");
-                buf.append("  silhouette_maturity=").append(nonBlank(candidate.silhouetteMaturity, "empty")).append("\n");
-                buf.append("  silhouette:\n");
-                appendSilhouette(buf, candidate.silhouetteDigest);
-                appendSignals(buf, candidate.signals);
+                LinkedHashMap<String, Object> item = new LinkedHashMap<>();
+                item.put("candidateId", candidate.candidateId.trim());
+                item.put("digest", candidate.digest == null ? new SilhouetteDigest().toMap() : candidate.digest.toMap());
+                item.put("stage2Normalized", clamp01(candidate.stage2Normalized));
+                item.put("signals", signalMaps(candidate.signals));
+                item.put("sharedSignals", stringList(candidate.sharedSignals, 12, 48));
+                candidates.add(item);
             }
         }
-        return buf.toString();
-    }
-
-    private static void appendSilhouette(StringBuilder buf, String digest) {
-        if (buf == null) {
-            return;
-        }
-        if (digest == null || digest.isBlank()) {
-            buf.append("  [none]\n");
-            return;
-        }
-        String trimmed = digest.trim();
-        if (trimmed.length() > 420) {
-            trimmed = trimmed.substring(0, 420).trim();
-        }
-        String[] lines = trimmed.split("\\R");
-        if (lines.length == 0) {
-            buf.append("  [none]\n");
-            return;
-        }
-        int count = 0;
-        for (String line : lines) {
-            if (line == null) {
-                continue;
-            }
-            String cleaned = line.trim();
-            if (cleaned.isEmpty()) {
-                continue;
-            }
-            if (cleaned.length() > 120) {
-                cleaned = cleaned.substring(0, 120).trim();
-            }
-            buf.append("  ").append(cleaned).append("\n");
-            count++;
-            if (count >= 6) {
-                break;
-            }
-        }
-        if (count == 0) {
-            buf.append("  [none]\n");
+        root.put("candidates", candidates);
+        LinkedHashMap<String, Object> context = new LinkedHashMap<>();
+        context.put("rankingGoal", rankingGoal(request.rankingGoal));
+        context.put("hardFiltersAlreadyPassed", true);
+        context.put("viewerMaturity", request.viewer == null ? "empty" : SilhouetteState.normalizeMaturity(request.viewer.maturity));
+        context.put("surface", nonBlank(request.surface, "unknown"));
+        context.put("viewerSignals", signalMaps(request.viewerSignals));
+        root.put("context", context);
+        try {
+            return JSON.writeValueAsString(root);
+        } catch (Exception ignored) {
+            return root.toString();
         }
     }
 
-    private static void appendSignals(StringBuilder buf, List<Signal> signals) {
-        if (buf == null) {
-            return;
-        }
-        if (signals == null || signals.isEmpty()) {
-            buf.append("  []\n");
-            return;
+    private static List<Object> signalMaps(List<Signal> signals) {
+        ArrayList<Object> out = new ArrayList<>();
+        if (signals == null) {
+            return out;
         }
         for (Signal signal : signals) {
             if (signal == null || signal.token == null || signal.token.isBlank()) {
                 continue;
             }
-            buf.append("  - token=").append(signal.token.trim())
-                    .append(" intent=").append(nonBlank(signal.intent, "self"))
-                    .append(" weight=").append(format01(signal.weight))
-                    .append(" valence=").append(formatSigned(signal.valence))
-                    .append("\n");
+            LinkedHashMap<String, Object> item = new LinkedHashMap<>();
+            item.put("token", signal.token.trim());
+            item.put("intent", nonBlank(signal.intent, "self"));
+            item.put("weight", clamp01(signal.weight));
+            item.put("valence", clampSigned(signal.valence));
+            out.add(item);
         }
+        return out;
     }
 
-    private static String format01(Double value) {
-        if (value == null || !Double.isFinite(value.doubleValue())) {
-            return "0.0";
+    private static List<String> stringList(List<String> values, int maxItems, int maxChars) {
+        ArrayList<String> out = new ArrayList<>();
+        if (values == null) {
+            return out;
         }
-        double v = value.doubleValue();
-        if (v < 0.0) {
-            v = 0.0;
-        } else if (v > 1.0) {
-            v = 1.0;
+        for (String value : values) {
+            String text = value == null ? "" : value.trim();
+            if (text.isBlank()) {
+                continue;
+            }
+            if (text.length() > maxChars) {
+                text = text.substring(0, maxChars).trim();
+            }
+            out.add(text);
+            if (out.size() >= maxItems) {
+                break;
+            }
         }
-        return String.format(java.util.Locale.ROOT, "%.3f", v);
+        return out;
     }
 
-    private static String formatSigned(Double value) {
-        if (value == null || !Double.isFinite(value.doubleValue())) {
-            return "0.0";
+    private static String rankingGoal(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "balance";
         }
-        double v = value.doubleValue();
-        if (v < -1.0) {
-            v = -1.0;
-        } else if (v > 1.0) {
-            v = 1.0;
-        }
-        return String.format(java.util.Locale.ROOT, "%.3f", v);
+        String normalized = raw.trim().toLowerCase(java.util.Locale.ROOT);
+        return switch (normalized) {
+            case "discover", "balance", "precision" -> normalized;
+            case "exploratory" -> "discover";
+            case "focused" -> "precision";
+            default -> "balance";
+        };
     }
 
     private static String nonBlank(String raw, String fallback) {
@@ -261,41 +258,80 @@ public final class MatchReranker {
 
     private static RerankResult sanitize(RerankResult raw, RerankRequest request) {
         RerankResult out = new RerankResult();
-        if (raw == null || raw.decisions == null || raw.decisions.isEmpty() || request == null
-                || request.candidates == null || request.candidates.isEmpty()) {
+        if (raw == null || request == null || request.candidates == null || request.candidates.isEmpty()) {
+            return out;
+        }
+        List<Decision> decisions = raw.rankedCandidates == null ? List.of() : raw.rankedCandidates;
+        if (decisions.isEmpty()) {
             return out;
         }
         Set<String> allowedIds = new LinkedHashSet<>();
         for (Candidate candidate : request.candidates) {
-            if (candidate == null || candidate.id == null || candidate.id.isBlank()) {
+            if (candidate == null || candidate.candidateId == null || candidate.candidateId.isBlank()) {
                 continue;
             }
-            allowedIds.add(candidate.id.trim());
+            allowedIds.add(candidate.candidateId.trim());
         }
         if (allowedIds.isEmpty()) {
             return out;
         }
-        for (Decision decision : raw.decisions) {
-            if (decision == null || decision.id == null || decision.id.isBlank()) {
+        for (Decision decision : decisions) {
+            if (decision == null || decision.candidateId == null || decision.candidateId.isBlank()) {
                 continue;
             }
-            String id = decision.id.trim();
+            String id = decision.candidateId.trim();
             if (!allowedIds.contains(id)) {
                 continue;
             }
             Decision normalized = new Decision();
-            normalized.id = id;
-            normalized.compatibility = clamp01(decision.compatibility);
+            normalized.candidateId = id;
+            normalized.finalScore = clamp01(decision.finalScore);
+            normalized.sparkScore = clamp01(decision.sparkScore);
+            normalized.sustainabilityScore = clamp01(decision.sustainabilityScore);
+            normalized.learningValueScore = clamp01(decision.learningValueScore);
             normalized.confidence = clamp01(decision.confidence);
-            normalized.hardBlocker = Boolean.TRUE.equals(decision.hardBlocker);
-            String reason = decision.reason == null ? "" : decision.reason.trim();
-            if (reason.length() > 120) {
-                reason = reason.substring(0, 120).trim();
-            }
-            normalized.reason = reason;
-            out.decisions.add(normalized);
+            normalized.bestModePair = sanitizeModePair(decision.bestModePair);
+            normalized.fitSummaryInternal = trim(decision.fitSummaryInternal, 160);
+            normalized.whyItWorks = stringList(decision.whyItWorks, 4, 120);
+            normalized.risks = stringList(decision.risks, 4, 120);
+            normalized.recommendedUse = recommendedUse(decision.recommendedUse);
+            normalized.conversationSeeds = stringList(decision.conversationSeeds, 4, 120);
+            normalized.missingInfo = stringList(decision.missingInfo, 5, 120);
+            out.rankedCandidates.add(normalized);
         }
         return out;
+    }
+
+    private static BestModePair sanitizeModePair(BestModePair raw) {
+        BestModePair out = new BestModePair();
+        if (raw == null) {
+            return out;
+        }
+        out.viewerModeId = trim(raw.viewerModeId, 80);
+        out.candidateModeId = trim(raw.candidateModeId, 80);
+        return out;
+    }
+
+    private static String recommendedUse(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "explore";
+        }
+        String normalized = raw.trim().toLowerCase(java.util.Locale.ROOT);
+        return switch (normalized) {
+            case "rank_high", "rank_mid", "explore", "deprioritize" -> normalized;
+            default -> "explore";
+        };
+    }
+
+    private static String trim(String raw, int maxChars) {
+        if (raw == null) {
+            return "";
+        }
+        String trimmed = raw.trim();
+        if (trimmed.length() <= maxChars) {
+            return trimmed;
+        }
+        return trimmed.substring(0, maxChars).trim();
     }
 
     private static Double clamp01(Double value) {
@@ -312,20 +348,34 @@ public final class MatchReranker {
         return v;
     }
 
+    private static Double clampSigned(Double value) {
+        if (value == null || !Double.isFinite(value.doubleValue())) {
+            return 0.0;
+        }
+        double v = value.doubleValue();
+        if (v < -1.0) {
+            return -1.0;
+        }
+        if (v > 1.0) {
+            return 1.0;
+        }
+        return v;
+    }
+
     public static final class RerankRequest {
         public String surface;
-        public String viewerSilhouetteDigest;
-        public String viewerSilhouetteMaturity;
+        public String rankingGoal;
+        public SilhouetteDigest viewer;
         public List<Signal> viewerSignals = new ArrayList<>();
         public List<Candidate> candidates = new ArrayList<>();
     }
 
     public static final class Candidate {
-        public String id;
+        public String candidateId;
         public Double stage2Normalized;
-        public String silhouetteDigest;
-        public String silhouetteMaturity;
+        public SilhouetteDigest digest;
         public List<Signal> signals = new ArrayList<>();
+        public List<String> sharedSignals = new ArrayList<>();
     }
 
     public static final class Signal {
@@ -336,14 +386,27 @@ public final class MatchReranker {
     }
 
     public static final class RerankResult {
-        public List<Decision> decisions = new ArrayList<>();
+        public List<Decision> rankedCandidates = new ArrayList<>();
     }
 
     public static final class Decision {
-        public String id;
-        public Double compatibility;
+        public String candidateId;
+        public Double finalScore;
+        public Double sparkScore;
+        public Double sustainabilityScore;
+        public Double learningValueScore;
         public Double confidence;
-        public Boolean hardBlocker;
-        public String reason;
+        public BestModePair bestModePair;
+        public String fitSummaryInternal;
+        public List<String> whyItWorks = new ArrayList<>();
+        public List<String> risks = new ArrayList<>();
+        public String recommendedUse;
+        public List<String> conversationSeeds = new ArrayList<>();
+        public List<String> missingInfo = new ArrayList<>();
+    }
+
+    public static final class BestModePair {
+        public String viewerModeId;
+        public String candidateModeId;
     }
 }

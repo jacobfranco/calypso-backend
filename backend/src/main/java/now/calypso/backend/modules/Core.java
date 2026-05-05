@@ -786,11 +786,11 @@ public class Core implements RamaModule {
             out.put("accountId", accountId);
             out.put("version", 1L);
             out.put("maturity", "empty");
-            out.put("claims", new ArrayList<>());
+            out.put("modes", new ArrayList<>());
             HashMap<String, Object> summary = new HashMap<>();
             summary.put("rerankerShort", "");
             summary.put("adminLong", "");
-            summary.put("generatedFromVersion", 0L);
+            summary.put("generatedFromVersion", 1L);
             summary.put("updatedAt", 0L);
             out.put("summaryCache", summary);
             out.put("updatedAt", now);
@@ -808,14 +808,11 @@ public class Core implements RamaModule {
             out.put("accountId", accountId);
             out.put("version", asLong(payload.get("version"), 1L));
             out.put("maturity", asStringTrimmed(payload.get("maturity")) == null ? "empty" : payload.get("maturity"));
-            Object claims = payload.get("claims");
-            if (!(claims instanceof List<?>)) {
-                  claims = payload.get("claimLedger");
-            }
-            if (!(claims instanceof List<?>)) {
-                  out.put("claims", new ArrayList<>());
+            Object modes = payload.get("modes");
+            if (!(modes instanceof List<?>)) {
+                  out.put("modes", new ArrayList<>());
             } else {
-                  out.put("claims", claims);
+                  out.put("modes", modes);
             }
             Object summary = payload.get("summaryCache");
             if (!(summary instanceof Map<?, ?>)) {
@@ -825,7 +822,7 @@ public class Core implements RamaModule {
                   HashMap<String, Object> fallbackSummary = new HashMap<>();
                   fallbackSummary.put("rerankerShort", "");
                   fallbackSummary.put("adminLong", "");
-                  fallbackSummary.put("generatedFromVersion", 0L);
+                  fallbackSummary.put("generatedFromVersion", 1L);
                   fallbackSummary.put("updatedAt", 0L);
                   out.put("summaryCache", fallbackSummary);
             } else {

@@ -26,14 +26,14 @@ public final class PrivatePromptUnderstanding {
 
             Return JSON only in this exact shape:
             {
-              "signals":[{"token":"reality_tv","intent":"seeking","valence":-0.82}],
-              "silhouettePatch":{"ops":[{"op":"upsert_claim","key":"relationship_dynamic","text":"...","kind":"preference","confidence":0.72}]},
+              "signals":[{"token":"stable_reusable_concept","intent":"self","valence":0.72}],
+              "silhouettePatch":{"ops":[{"op":"upsert_concept","modeId":"mode_compact_label","label":"compact mode label","target":"self_expression","concept":{"id":"specific_relational_concept","label":"specific relational concept","role":"context","confidence":0.62,"strength":0.58},"evidence":{"source":"private_prompt","target":"self_expression","value":"compact derived evidence","strength":0.60,"confidence":0.62}}]},
               "metaObservations":[{"key":"depth_vs_surface_focus","summary":"...","confidence":0.44}]
             }
 
             Goals:
             - Extract context-free durable signals for retrieval/filtering.
-            - Produce a compact silhouette patch for context-dependent psychology/relational dynamics.
+            - Produce a compact silhouette patch for context-dependent relationship modes.
 
             Signal constraints:
             - max 8 signals.
@@ -43,19 +43,34 @@ public final class PrivatePromptUnderstanding {
             - Include explicit media/franchise titles when named (e.g., red_rising).
             - Include explicit concrete media formats when named (e.g., reality_tv).
             - Avoid character-name-only tags unless context-free durability is clear.
+            - Preserve explicit concrete activities as signals even when an abstract trait is also implied (e.g., "the gym" => gym, not only discipline).
+            - In dislike prompts, keep negative signals specific; do not turn dislike of a genre/artist/show format into dislike of all music, TV, or media.
 
             Silhouette patch constraints:
-            - Keep ops minimal and high-precision (0-6 typically).
-            - Claim facet keys should be among:
-              self_core, seeking_core, relationship_dynamic, energy_style,
-              communication_style, emotional_style, trajectory, hard_boundaries,
-              partner_comps, meta_observation, narrative.
-            - Keep each claim text concise (about 6-16 words).
-            - Keep silhouette abstract; concrete hobbies/titles belong in signals.
-            - Comparative references should use key=partner_comps with kind=partner_comp.
+            - Keep ops minimal and high-precision (0-8 typically).
+            - Do not treat the user as one fixed personality.
+            - Extract coherent relationship modes when possible.
+            - Fictional characters, music, aesthetics, prompt answers, and reactions are evidence. They are not the mode itself.
+            - A mode is a living concept cluster.
+            - Do not overwrite existing modes unless evidence clearly retracts or contradicts them.
+            - If new evidence adds texture, reinforce or extend the nearest compatible mode.
+            - If new evidence implies a distinct relationship configuration, create a new mode.
+            - Separate how the user may show up, what they are drawn to, what creates spark, what sustains connection, what repels them, and what remains uncertain.
+            - Allowed targets: self_expression, seeking_expression, spark_triggers, sustainability_needs, aesthetic_field, anti_patterns, tensions.
+            - Allowed ops: upsert_mode, reinforce_mode, deprecate_mode, upsert_concept, reinforce_concept, retract_concept, upsert_anti_pattern, upsert_tension, add_evidence, add_open_question.
+            - Use spark_triggers for chemistry, intrigue, attraction, aesthetic pull, curiosity, or romantic energy.
+            - Use sustainability_needs for consistency, emotional workability, patience, autonomy, reassurance, communication rhythm, or long-term fit.
+            - Do not over-infer sustainability from sparse evidence. Use add_open_question when uncertain.
+            - Keep concept labels concise and non-clinical.
+            - Concrete hobbies/titles should usually be signals and/or evidence values, not identity concepts.
+            - Comparative fictional references should be evidence with source=fictional_comp.
+            - Visual aesthetic evidence should use source=visual_aesthetic.
+            - Music evidence should use source=music.
+            - For dislike, turn-off, and not-my-person prompts, prefer anti_patterns or open_questions; do not create self_expression concepts from dislikes.
             - Meta observations must be neutral and non-moralizing.
             - confidence in [0,1].
             - No markdown, no prose outside JSON.
+            - Do not reuse example IDs or labels from this prompt.
             """;
 
     private PrivatePromptUnderstanding() {
@@ -85,7 +100,7 @@ public final class PrivatePromptUnderstanding {
                             normalizedPromptId == null || normalizedPromptId.isBlank() ? "private_prompt_answer"
                                     : normalizedPromptId,
                             normalizedPromptId,
-                            200L));
+                            520L));
             ParsedPayload parsed = parse(raw);
             if (!parsed.parsed) {
                 return Result.empty(false);
@@ -199,20 +214,36 @@ public final class PrivatePromptUnderstanding {
             if (key == null || summary == null) {
                 continue;
             }
-            patch.ops.add(new SilhouettePatch.Op(
-                    "upsert_claim",
-                    "meta_observation",
+            if (!looksLikeOpenQuestion(summary)) {
+                continue;
+            }
+            patch.ops.add(SilhouettePatch.Op.addOpenQuestion(
                     null,
-                    summary,
                     null,
-                    key,
-                    confidence == null ? 0.45 : confidence.doubleValue(),
-                    List.of()));
+                    summary));
             added += 1;
             if (added >= 3) {
                 break;
             }
         }
+    }
+
+    private static boolean looksLikeOpenQuestion(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+        String trimmed = raw.trim();
+        if (trimmed.endsWith("?")) {
+            return true;
+        }
+        String lowered = trimmed.toLowerCase(Locale.ROOT);
+        return lowered.startsWith("whether ")
+                || lowered.startsWith("does ")
+                || lowered.startsWith("do ")
+                || lowered.startsWith("is ")
+                || lowered.startsWith("are ")
+                || lowered.startsWith("should ")
+                || lowered.startsWith("would ");
     }
 
     @SuppressWarnings("unchecked")

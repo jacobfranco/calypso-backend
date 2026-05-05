@@ -211,6 +211,26 @@ class SignalConceptRegistryTest {
     }
 
     @Test
+    void promoteAlias_withParentConceptPropagatesDynamicHierarchy() {
+        String suffix = Long.toString(System.nanoTime());
+        String raw = "dynamic_game_title_" + suffix;
+        String canonical = "dynamic_game_title_canonical_" + suffix;
+
+        assertTrue(SignalConceptRegistry.promoteAlias(raw, canonical, SignalTaxonomy.HOBBIES, List.of("video_games")));
+        assertEquals(SignalTaxonomy.HOBBIES, SignalConceptRegistry.categoryForConcept(canonical));
+
+        var parents = SignalConceptRegistry.parentsFor(canonical);
+        assertTrue(parents.containsKey("video_games"));
+
+        var weights = SignalConceptRegistry.expandedConceptWeights(canonical, 3);
+        assertTrue(weights.containsKey(canonical));
+        assertTrue(weights.containsKey("video_games"));
+        assertTrue(weights.containsKey("gaming"));
+        assertTrue(weights.get(canonical) > weights.get("video_games"));
+        assertTrue(weights.get("video_games") > weights.get("gaming"));
+    }
+
+    @Test
     void expandedConceptWeights_propagatesFranchiseToGenreAndBooks() {
         var weights = SignalConceptRegistry.expandedConceptWeights("red_rising", 3);
         assertNotNull(weights);

@@ -25,6 +25,7 @@ public class GetSignalConceptCandidates {
                         entry.lastSource, entry.exampleContexts, toObservedAccounts(entry.observedAccountIntents),
                         entry.suggestedCanonical, entry.suggestionScore,
                         entry.suggestedCategory,
+                        entry.suggestedParents,
                         entry.autoReady, null));
             }
         }
@@ -44,6 +45,7 @@ public class GetSignalConceptCandidates {
                         entry.lastSource, entry.exampleContexts, toObservedAccounts(entry.observedAccountIntents),
                         entry.suggestedCanonical, entry.suggestionScore,
                         entry.suggestedCategory,
+                        entry.suggestedParents,
                         false, entry.blockedAt));
             }
         }
@@ -88,6 +90,7 @@ public class GetSignalConceptCandidates {
         public final String suggestedCanonical;
         public final Double suggestionScore;
         public final String suggestedCategory;
+        public final List<String> suggestedParents;
         public final boolean autoReady;
         public final Long blockedAt;
 
@@ -103,6 +106,7 @@ public class GetSignalConceptCandidates {
                 @JsonProperty("suggestedCanonical") String suggestedCanonical,
                 @JsonProperty("suggestionScore") Double suggestionScore,
                 @JsonProperty("suggestedCategory") String suggestedCategory,
+                @JsonProperty("suggestedParents") List<String> suggestedParents,
                 @JsonProperty("autoReady") boolean autoReady,
                 @JsonProperty("blockedAt") Long blockedAt) {
             this.rawToken = rawToken;
@@ -117,6 +121,8 @@ public class GetSignalConceptCandidates {
             this.suggestedCanonical = suggestedCanonical;
             this.suggestionScore = suggestionScore;
             this.suggestedCategory = suggestedCategory;
+            this.suggestedParents = suggestedParents == null ? Collections.emptyList()
+                    : Collections.unmodifiableList(new ArrayList<>(suggestedParents));
             this.autoReady = autoReady;
             this.blockedAt = blockedAt;
         }

@@ -2,7 +2,6 @@ package now.calypso.backendapi.silhouette;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -29,7 +28,7 @@ public final class SilhouettePatch {
                 return fromMap((Map<String, Object>) map);
             }
         } catch (Exception ignored) {
-            // return empty on malformed output; caller can fallback heuristically.
+            // Caller can fallback heuristically.
         }
         return empty();
     }
@@ -48,8 +47,7 @@ public final class SilhouettePatch {
             if (!(item instanceof Map<?, ?>)) {
                 continue;
             }
-            Map<String, Object> opMap = (Map<String, Object>) item;
-            Op op = Op.fromMap(opMap);
+            Op op = Op.fromMap((Map<String, Object>) item);
             if (op != null) {
                 out.ops.add(op);
             }
@@ -62,7 +60,7 @@ public final class SilhouettePatch {
     }
 
     public Map<String, Object> toMap() {
-        List<Map<String, Object>> outOps = new ArrayList<>();
+        ArrayList<Map<String, Object>> outOps = new ArrayList<>();
         for (Op op : ops) {
             if (op == null) {
                 continue;
@@ -78,62 +76,96 @@ public final class SilhouettePatch {
     }
 
     public static final class Op {
-        public final String op;
-        public final String key;
-        public final String summary;
-        public final String text;
-        public final String label;
-        public final String kind;
-        public final Double confidence;
-        public final List<String> evidenceIds;
+        public String op;
+        public String modeId;
+        public String target;
+        public String label;
+        public String status;
+        public Double weight;
+        public Double confidence;
+        public Double strength;
+        public SilhouetteMode mode;
+        public SilhouetteConcept concept;
+        public SilhouetteAntiPattern antiPattern;
+        public SilhouetteTension tension;
+        public SilhouetteEvidence evidence;
+        public String openQuestion;
 
-        public Op(String op, String key, String summary, String text, String label, String kind,
-                Double confidence, List<String> evidenceIds) {
-            this.op = op;
-            this.key = key;
-            this.summary = summary;
-            this.text = text;
-            this.label = label;
-            this.kind = kind;
-            this.confidence = confidence;
-            this.evidenceIds = evidenceIds == null ? new ArrayList<>() : new ArrayList<>(evidenceIds);
+        public Op() {
         }
 
-        @SuppressWarnings("unchecked")
+        public static Op upsertConcept(String modeId, String modeLabel, String target, SilhouetteConcept concept,
+                SilhouetteEvidence evidence) {
+            Op out = new Op();
+            out.op = "upsert_concept";
+            out.modeId = modeId;
+            out.label = modeLabel;
+            out.target = target;
+            out.concept = concept;
+            out.evidence = evidence;
+            return out;
+        }
+
+        public static Op upsertAntiPattern(String modeId, String modeLabel, SilhouetteAntiPattern antiPattern,
+                SilhouetteEvidence evidence) {
+            Op out = new Op();
+            out.op = "upsert_anti_pattern";
+            out.modeId = modeId;
+            out.label = modeLabel;
+            out.target = "anti_patterns";
+            out.antiPattern = antiPattern;
+            out.evidence = evidence;
+            return out;
+        }
+
+        public static Op addOpenQuestion(String modeId, String modeLabel, String question) {
+            Op out = new Op();
+            out.op = "add_open_question";
+            out.modeId = modeId;
+            out.label = modeLabel;
+            out.openQuestion = question;
+            return out;
+        }
+
         static Op fromMap(Map<String, Object> map) {
             if (map == null || map.isEmpty()) {
                 return null;
             }
-            String op = normalizeToken(map.get("op"));
-            if (op == null) {
+            String op = canonicalOpName(SilhouetteModelUtils.text(map.get("op"), 64));
+            if (op.isBlank()) {
                 return null;
             }
-            String key = normalizeToken(map.get("key"));
-            String summary = normalizeText(map.get("summary"), 320);
-            String text = normalizeText(map.get("text"), 900);
-            String label = normalizeText(map.get("label"), 96);
-            String kind = normalizeToken(map.get("kind"));
-            Double confidence = normalizeConfidence(map.get("confidence"));
+            Op out = new Op();
+            out.op = op;
+            out.modeId = SilhouetteModelUtils.normalizeKey(
+                    SilhouetteModelUtils.first(map, "modeId", "mode_id"));
+            out.target = SilhouetteEvidence.normalizeTarget(SilhouetteModelUtils.text(map.get("target"), 64));
+            out.label = SilhouetteModelUtils.text(map.get("label"), 96);
+            out.status = SilhouetteMode.normalizeStatus(SilhouetteModelUtils.text(map.get("status"), 32));
+            out.weight = optional01(map.get("weight"));
+            out.confidence = optional01(map.get("confidence"));
+            out.strength = optional01(map.get("strength"));
+            out.openQuestion = SilhouetteModelUtils.text(
+                    SilhouetteModelUtils.first(map, "openQuestion", "open_question", "question"), 180);
 
-            LinkedHashSet<String> evidence = new LinkedHashSet<>();
-            Object rawEvidence = map.get("evidenceIds");
-            if (rawEvidence instanceof List<?> list) {
-                for (Object item : list) {
-                    String normalized = normalizeToken(item);
-                    if (normalized != null) {
-                        evidence.add(normalized);
-                    }
-                    if (evidence.size() >= 8) {
-                        break;
-                    }
-                }
-            } else if (rawEvidence instanceof String one) {
-                String normalized = normalizeToken(one);
-                if (normalized != null) {
-                    evidence.add(normalized);
-                }
+            Map<String, Object> modeMap = SilhouetteModelUtils.objectMap(map.get("mode"));
+            out.mode = SilhouetteMode.fromMap(modeMap);
+            Map<String, Object> conceptMap = SilhouetteModelUtils.objectMap(map.get("concept"));
+            out.concept = SilhouetteConcept.fromMap(conceptMap);
+            Map<String, Object> antiMap = SilhouetteModelUtils.objectMap(
+                    SilhouetteModelUtils.first(map, "antiPattern", "anti_pattern"));
+            out.antiPattern = SilhouetteAntiPattern.fromMap(antiMap);
+            Map<String, Object> tensionMap = SilhouetteModelUtils.objectMap(map.get("tension"));
+            out.tension = SilhouetteTension.fromMap(tensionMap);
+            Map<String, Object> evidenceMap = SilhouetteModelUtils.objectMap(map.get("evidence"));
+            out.evidence = SilhouetteEvidence.fromMap(evidenceMap);
+
+            // Allow compact add_evidence ops without a nested evidence object.
+            if (out.evidence == null && "add_evidence".equals(out.op)) {
+                SilhouetteEvidence evidence = SilhouetteEvidence.fromMap(map);
+                out.evidence = evidence;
             }
-            return new Op(op, key, summary, text, label, kind, confidence, new ArrayList<>(evidence));
+            return out;
         }
 
         Map<String, Object> toMap() {
@@ -141,83 +173,76 @@ public final class SilhouettePatch {
             if (op != null && !op.isBlank()) {
                 out.put("op", op);
             }
-            if (key != null && !key.isBlank()) {
-                out.put("key", key);
+            if (modeId != null && !modeId.isBlank()) {
+                out.put("modeId", modeId);
             }
-            if (summary != null && !summary.isBlank()) {
-                out.put("summary", summary);
-            }
-            if (text != null && !text.isBlank()) {
-                out.put("text", text);
+            if (target != null && !target.isBlank()) {
+                out.put("target", SilhouetteEvidence.normalizeTarget(target));
             }
             if (label != null && !label.isBlank()) {
-                out.put("label", label);
+                out.put("label", SilhouetteModelUtils.text(label, 96));
             }
-            if (kind != null && !kind.isBlank()) {
-                out.put("kind", kind);
+            if (status != null && !status.isBlank()) {
+                out.put("status", SilhouetteMode.normalizeStatus(status));
+            }
+            if (weight != null && Double.isFinite(weight.doubleValue())) {
+                out.put("weight", SilhouetteModelUtils.clamp01(weight.doubleValue()));
             }
             if (confidence != null && Double.isFinite(confidence.doubleValue())) {
-                out.put("confidence", confidence.doubleValue());
+                out.put("confidence", SilhouetteModelUtils.clamp01(confidence.doubleValue()));
             }
-            if (evidenceIds != null && !evidenceIds.isEmpty()) {
-                out.put("evidenceIds", new ArrayList<>(evidenceIds));
+            if (strength != null && Double.isFinite(strength.doubleValue())) {
+                out.put("strength", SilhouetteModelUtils.clamp01(strength.doubleValue()));
+            }
+            if (mode != null) {
+                out.put("mode", mode.toMap());
+            }
+            if (concept != null) {
+                out.put("concept", concept.toMap());
+            }
+            if (antiPattern != null) {
+                out.put("antiPattern", antiPattern.toMap());
+            }
+            if (tension != null) {
+                out.put("tension", tension.toMap());
+            }
+            if (evidence != null) {
+                out.put("evidence", evidence.toMap());
+            }
+            if (openQuestion != null && !openQuestion.isBlank()) {
+                out.put("openQuestion", SilhouetteModelUtils.text(openQuestion, 180));
             }
             return out;
         }
 
-        private static String normalizeToken(Object raw) {
+        private static Double optional01(Object raw) {
             if (raw == null) {
                 return null;
             }
-            String trimmed = raw.toString().trim().toLowerCase(Locale.ROOT);
-            if (trimmed.isEmpty()) {
+            double value = SilhouetteModelUtils.parseDouble(raw, Double.NaN);
+            if (!Double.isFinite(value)) {
                 return null;
             }
-            StringBuilder out = new StringBuilder(trimmed.length());
-            for (int i = 0; i < trimmed.length(); i++) {
-                char c = trimmed.charAt(i);
-                if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.') {
-                    out.append(c);
-                } else if (c == ' ') {
-                    out.append('_');
-                }
-            }
-            String normalized = out.toString().replaceAll("_+", "_");
-            return normalized.isEmpty() ? null : normalized;
+            return SilhouetteModelUtils.clamp01(value);
         }
 
-        private static String normalizeText(Object raw, int maxLen) {
-            if (raw == null) {
-                return null;
+        private static String canonicalOpName(String raw) {
+            if (raw == null || raw.isBlank()) {
+                return "";
             }
-            String text = raw.toString().trim();
-            if (text.isEmpty()) {
-                return null;
-            }
-            if (text.length() > maxLen) {
-                return text.substring(0, maxLen).trim();
-            }
-            return text;
-        }
-
-        private static Double normalizeConfidence(Object raw) {
-            if (raw == null) {
-                return null;
-            }
-            try {
-                double value = Double.parseDouble(raw.toString());
-                if (!Double.isFinite(value)) {
-                    return null;
+            String op = raw.trim().toLowerCase(Locale.ROOT);
+            return switch (op) {
+                case "upsert_mode", "reinforce_mode", "deprecate_mode",
+                        "upsert_concept", "reinforce_concept", "retract_concept",
+                        "upsert_anti_pattern", "upsert_antipattern",
+                        "upsert_tension", "add_evidence", "add_open_question" -> {
+                    if ("upsert_antipattern".equals(op)) {
+                        yield "upsert_anti_pattern";
+                    }
+                    yield op;
                 }
-                if (value < 0.0) {
-                    value = 0.0;
-                } else if (value > 1.0) {
-                    value = 1.0;
-                }
-                return value;
-            } catch (NumberFormatException ignored) {
-                return null;
-            }
+                default -> "";
+            };
         }
     }
 }

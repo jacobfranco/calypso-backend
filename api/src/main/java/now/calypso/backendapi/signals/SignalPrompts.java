@@ -25,6 +25,8 @@ public final class SignalPrompts {
             - Do NOT output *_partner tokens; encode partner-side semantics with intent="seeking".
             - Do NOT output profanity/insults/slang labels as canonical concepts.
             - Prefer official names for media titles/franchises when explicit.
+            - When language is person-descriptor form ("fans of X", "people into X", "X types", "people who watch X"), extract X itself as the token, not the person-group form (taylor_swift not taylor_swift_fans; gym not gym_goers; church not church_attendees; reality_tv not reality_tv_viewers).
+            - Never concatenate two distinct valid standalone concept names into a single token. Emit each as a separate signal (e.g., emit "startup" and "entrepreneurship" as two tokens, not "startup_entrepreneurship"; emit "travel" and "photography" separately, not "travel_photography").
 
             INTENT RULES:
             - self: who the speaker is / does / values.
@@ -58,6 +60,8 @@ public final class SignalPrompts {
             - Keep canonical, deduped concept labels.
             - Use intent="both" only with explicit mirroring cues.
             - Do not encode sentiment in token text; use valence sign.
+            - When language is person-descriptor form ("fans of X", "people into X", "X types"), extract X itself as the token, not the person-group form (taylor_swift not taylor_swift_fans; gym not gym_goers; church not church_attendees).
+            - Never concatenate two distinct valid standalone concept names into a single token. Emit each as a separate signal (e.g., "startup" and "entrepreneurship" separately, not "startup_entrepreneurship").
             - If nothing new exists, return {"signals":[]}.
             """;
 
@@ -78,6 +82,8 @@ public final class SignalPrompts {
             - For named media/franchises, preserve the official title in snake_case (keep lexical letters; e.g. jojos_bizarre_adventure, red_rising).
             - For concrete media formats explicitly named in the answer, emit reusable format concepts (e.g., reality_tv).
             - Prefer atomic head concepts over phrasing wrappers (e.g., cooking over cooking_homemade_meals; sports over sports_fandom; gaming over casual_gaming).
+            - When language is person-descriptor form ("fans of X", "people into X", "X types", "people who watch X"), extract X itself as the token, not the person-group form (taylor_swift not taylor_swift_fans; gym not gym_goers; church not church_attendees; reality_tv not reality_tv_viewers).
+            - Never concatenate two distinct valid standalone concept names into a single token. Emit each as a separate signal (e.g., "startup" and "entrepreneurship" separately, not "startup_entrepreneurship"; "travel" and "photography" separately, not "travel_photography").
             - For composite time+activity concepts, emit both core concepts when useful (e.g., morning gym => gym + early_morning_activity).
             - Include strongly implied core concepts when obvious from context (e.g., destination activity implies travel; nightlife activity implies socializing).
             - Emit only context-free reusable concepts as signals. If a concept depends on story-specific interpretation, omit it.

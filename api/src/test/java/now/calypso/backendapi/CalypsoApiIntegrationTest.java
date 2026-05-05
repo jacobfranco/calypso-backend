@@ -571,7 +571,7 @@ class CalypsoApiIntegrationTest {
                 List<ExtractedSignal> extracted = mgr.extractSignalsFromPrompt(question, answer).get(5, TimeUnit.SECONDS);
                 ExtractedSignal jojo = findExtracted(extracted, "jojo_bizarre_adventure", SignalIntent.SELF);
                 assertNotNull(jojo);
-                assertTrue(jojo.valence() >= 0.68);
+                assertTrue(jojo.valence() >= 0.62, "Explicit yap-hours signal should be at strong strength after boost and normalization");
             } finally {
                 OpenAIJson.clearTestOverride();
             }
@@ -1486,7 +1486,9 @@ class CalypsoApiIntegrationTest {
             SignalRecord promoted = findRecord(after, canonical, SignalIntent.SELF);
             assertNotNull(promoted);
             assertTrue(promoted.isSetValence());
-            assertTrue(promoted.getValence() > 0.45);
+            // Count-based ceiling at count=1 is ~0.20; drift-queue average ≤ 0.65
+            // → stored ≈ min(0.65, 0.20) = 0.20.
+            assertTrue(promoted.getValence() > 0.15);
         }
     }
 
@@ -2296,22 +2298,22 @@ class CalypsoApiIntegrationTest {
                 int n = Math.min(2, request.candidates.size());
                 for (int i = 0; i < n; i++) {
                     MatchReranker.Candidate candidate = request.candidates.get(i);
-                    if (candidate == null || candidate.id == null || candidate.id.isBlank()) {
+                    if (candidate == null || candidate.candidateId == null || candidate.candidateId.isBlank()) {
                         continue;
                     }
                     MatchReranker.Decision decision = new MatchReranker.Decision();
-                    decision.id = candidate.id;
+                    decision.candidateId = candidate.candidateId;
                     decision.confidence = 1.0;
                     if (i == 0) {
-                        decision.compatibility = 0.0;
-                        decision.hardBlocker = true;
-                        decision.reason = "Strong mismatch";
+                        decision.finalScore = 0.0;
+                        decision.recommendedUse = "deprioritize";
+                        decision.fitSummaryInternal = "Strong mismatch";
                     } else {
-                        decision.compatibility = 1.0;
-                        decision.hardBlocker = false;
-                        decision.reason = "Strong overlap";
+                        decision.finalScore = 1.0;
+                        decision.recommendedUse = "rank_high";
+                        decision.fitSummaryInternal = "Strong overlap";
                     }
-                    result.decisions.add(decision);
+                    result.rankedCandidates.add(decision);
                 }
                 return result;
             });

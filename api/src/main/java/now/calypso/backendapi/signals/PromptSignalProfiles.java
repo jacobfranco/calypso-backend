@@ -108,8 +108,8 @@ public final class PromptSignalProfiles {
                 "Signal-first prompt: extract concrete hobby/activity concepts. Split into self hobbies and partner-shared hobby preferences. Avoid abstract narrative labels.",
                 7, 1, false));
         add(byId, profile("private.popular.dislike",
-                "This is exclusion framing. Convert clear dislikes into seeking constraints with negative valence. Preserve explicit concrete categories (for example reality_tv).",
-                6, 1, false));
+                "This is exclusion framing. Convert clear dislikes into seeking constraints with negative valence. Preserve explicit concrete categories (for example reality_tv). Also preserve explicitly named people, shows, brands, or artists as separate tokens alongside any category they suggest (for example 'taylor_swift' AND 'mainstream_pop').",
+                7, 1, false));
         add(byId, profile("private.most.myself",
                 "Extract identity and comfort-state signals with self intent.",
                 6, 1, false));
@@ -117,10 +117,10 @@ public final class PromptSignalProfiles {
                 "Extract stable political/value priorities from explicit issue mentions.",
                 6, 1, false));
         add(byId, profile("private.not.my.person",
-                "Hard exclusion framing. Prefer seeking intent with clearly negative valence.",
-                6, 1, false));
+                "Hard exclusion framing. Prefer seeking intent with clearly negative valence. Preserve explicitly named people, shows, brands, or artists as separate tokens alongside any category they suggest (for example 'taylor_swift' AND 'mainstream_pop').",
+                7, 1, false));
         add(byId, profile("private.drawn.to",
-                "Primary output should be context-free seeking preferences for partner traits and lifestyle. Avoid character-name-only tags, but preserve explicit franchise/work titles when named (for example red_rising).",
+                "Primary output should be context-free seeking preferences for partner traits and lifestyle. Preserve explicit franchise/work titles as self-side taste context when named (for example red_rising), but avoid character-name-only tags.",
                 7, 1, false));
         add(byId, profile("private.music.feels.like",
                 "Extract identity and taste signals; keep derived umbrella tags weaker than explicit artists/genres.",
@@ -138,13 +138,13 @@ public final class PromptSignalProfiles {
                 "Extract place-style and environment preferences as stable lifestyle context.",
                 5, 1, false));
         add(byId, profile("private.great.night",
-                "Extract social style and activity preferences for evening/weekend context.",
+                "Extract durable social style and activity preferences. Avoid seasonal, weather, or time-of-day specifics (not 'warm_summer_night'). For balanced or flexible answers ('X but also good with Y'), emit both X and Y as separate signals. Prefer stable concepts like 'home_socializing', 'social_drinking', 'nightlife'.",
                 5, 1, false));
         add(byId, profile("private.visual.aesthetic",
                 "Translate aesthetic language into stable vibe/style concepts, not decorative literal terms.",
                 5, 1, false));
         add(byId, profile("private.stuck.with",
-                "Long-term consistency framing; favor durable commitment/discipline signals.",
+                "Long-term consistency framing. Preserve concrete activities as self signals (for example gym -> gym/fitness) and add durable commitment/discipline only when clearly supported.",
                 5, 1, false));
         add(byId, profile("private.communities.scene",
                 "Signal-first prompt: extract concrete communities/scenes (for example gym, gaming, dance) as durable signals. Avoid generic social-belonging abstractions.",

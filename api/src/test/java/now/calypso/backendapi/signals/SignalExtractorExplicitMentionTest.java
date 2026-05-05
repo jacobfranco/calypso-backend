@@ -2,6 +2,7 @@ package now.calypso.backendapi.signals;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -29,6 +30,20 @@ class SignalExtractorExplicitMentionTest {
     }
 
     @Test
+    void augmentWithExplicitTitleMentions_extractsConcreteStuckWithSignal() {
+        List<ExtractedSignal> out = SignalExtractor.augmentWithExplicitTitleMentions(
+                "private.stuck.with",
+                "What's something you've stuck with for a long time?",
+                "the gym",
+                List.of(),
+                List.of(ExtractedSignal.from("discipline", SignalIntent.SELF, 0.62)));
+
+        ExtractedSignal gym = find(out, "gym", SignalIntent.SELF);
+        assertNotNull(gym, "Concrete long-running activities should remain filterable signals.");
+        assertTrue(gym.valence().doubleValue() > 0.0);
+    }
+
+    @Test
     void augmentWithExplicitTitleMentions_extractsNegativePreferenceAsSeeking() {
         List<ExtractedSignal> out = SignalExtractor.augmentWithExplicitTitleMentions(
                 "private.popular.dislike",
@@ -41,6 +56,24 @@ class SignalExtractorExplicitMentionTest {
         assertNotNull(realityTv);
         assertEquals(SignalIntent.SEEKING, realityTv.intent());
         assertNotNull(realityTv.valence());
+        assertTrue(realityTv.valence().doubleValue() < 0.0);
+    }
+
+    @Test
+    void augmentWithExplicitTitleMentions_suppressesBroadNegativeMusicUmbrella() {
+        List<ExtractedSignal> out = SignalExtractor.augmentWithExplicitTitleMentions(
+                "private.popular.dislike",
+                "What are some popular things that you don't really like?",
+                "Taylor Swift and that kind of pop music, and also reality TV.",
+                List.of(),
+                List.of(
+                        ExtractedSignal.from("music", SignalIntent.SELF, -0.80),
+                        ExtractedSignal.from("reality_tv", SignalIntent.SELF, -0.78)));
+
+        assertNull(find(out, "music"),
+                "Disliking a specific music lane should not become a broad negative music signal.");
+        ExtractedSignal realityTv = find(out, "reality_tv", SignalIntent.SEEKING);
+        assertNotNull(realityTv);
         assertTrue(realityTv.valence().doubleValue() < 0.0);
     }
 

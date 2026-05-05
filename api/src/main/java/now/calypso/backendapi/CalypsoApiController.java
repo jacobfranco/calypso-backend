@@ -684,7 +684,8 @@ public class CalypsoApiController {
         String rawToken = payload == null ? null : payload.rawToken;
         String canonicalToken = payload == null ? null : payload.canonicalToken;
         String category = payload == null ? null : payload.category;
-        return Mono.fromFuture(manager.promoteSignalConceptWithDebug(rawToken, canonicalToken, category))
+        List<String> parentConcepts = payload == null ? null : payload.parentConcepts;
+        return Mono.fromFuture(manager.promoteSignalConceptWithDebug(rawToken, canonicalToken, category, parentConcepts))
                 .map(result -> {
                     Map<String, Object> out = new LinkedHashMap<>();
                     out.put("changed", result == null ? Boolean.FALSE : result.changed);
@@ -697,6 +698,7 @@ public class CalypsoApiController {
                     out.put("replayedObservedAccounts", result == null ? 0 : result.replayedObservedAccounts);
                     out.put("replayedContextualOwners", result == null ? 0 : result.replayedContextualOwners);
                     out.put("observedAccountIds", result == null ? List.of() : result.observedAccountIds);
+                    out.put("parentConcepts", result == null ? List.of() : result.parentConcepts);
                     return out;
                 })
                 .onErrorMap(IllegalArgumentException.class,
@@ -733,12 +735,13 @@ public class CalypsoApiController {
         String rawToken = payload == null ? null : payload.rawToken;
         String canonicalToken = payload == null ? null : payload.canonicalToken;
         String category = payload == null ? null : payload.category;
+        List<String> parentConcepts = payload == null ? null : payload.parentConcepts;
         CalypsoApiManager.SignalConceptCandidateAction action = CalypsoApiManager.SignalConceptCandidateAction
                 .parse(payload == null ? null : payload.action);
         if (action == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "action required (create|map|reject|block|unblock)");
         }
-        return Mono.fromFuture(manager.actOnSignalConceptCandidate(rawToken, canonicalToken, category, action))
+        return Mono.fromFuture(manager.actOnSignalConceptCandidate(rawToken, canonicalToken, category, parentConcepts, action))
                 .onErrorMap(IllegalArgumentException.class,
                         ex -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex));
     }

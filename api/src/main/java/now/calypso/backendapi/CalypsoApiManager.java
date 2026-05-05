@@ -31,7 +31,11 @@ import now.calypso.backendapi.pojos.*;
 import now.calypso.backendapi.prompts.*;
 import now.calypso.backendapi.signals.*;
 import now.calypso.backendapi.silhouette.SilhouetteEditor;
-import now.calypso.backendapi.silhouette.SilhouetteMerger;
+import now.calypso.backendapi.silhouette.SilhouetteAntiPattern;
+import now.calypso.backendapi.silhouette.SilhouetteConcept;
+import now.calypso.backendapi.silhouette.SilhouetteDigest;
+import now.calypso.backendapi.silhouette.SilhouetteEvidence;
+import now.calypso.backendapi.silhouette.SilhouetteModeMerger;
 import now.calypso.backendapi.silhouette.SilhouettePatch;
 import now.calypso.backendapi.silhouette.SilhouetteState;
 import now.calypso.backend.*;
@@ -150,7 +154,7 @@ public class CalypsoApiManager {
     private static final int PUBLIC_REACTION_STRENGTH_MIN = -3;
     private static final int PUBLIC_REACTION_STRENGTH_MAX = 3;
     private static final String PUBLIC_REACTION_STRENGTH_PROMPT_SUFFIX = "|reaction_strength:";
-    private static final double PUBLIC_PROMPT_OWNER_CANDIDATE_FALLBACK_VALENCE = 0.55;
+    private static final double PUBLIC_PROMPT_OWNER_CANDIDATE_FALLBACK_VALENCE = 0.30;
     private static final int SIGNAL_HIERARCHY_MAX_DEPTH = 3;
     private static final double SIGNAL_HIERARCHY_MIN_VALENCE_ABS = 0.06;
     private static final double SIGNAL_HIERARCHY_DERIVED_VALENCE_SCALE = 0.68;
@@ -160,6 +164,11 @@ public class CalypsoApiManager {
     private static final double MATCHMAKING_FOLLOWUP_REPEAT_VALENCE_SCALE = 0.54;
     private static final double PUBLIC_PROMPT_FIRST_HIT_VALENCE_SCALE = 0.32;
     private static final double PUBLIC_PROMPT_REPEAT_VALENCE_SCALE = 0.54;
+    private static final double DEFAULT_SOURCE_FIRST_HIT_VALENCE_SCALE = 0.28;
+    private static final double DEFAULT_SOURCE_REPEAT_VALENCE_SCALE = 0.48;
+    // Denominator softness for count-based valence ceiling: ceiling(n) = n / (n + softness).
+    // At count=1 → ~0.20; count=5 → ~0.56; count=10 → ~0.71; count=20+ → ~0.83+.
+    private static final double VALENCE_COUNT_CEILING_SOFTNESS = 4.0;
     private static final String SIGNAL_HIERARCHY_DERIVED_SOURCE = "signal_hierarchy_derived";
     private static final int DISAMBIGUATION_MAX_PER_ACCOUNT = 200;
     private static final boolean SILHOUETTE_WRITE_ENABLED = !"false"
@@ -187,6 +196,8 @@ public class CalypsoApiManager {
             "reciprocity",
             "communication",
             "emotional",
+            "discipline",
+            "consisten",
             "trajectory",
             "intellectual",
             "values",
@@ -204,6 +215,8 @@ public class CalypsoApiManager {
             "private.communities.scene",
             "private.great.night",
             "private.places.home",
+            "private.stuck.with",
+            "private.most.myself",
             "private.popular.dislike",
             "private.not.my.person");
     private static final boolean PRIVATE_UNIFIED_UNDERSTANDING_ENABLED = !"false"
@@ -671,31 +684,38 @@ public class CalypsoApiManager {
             return ackSilhouetteEvent(accountId, eventId).thenApply(ignored -> false);
         }
 
-        CompletableFuture<Boolean> work = readSilhouetteSnapshot(accountId).thenCompose(snapshot -> {
-            SilhouetteState base = SilhouetteState.fromMap(snapshot, accountId);
-            SilhouettePatch patch = precomputedSilhouettePatch(event);
-            if (patch == null || patch.isEmpty()) {
-                patch = SilhouetteEditor.buildPatch(openAI, base, event);
-            }
-            String source = mapString(event, "source");
-            String sourceId = mapString(event, "sourceId");
-            String promptId = mapString(event, "promptId");
-            String answer = mapString(event, "answer");
-            SilhouetteState merged = SilhouetteMerger.apply(
-                    base,
-                    patch,
-                    silhouetteSourceWeight(source),
-                    source,
-                    sourceId,
-                    promptId,
-                    eventId,
-                    answer,
-                    System.currentTimeMillis());
-            Map<String, Object> payload = sanitizeSilhouetteMap(merged.toMap(), accountId);
-            return silhouetteDepot.appendAsync(payload)
-                    .thenCompose(ignored -> ackSilhouetteEvent(accountId, eventId))
-                    .thenApply(ignored -> true);
-        });
+        CompletableFuture<Map<String, Object>> snapshotFuture = readSilhouetteSnapshot(accountId);
+        CompletableFuture<List<SignalRecord>> signalsFuture = readCurrentSignalRecords(accountId);
+        CompletableFuture<Boolean> work = CompletableFuture.allOf(snapshotFuture, signalsFuture)
+                .thenCompose(ignored -> {
+                    Map<String, Object> snapshot = snapshotFuture.join();
+                    List<SignalRecord> signalRecords = signalsFuture.join();
+                    SilhouetteState base = SilhouetteState.fromMap(snapshot, accountId);
+                    SilhouettePatch patch = precomputedSilhouettePatch(event);
+                    if (patch == null || patch.isEmpty()) {
+                        String signalSummary = buildSignalSummary(signalRecords);
+                        Map<String, Object> augmented = augmentEventWithSignalSummary(event, signalSummary);
+                        patch = SilhouetteEditor.buildPatch(openAI, base, augmented);
+                    }
+                    String source = mapString(event, "source");
+                    String sourceId = mapString(event, "sourceId");
+                    String promptId = mapString(event, "promptId");
+                    String answer = mapString(event, "answer");
+                    SilhouetteState merged = SilhouetteModeMerger.apply(
+                            base,
+                            patch,
+                            silhouetteSourceWeight(source),
+                            source,
+                            sourceId,
+                            promptId,
+                            eventId,
+                            answer,
+                            System.currentTimeMillis());
+                    Map<String, Object> payload = sanitizeSilhouetteMap(merged.toMap(), accountId);
+                    return silhouetteDepot.appendAsync(payload)
+                            .thenCompose(i -> ackSilhouetteEvent(accountId, eventId))
+                            .thenApply(i -> true);
+                });
 
         return work.handle((ok, ex) -> {
             if (ex == null) {
@@ -736,10 +756,17 @@ public class CalypsoApiManager {
         if (eligible.isEmpty()) {
             return immediateAckFuture.thenApply(ignored -> false);
         }
-        return immediateAckFuture.thenCompose(ignored -> readSilhouetteSnapshot(accountId).thenCompose(snapshot -> {
+        CompletableFuture<Map<String, Object>> mergedSnapshotFuture = readSilhouetteSnapshot(accountId);
+        CompletableFuture<List<SignalRecord>> mergedSignalsFuture = readCurrentSignalRecords(accountId);
+        return immediateAckFuture.thenCompose(ignored ->
+                CompletableFuture.allOf(mergedSnapshotFuture, mergedSignalsFuture).thenCompose(allOf -> {
+            Map<String, Object> snapshot = mergedSnapshotFuture.join();
+            List<SignalRecord> signalRecords = mergedSignalsFuture.join();
             SilhouetteState base = SilhouetteState.fromMap(snapshot, accountId);
             Map<String, Object> mergedEvent = mergeSilhouetteEvents(accountId, eligible);
-            SilhouettePatch patch = SilhouetteEditor.buildPatch(openAI, base, mergedEvent);
+            String signalSummary = buildSignalSummary(signalRecords);
+            Map<String, Object> augmentedMerged = augmentEventWithSignalSummary(mergedEvent, signalSummary);
+            SilhouettePatch patch = SilhouetteEditor.buildPatch(openAI, base, augmentedMerged);
             if (patch == null || patch.isEmpty()) {
                 return ackSilhouetteEvents(accountId, eventIds(eligible)).thenApply(done -> false);
             }
@@ -748,7 +775,7 @@ public class CalypsoApiManager {
             String promptId = mapString(mergedEvent, "promptId");
             String answer = mapString(mergedEvent, "answer");
             String eventId = mapString(mergedEvent, "eventId");
-            SilhouetteState merged = SilhouetteMerger.apply(
+            SilhouetteState merged = SilhouetteModeMerger.apply(
                     base,
                     patch,
                     silhouetteSourceWeight(source),
@@ -1053,24 +1080,83 @@ public class CalypsoApiManager {
         return trimmed.substring(0, limit).trim();
     }
 
+    private static String buildSignalSummary(List<SignalRecord> records) {
+        if (records == null || records.isEmpty()) {
+            return "";
+        }
+        ArrayList<SignalRecord> sorted = new ArrayList<>(records);
+        sorted.sort((a, b) -> {
+            double aV = a.isSetValence() ? Math.abs(a.getValence()) : 0.0;
+            double bV = b.isSetValence() ? Math.abs(b.getValence()) : 0.0;
+            int aC = a.isSetCount() ? Math.max(1, a.getCount()) : 1;
+            int bC = b.isSetCount() ? Math.max(1, b.getCount()) : 1;
+            return Double.compare(bV * Math.log1p(bC), aV * Math.log1p(aC));
+        });
+        ArrayList<String> selfPos = new ArrayList<>();
+        ArrayList<String> selfNeg = new ArrayList<>();
+        ArrayList<String> seekingPos = new ArrayList<>();
+        ArrayList<String> seekingNeg = new ArrayList<>();
+        for (SignalRecord r : sorted) {
+            if (!r.isSetToken() || !r.isSetValence()) {
+                continue;
+            }
+            double v = r.getValence();
+            if (Math.abs(v) < 0.06) {
+                continue;
+            }
+            String token = r.getToken();
+            if (token == null || token.isBlank()) {
+                continue;
+            }
+            SignalIntent intent = r.isSetIntent() ? r.getIntent() : SignalIntent.SELF;
+            boolean isSelf = intent == SignalIntent.SELF || intent == SignalIntent.BOTH;
+            boolean isSeeking = intent == SignalIntent.SEEKING || intent == SignalIntent.BOTH;
+            if (v > 0) {
+                if (isSelf && selfPos.size() < 10) selfPos.add(token);
+                if (isSeeking && seekingPos.size() < 8) seekingPos.add(token);
+            } else {
+                if (isSelf && selfNeg.size() < 8) selfNeg.add(token);
+                if (isSeeking && seekingNeg.size() < 8) seekingNeg.add(token);
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        if (!selfPos.isEmpty()) sb.append("self+: ").append(String.join(", ", selfPos)).append('\n');
+        if (!selfNeg.isEmpty()) sb.append("self-: ").append(String.join(", ", selfNeg)).append('\n');
+        if (!seekingPos.isEmpty()) sb.append("seeking+: ").append(String.join(", ", seekingPos)).append('\n');
+        if (!seekingNeg.isEmpty()) sb.append("seeking-: ").append(String.join(", ", seekingNeg)).append('\n');
+        return sb.toString().trim();
+    }
+
+    private static Map<String, Object> augmentEventWithSignalSummary(Map<String, Object> event, String signalSummary) {
+        if (signalSummary == null || signalSummary.isBlank()) {
+            return event;
+        }
+        HashMap<String, Object> augmented = new HashMap<>(event);
+        augmented.put("signalSummary", signalSummary);
+        return augmented;
+    }
+
     private static double silhouetteSourceWeight(String source) {
         if (source == null || source.isBlank()) {
-            return 0.35;
+            return 0.30;
         }
         String normalized = source.trim().toLowerCase(Locale.ROOT);
+        if (normalized.contains("behavior") || normalized.contains("facecard")) {
+            return 1.10;
+        }
         if (normalized.contains("private_prompt")) {
             return 1.0;
         }
         if (normalized.contains("matchmaking_followup")) {
-            return 0.8;
+            return 0.85;
         }
         if (normalized.contains("public_prompt_reaction")) {
-            return 0.25;
+            return 0.45;
         }
         if (normalized.contains("public_prompt")) {
             return 0.45;
         }
-        return 0.35;
+        return 0.30;
     }
 
     public CompletableFuture<GetSignalConceptRegistry> getSignalConceptRegistry() {
@@ -1124,10 +1210,18 @@ public class CalypsoApiManager {
         public final int replayedObservedAccounts;
         public final int replayedContextualOwners;
         public final List<Long> observedAccountIds;
+        public final List<String> parentConcepts;
 
         SignalConceptPromotionResult(boolean changed, String rawToken, String canonicalToken,
                 int migratedStoredAccounts, int replayedObservedAccounts, int replayedContextualOwners,
                 Collection<Long> observedAccountIds) {
+            this(changed, rawToken, canonicalToken, migratedStoredAccounts, replayedObservedAccounts,
+                    replayedContextualOwners, observedAccountIds, List.of());
+        }
+
+        SignalConceptPromotionResult(boolean changed, String rawToken, String canonicalToken,
+                int migratedStoredAccounts, int replayedObservedAccounts, int replayedContextualOwners,
+                Collection<Long> observedAccountIds, Collection<String> parentConcepts) {
             this.changed = changed;
             this.rawToken = rawToken;
             this.canonicalToken = canonicalToken;
@@ -1144,6 +1238,16 @@ public class CalypsoApiManager {
             }
             ids.sort(Long::compareTo);
             this.observedAccountIds = Collections.unmodifiableList(ids);
+            LinkedHashSet<String> parents = new LinkedHashSet<>();
+            if (parentConcepts != null) {
+                for (String parent : parentConcepts) {
+                    String normalized = SignalNormalizer.normalizeOne(parent);
+                    if (normalized != null && !normalized.isBlank()) {
+                        parents.add(normalized);
+                    }
+                }
+            }
+            this.parentConcepts = Collections.unmodifiableList(new ArrayList<>(parents));
         }
     }
 
@@ -1231,12 +1335,17 @@ public class CalypsoApiManager {
     }
 
     public CompletableFuture<SignalConceptPromotionResult> createSignalConceptWithDebug(String rawToken, String category) {
+        return createSignalConceptWithDebug(rawToken, category, List.of());
+    }
+
+    public CompletableFuture<SignalConceptPromotionResult> createSignalConceptWithDebug(String rawToken, String category,
+            Collection<String> parentConcepts) {
         String normalizedRaw = SignalNormalizer.normalizeOne(rawToken);
         if (normalizedRaw == null || normalizedRaw.isBlank()) {
             return CompletableFuture.completedFuture(
                     new SignalConceptPromotionResult(false, normalizedRaw, normalizedRaw, 0, 0, 0, List.of()));
         }
-        return promoteSignalConceptWithDebug(normalizedRaw, normalizedRaw, category);
+        return promoteSignalConceptWithDebug(normalizedRaw, normalizedRaw, category, parentConcepts);
     }
 
     public CompletableFuture<Boolean> createSignalConcept(String rawToken) {
@@ -1253,6 +1362,14 @@ public class CalypsoApiManager {
             String rawToken,
             String canonicalToken,
             String category) {
+        return mapSignalConceptToExistingCanonicalWithDebug(rawToken, canonicalToken, category, List.of());
+    }
+
+    public CompletableFuture<SignalConceptPromotionResult> mapSignalConceptToExistingCanonicalWithDebug(
+            String rawToken,
+            String canonicalToken,
+            String category,
+            Collection<String> parentConcepts) {
         String normalizedCanonical = SignalNormalizer.normalizeOne(canonicalToken);
         if (normalizedCanonical == null || normalizedCanonical.isBlank()) {
             return CompletableFuture.failedFuture(new IllegalArgumentException("canonicalToken required."));
@@ -1261,7 +1378,7 @@ public class CalypsoApiManager {
             return CompletableFuture.failedFuture(
                     new IllegalArgumentException("canonicalToken must map to an existing canonical concept."));
         }
-        return promoteSignalConceptWithDebug(rawToken, normalizedCanonical, category);
+        return promoteSignalConceptWithDebug(rawToken, normalizedCanonical, category, parentConcepts);
     }
 
     public CompletableFuture<Boolean> mapSignalConceptToExistingCanonical(String rawToken, String canonicalToken) {
@@ -1280,6 +1397,15 @@ public class CalypsoApiManager {
             String rawToken,
             String canonicalToken,
             String category,
+            SignalConceptCandidateAction action) {
+        return actOnSignalConceptCandidate(rawToken, canonicalToken, category, List.of(), action);
+    }
+
+    public CompletableFuture<Map<String, Object>> actOnSignalConceptCandidate(
+            String rawToken,
+            String canonicalToken,
+            String category,
+            Collection<String> parentConcepts,
             SignalConceptCandidateAction action) {
         if (action == null) {
             return CompletableFuture.failedFuture(new IllegalArgumentException("action required."));
@@ -1303,12 +1429,13 @@ public class CalypsoApiManager {
                 out.put("replayedObservedAccounts", 0);
                 out.put("replayedContextualOwners", 0);
                 out.put("observedAccountIds", List.of());
+                out.put("parentConcepts", List.of());
                 return out;
             });
         }
         CompletableFuture<SignalConceptPromotionResult> changeFuture = action == SignalConceptCandidateAction.CREATE
-                ? createSignalConceptWithDebug(rawToken, category)
-                : mapSignalConceptToExistingCanonicalWithDebug(rawToken, canonicalToken, category);
+                ? createSignalConceptWithDebug(rawToken, category, parentConcepts)
+                : mapSignalConceptToExistingCanonicalWithDebug(rawToken, canonicalToken, category, parentConcepts);
         return changeFuture.thenApply(result -> {
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("action", action.name().toLowerCase(Locale.ROOT));
@@ -1322,6 +1449,7 @@ public class CalypsoApiManager {
             out.put("replayedObservedAccounts", result == null ? 0 : result.replayedObservedAccounts);
             out.put("replayedContextualOwners", result == null ? 0 : result.replayedContextualOwners);
             out.put("observedAccountIds", result == null ? List.of() : result.observedAccountIds);
+            out.put("parentConcepts", result == null ? List.of() : result.parentConcepts);
             return out;
         });
     }
@@ -1334,6 +1462,13 @@ public class CalypsoApiManager {
     public CompletableFuture<SignalConceptPromotionResult> promoteSignalConceptWithDebug(String rawToken,
             String canonicalToken,
             String category) {
+        return promoteSignalConceptWithDebug(rawToken, canonicalToken, category, List.of());
+    }
+
+    public CompletableFuture<SignalConceptPromotionResult> promoteSignalConceptWithDebug(String rawToken,
+            String canonicalToken,
+            String category,
+            Collection<String> parentConcepts) {
         final String normalizedRaw = SignalNormalizer.normalizeOne(rawToken);
         final String normalizedCanonical = SignalNormalizer.normalizeOne(canonicalToken);
         if (normalizedRaw == null || normalizedRaw.isBlank()
@@ -1345,6 +1480,7 @@ public class CalypsoApiManager {
         List<SignalConceptRegistry.CandidateAccountIntentObservation> observations = SignalConceptRegistry
                 .candidateAccountIntentObservations(normalizedRaw);
         List<String> candidateContexts = SignalConceptRegistry.candidateExampleContexts(normalizedRaw);
+        List<String> normalizedParentConcepts = promotionParentConcepts(parentConcepts, category);
         LinkedHashSet<Long> observedAccountIds = new LinkedHashSet<>();
         if (observations != null) {
             for (SignalConceptRegistry.CandidateAccountIntentObservation observation : observations) {
@@ -1353,7 +1489,8 @@ public class CalypsoApiManager {
                 }
             }
         }
-        boolean changed = SignalConceptRegistry.promoteAlias(normalizedRaw, normalizedCanonical, category);
+        boolean changed = SignalConceptRegistry.promoteAlias(normalizedRaw, normalizedCanonical, category,
+                normalizedParentConcepts);
         if (!changed) {
             return CompletableFuture.completedFuture(new SignalConceptPromotionResult(
                     false,
@@ -1362,7 +1499,8 @@ public class CalypsoApiManager {
                     0,
                     0,
                     0,
-                    observedAccountIds));
+                    observedAccountIds,
+                    normalizedParentConcepts));
         }
         return migratePromotedConceptAcrossAccounts(normalizedRaw, normalizedCanonical)
                 .thenCompose(summary -> applyPromotedConceptToObservedRequesters(
@@ -1390,8 +1528,31 @@ public class CalypsoApiManager {
                                     summary.migratedAccounts,
                                     appliedObserved,
                                     appliedOwners,
-                                    observedAccountIds);
+                                    observedAccountIds,
+                                    normalizedParentConcepts);
                         })));
+    }
+
+    private static List<String> promotionParentConcepts(Collection<String> parentConcepts, String categoryOrParentHint) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (parentConcepts != null) {
+            for (String parent : parentConcepts) {
+                String normalized = SignalNormalizer.normalizeOne(parent);
+                if (normalized != null && !normalized.isBlank() && SignalConceptRegistry.isCanonicalConcept(normalized)) {
+                    out.add(normalized);
+                }
+            }
+        }
+        String categoryHint = SignalTaxonomy.normalizeCategory(categoryOrParentHint);
+        if (categoryHint == null) {
+            String possibleParent = SignalNormalizer.normalizeOne(categoryOrParentHint);
+            if (possibleParent != null
+                    && !possibleParent.isBlank()
+                    && SignalConceptRegistry.isCanonicalConcept(possibleParent)) {
+                out.add(possibleParent);
+            }
+        }
+        return new ArrayList<>(out);
     }
 
     public CompletableFuture<Boolean> rejectSignalConceptCandidate(String rawToken) {
@@ -1478,6 +1639,40 @@ public class CalypsoApiManager {
                     }));
         }
         return chain;
+    }
+
+    private static Map<Long, String> ownerToAnswerIdFromContexts(List<String> contexts) {
+        if (contexts == null || contexts.isEmpty()) {
+            return Map.of();
+        }
+        LinkedHashMap<Long, String> out = new LinkedHashMap<>();
+        for (String context : contexts) {
+            if (context == null || context.isBlank()) {
+                continue;
+            }
+            String[] parts = context.split("\\|");
+            String ownerId = null;
+            String answerId = null;
+            for (String part : parts) {
+                if (part == null) {
+                    continue;
+                }
+                String trimmed = part.trim();
+                if (trimmed.startsWith("answer_owner_id=")) {
+                    ownerId = trimmed.substring("answer_owner_id=".length()).trim();
+                } else if (trimmed.startsWith("answer_id=")) {
+                    answerId = trimmed.substring("answer_id=".length()).trim();
+                }
+            }
+            if (ownerId != null && !ownerId.isBlank() && answerId != null && !answerId.isBlank()) {
+                try {
+                    long ownerIdLong = Long.parseLong(ownerId);
+                    out.putIfAbsent(ownerIdLong, answerId);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        return out;
     }
 
     private static Set<String> contextValues(List<String> contexts, String key) {
@@ -1588,6 +1783,7 @@ public class CalypsoApiManager {
         LinkedHashSet<Long> sourceOwnerIds = new LinkedHashSet<>();
         LinkedHashSet<Long> contextOwnerIds = new LinkedHashSet<>(contextLongValues(candidateContexts, "answer_owner_id"));
         contextOwnerIds.addAll(contextLongValues(candidateContexts, "source_owner_id"));
+        Map<Long, String> ownerToAnswerId = ownerToAnswerIdFromContexts(candidateContexts);
         for (String sourceId : sourceIds) {
             Long ownerId = parsePublicSourceOwnerId(sourceId);
             if (ownerId != null) {
@@ -1670,12 +1866,14 @@ public class CalypsoApiManager {
                                     return CompletableFuture.completedFuture(total);
                                 }
                                 String sourceId = "promoted:" + normalizedRaw + ":answer:" + normalizedAnswerId;
+                                String hierarchySourceId = "promoted_parent:owner:" + ownerId + ":answer:" + normalizedAnswerId;
                                 String context = "promoted_alias=" + normalizedRaw + " | answer_id=" + normalizedAnswerId;
                                 return persistSignals(ownerId,
                                         List.of(signal),
                                         "signal_concept_promotion_owner_backfill",
                                         sourceId,
-                                        context).thenApply(ok -> ok ? total + 1 : total);
+                                        context,
+                                        hierarchySourceId).thenApply(ok -> ok ? total + 1 : total);
                             }).exceptionally(ex -> {
                                 LOG.warn("Failed contextual owner backfill for promoted concept {} -> {} answer {}",
                                         normalizedRaw, normalizedCanonical, normalizedAnswerId, ex);
@@ -1700,13 +1898,18 @@ public class CalypsoApiManager {
                             return CompletableFuture.completedFuture(total);
                         }
                         String sourceId = "promoted:" + normalizedRaw + ":source-owner:" + ownerId.longValue();
+                        String knownAnswerId = ownerToAnswerId.get(ownerId);
+                        String hierarchySourceId = knownAnswerId != null
+                                ? "promoted_parent:owner:" + ownerId.longValue() + ":answer:" + knownAnswerId
+                                : "promoted_parent:owner:" + ownerId.longValue();
                         String context = "promoted_alias=" + normalizedRaw + " | source_owner_id=" + ownerId.longValue();
                         return persistSignals(
                                 ownerId.longValue(),
                                 List.of(signal),
                                 "signal_concept_promotion_owner_backfill",
                                 sourceId,
-                                context)
+                                context,
+                                hierarchySourceId)
                                 .handle((ok, ex) -> {
                                     if (ex != null) {
                                         LOG.warn("Failed source-id owner backfill for promoted concept {} -> {} owner {}",
@@ -4109,8 +4312,36 @@ public class CalypsoApiManager {
             event.setReaction(reaction);
             event.setReactedAt(System.currentTimeMillis());
 
+            SilhouettePatch behaviorPatch = facecardBehaviorSilhouettePatch(targetAccountId, reaction);
+            String behaviorAnswer = facecardBehaviorSummary(targetAccountId, reaction);
+            String behaviorSourceId = encodeFacecardReactionAnswerId(targetAccountId);
             int refillTarget = 120;
             return publicPromptReactionDepot.appendAsync(event)
+                    .whenComplete((res, ex) -> {
+                        if (ex == null && behaviorPatch != null && !behaviorPatch.isEmpty()) {
+                            queueSilhouetteUpdateAsync(
+                                    viewerId,
+                                    "facecard_behavior",
+                                    behaviorSourceId,
+                                    "facecard",
+                                    "Facecard reaction",
+                                    behaviorAnswer,
+                                    List.of(),
+                                    "reaction=" + reaction.name().toLowerCase(Locale.ROOT) + " | target=" + targetAccountId,
+                                    behaviorPatch,
+                                    behaviorAnswer);
+                        }
+                    })
+                    .thenCompose(res -> {
+                        ServedPairs sp = new ServedPairs();
+                        sp.setAccountId(viewerId);
+                        sp.setTargetIds(List.of(targetAccountId));
+                        sp.setServedAt(System.currentTimeMillis());
+                        return matchesServeDepot.appendAsync(sp).exceptionally(ex -> {
+                            LOG.warn("Facecard reaction recorded but exposure write failed for viewer {}", viewerId, ex);
+                            return null;
+                        });
+                    })
                     .thenCompose(res -> requestRefill(viewerId, refillTarget)
                             .exceptionally(ex -> {
                                 LOG.warn("Facecard reaction recorded but refill failed for viewer {}", viewerId, ex);
@@ -4118,6 +4349,76 @@ public class CalypsoApiManager {
                             }))
                     .thenApply(ignored -> true);
         });
+    }
+
+    private static SilhouettePatch facecardBehaviorSilhouettePatch(long targetAccountId, PromptReaction reaction) {
+        SilhouettePatch patch = new SilhouettePatch();
+        if (reaction == null || targetAccountId < 0L) {
+            return patch;
+        }
+        String sourceId = encodeFacecardReactionAnswerId(targetAccountId);
+        long now = System.currentTimeMillis();
+        if (reaction == PromptReaction.LIKE) {
+            SilhouetteConcept concept = new SilhouetteConcept();
+            concept.label = "facecard spark response";
+            concept.id = "facecard_spark_response";
+            concept.role = "experimental";
+            concept.confidence = 0.45;
+            concept.strength = 0.62;
+            SilhouetteEvidence evidence = new SilhouetteEvidence();
+            evidence.source = "behavior";
+            evidence.target = "spark_triggers";
+            evidence.value = "liked facecard candidate " + targetAccountId;
+            evidence.strength = 0.70;
+            evidence.confidence = 0.55;
+            evidence.sourceWeight = 1.10;
+            evidence.sourceId = sourceId;
+            evidence.promptId = "facecard";
+            evidence.createdAt = now;
+            patch.ops.add(SilhouettePatch.Op.upsertConcept(
+                    "mode_behavioral_spark",
+                    "behavioral spark",
+                    "spark_triggers",
+                    concept,
+                    evidence));
+            return patch;
+        }
+        if (reaction == PromptReaction.DISLIKE) {
+            SilhouetteAntiPattern anti = new SilhouetteAntiPattern();
+            anti.label = "low facecard resonance";
+            anti.id = "low_facecard_resonance";
+            anti.scope = "relational";
+            anti.severity = "low";
+            anti.confidence = 0.38;
+            SilhouetteEvidence evidence = new SilhouetteEvidence();
+            evidence.source = "behavior";
+            evidence.target = "anti_patterns";
+            evidence.value = "disliked facecard candidate " + targetAccountId;
+            evidence.strength = 0.55;
+            evidence.confidence = 0.42;
+            evidence.sourceWeight = 1.10;
+            evidence.sourceId = sourceId;
+            evidence.promptId = "facecard";
+            evidence.createdAt = now;
+            patch.ops.add(SilhouettePatch.Op.upsertAntiPattern(
+                    "mode_behavioral_boundaries",
+                    "behavioral boundaries",
+                    anti,
+                    evidence));
+            return patch;
+        }
+        if (reaction == PromptReaction.SKIP) {
+            patch.ops.add(SilhouettePatch.Op.addOpenQuestion(
+                    "mode_behavioral_spark",
+                    "behavioral spark",
+                    "What separates a skipped facecard from one that creates actual spark for this user?"));
+        }
+        return patch;
+    }
+
+    private static String facecardBehaviorSummary(long targetAccountId, PromptReaction reaction) {
+        String label = reaction == null ? "reacted to" : reaction.name().toLowerCase(Locale.ROOT);
+        return label + " facecard candidate " + targetAccountId;
     }
 
     public CompletableFuture<PublicPromptSelection> getPublicPromptSelection(long accountId) {
@@ -4184,6 +4485,11 @@ public class CalypsoApiManager {
 
     private CompletableFuture<Boolean> persistSignals(long accountId, List<ExtractedSignal> signals, String source,
             String sourceId, String contextMaybe) {
+        return persistSignals(accountId, signals, source, sourceId, contextMaybe, null);
+    }
+
+    private CompletableFuture<Boolean> persistSignals(long accountId, List<ExtractedSignal> signals, String source,
+            String sourceId, String contextMaybe, String hierarchySourceId) {
         List<ExtractedSignal> sanitized = sanitizeSignals(signals);
         if (sanitized.isEmpty())
             return CompletableFuture.completedFuture(false);
@@ -4321,7 +4627,19 @@ public class CalypsoApiManager {
                                 }
                                 String effectiveSource = derivedExpansion ? SIGNAL_HIERARCHY_DERIVED_SOURCE
                                         : normalizedSource;
-                                String effectiveSourceId = derivedExpansion ? null : normalizedSourceId;
+                                String effectiveSourceId = derivedExpansion
+                                        ? (hierarchySourceId != null ? hierarchySourceId : null)
+                                        : normalizedSourceId;
+                                // Idempotency: if this derived/parent signal was already written
+                                // from the same hierarchy source (e.g. two child promotions from
+                                // the same answer), skip to avoid double-counting the parent.
+                                if (derivedExpansion
+                                        && effectiveSourceId != null
+                                        && record != null
+                                        && record.isSetSourceId()
+                                        && effectiveSourceId.equals(record.getSourceId())) {
+                                    continue;
+                                }
                                 boolean preserveExistingCoreAttribution = derivedExpansion
                                         && priorCount > 0
                                         && record.isSetSource()
@@ -4352,8 +4670,10 @@ public class CalypsoApiManager {
                                 if (priorCount > 0 && record.isSetValence()) {
                                     double previousValence = clampSigned(record.getValence());
                                     double blended = blendStoredValence(previousValence, scaledIncoming, priorCount);
-                                    record.setValence(blended);
+                                    record.setValence(applyValenceCountCeiling(blended, nextCount));
                                 } else {
+                                    // First observation: store the source-dampened value directly.
+                                    // The ceiling applies only on subsequent blends to govern growth rate.
                                     record.setValence(scaledIncoming);
                                 }
                                 String finalKey = recordKey(record);
@@ -4572,36 +4892,105 @@ public class CalypsoApiManager {
                             answer,
                             Set.of(),
                             rawSignals);
-                    observePromptDisambiguationCandidates(
-                            accountId,
-                            promptId,
-                            question,
-                            answer,
-                            normalizedConversation,
-                            signals,
-                            source,
-                            sourceId,
-                            finalContext);
-                    SilhouettePatch residualPatch = sanitizeSilhouettePatchForResidualSemantics(
-                            understanding.patch,
-                            signals,
-                            promptId);
-                    if (signals.isEmpty()) {
-                        return CompletableFuture.completedFuture(
-                                new PrivatePromptProcessingResult(
-                                        List.of(),
+                    CompletableFuture<List<ExtractedSignal>> finalSignalsFuture = shouldBackstopUnifiedSignals(promptId, signals)
+                            ? extractSignalsFromPrompt(promptId, question, answer, normalizedConversation)
+                                    .thenApply(backstop -> mergeExtractedSignals(signals, backstop))
+                            : CompletableFuture.completedFuture(signals);
+                    return finalSignalsFuture.thenCompose(finalSignals -> {
+                        observePromptDisambiguationCandidates(
+                                accountId,
+                                promptId,
+                                question,
+                                answer,
+                                normalizedConversation,
+                                finalSignals,
+                                source,
+                                sourceId,
+                                finalContext);
+                        SilhouettePatch residualPatch = sanitizeSilhouettePatchForResidualSemantics(
+                                understanding.patch,
+                                finalSignals,
+                                promptId);
+                        if (finalSignals.isEmpty()) {
+                            return CompletableFuture.completedFuture(
+                                    new PrivatePromptProcessingResult(
+                                            List.of(),
+                                            residualPatch,
+                                            true,
+                                            compactSilhouetteDelta(promptId, question, answer, normalizedConversation)));
+                        }
+                        List<String> extractedTokens = tokens(finalSignals);
+                        return persistSignals(accountId, finalSignals, source, sourceId, finalContext)
+                                .thenApply(ok -> new PrivatePromptProcessingResult(
+                                        extractedTokens,
                                         residualPatch,
                                         true,
                                         compactSilhouetteDelta(promptId, question, answer, normalizedConversation)));
-                    }
-                    List<String> extractedTokens = tokens(signals);
-                    return persistSignals(accountId, signals, source, sourceId, finalContext)
-                            .thenApply(ok -> new PrivatePromptProcessingResult(
-                                    extractedTokens,
-                                    residualPatch,
-                                    true,
-                                    compactSilhouetteDelta(promptId, question, answer, normalizedConversation)));
+                    });
                 });
+    }
+
+    private static boolean shouldBackstopUnifiedSignals(String promptId, List<ExtractedSignal> signals) {
+        if (signals == null || signals.isEmpty()) {
+            return true;
+        }
+        String normalizedPrompt = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
+        if (!SILHOUETTE_SIGNAL_FIRST_PROMPT_IDS.contains(normalizedPrompt)) {
+            return false;
+        }
+        for (ExtractedSignal signal : signals) {
+            if (signal == null || signal.token() == null || signal.token().isBlank()) {
+                continue;
+            }
+            String category = SignalConceptRegistry.categoryForConcept(signal.token());
+            if (SignalTaxonomy.isConcreteCategory(category)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static List<ExtractedSignal> mergeExtractedSignals(
+            List<ExtractedSignal> primary,
+            List<ExtractedSignal> backstop) {
+        LinkedHashMap<String, ExtractedSignal> out = new LinkedHashMap<>();
+        mergeExtractedSignalList(out, primary);
+        mergeExtractedSignalList(out, backstop);
+        return new ArrayList<>(out.values());
+    }
+
+    private static void mergeExtractedSignalList(
+            LinkedHashMap<String, ExtractedSignal> out,
+            List<ExtractedSignal> signals) {
+        if (out == null || signals == null || signals.isEmpty()) {
+            return;
+        }
+        for (ExtractedSignal signal : signals) {
+            if (signal == null || signal.token() == null || signal.token().isBlank()) {
+                continue;
+            }
+            String token = SignalNormalizer.normalizeOne(signal.token());
+            if (token == null || token.isBlank()) {
+                continue;
+            }
+            SignalIntent intent = signal.intent() == null ? SignalIntent.SELF : signal.intent();
+            String key = intent.name() + "|" + token;
+            ExtractedSignal normalized = ExtractedSignal.from(token, intent, signal.valence());
+            if (normalized == null) {
+                continue;
+            }
+            ExtractedSignal existing = out.get(key);
+            if (existing == null || signalMagnitude(normalized) > signalMagnitude(existing)) {
+                out.put(key, normalized);
+            }
+        }
+    }
+
+    private static double signalMagnitude(ExtractedSignal signal) {
+        if (signal == null || signal.valence() == null) {
+            return 0.0;
+        }
+        return Math.abs(signal.valence().doubleValue());
     }
 
     private static SilhouettePatch sanitizeSilhouettePatchForResidualSemantics(
@@ -4621,6 +5010,13 @@ public class CalypsoApiManager {
             if (isLowValueMetaObservationOp(op)) {
                 continue;
             }
+            if (isSilhouetteDislikePrompt(promptId) && isNonBoundaryConceptOp(op)) {
+                SilhouettePatch.Op anti = convertDislikeConceptToAntiPattern(op);
+                if (anti != null) {
+                    out.ops.add(anti);
+                }
+                continue;
+            }
             if (shouldSuppressSilhouetteOpAsConcreteEcho(op, concreteTokens)) {
                 continue;
             }
@@ -4629,6 +5025,71 @@ public class CalypsoApiManager {
             }
             out.ops.add(op);
         }
+        return out;
+    }
+
+    private static boolean isSilhouetteDislikePrompt(String promptId) {
+        if (promptId == null || promptId.isBlank()) {
+            return false;
+        }
+        String normalized = promptId.trim().toLowerCase(Locale.ROOT);
+        return "private.popular.dislike".equals(normalized)
+                || "private.not.my.person".equals(normalized);
+    }
+
+    private static boolean isNonBoundaryConceptOp(SilhouettePatch.Op op) {
+        if (op == null || op.op == null) {
+            return false;
+        }
+        if (!"upsert_concept".equals(op.op) && !"reinforce_concept".equals(op.op)) {
+            return false;
+        }
+        String target = SilhouetteEvidence.normalizeTarget(op.target);
+        return !"anti_patterns".equals(target) && !"tensions".equals(target);
+    }
+
+    private static SilhouettePatch.Op convertDislikeConceptToAntiPattern(SilhouettePatch.Op op) {
+        if (op == null) {
+            return null;
+        }
+        String evidenceValue = op.evidence == null ? null : asTrimmedString(op.evidence.value);
+        String conceptLabel = op.concept == null ? null : asTrimmedString(op.concept.label);
+        String label = evidenceValue != null ? evidenceValue : conceptLabel;
+        if (label == null || label.isBlank()) {
+            return null;
+        }
+        SilhouetteAntiPattern anti = new SilhouetteAntiPattern();
+        anti.label = label.length() > 120 ? label.substring(0, 120).trim() : label;
+        String normalizedLabel = SignalNormalizer.normalizeOne(anti.label);
+        anti.id = "anti_" + (normalizedLabel == null || normalizedLabel.isBlank() ? "boundary" : normalizedLabel);
+        anti.scope = "relational";
+        anti.severity = "low";
+        double confidence = 0.50;
+        if (op.concept != null) {
+            confidence = Math.max(confidence, Math.min(0.62, op.concept.confidence));
+        }
+        if (op.evidence != null) {
+            confidence = Math.max(confidence, Math.min(0.62, op.evidence.confidence));
+        }
+        anti.confidence = confidence;
+
+        SilhouetteEvidence evidence = op.evidence == null ? new SilhouetteEvidence() : new SilhouetteEvidence(op.evidence);
+        evidence.target = "anti_patterns";
+        if (evidence.value == null || evidence.value.isBlank()) {
+            evidence.value = anti.label;
+        }
+        if (evidence.confidence <= 0.0) {
+            evidence.confidence = confidence;
+        }
+        if (evidence.strength <= 0.0) {
+            evidence.strength = 0.55;
+        }
+
+        SilhouettePatch.Op out = SilhouettePatch.Op.upsertAntiPattern(
+                "mode_boundary_clarity",
+                "boundary clarity",
+                anti,
+                evidence);
         return out;
     }
 
@@ -4646,17 +5107,10 @@ public class CalypsoApiManager {
         if (op == null) {
             return false;
         }
-        String facet = SignalNormalizer.normalizeOne(op.key);
-        if ("partner_comps".equals(facet) || "narrative".equals(facet)) {
+        if ("add_evidence".equals(op.op)) {
             return false;
         }
-        String text = asTrimmedString(op.text);
-        if (text == null) {
-            text = asTrimmedString(op.summary);
-        }
-        if (text == null) {
-            text = asTrimmedString(op.label);
-        }
+        String text = silhouetteOpSurfaceText(op);
         if (text == null || text.isBlank()) {
             return true;
         }
@@ -4708,20 +5162,16 @@ public class CalypsoApiManager {
         if (op == null) {
             return false;
         }
-        String facet = SignalNormalizer.normalizeOne(op.key);
-        if ("partner_comps".equals(facet) || "narrative".equals(facet)) {
+        if ("add_evidence".equals(op.op)) {
+            return false;
+        }
+        if (op.evidence != null) {
             return false;
         }
         if (concreteTokens == null || concreteTokens.isEmpty()) {
             return false;
         }
-        String text = asTrimmedString(op.text);
-        if (text == null) {
-            text = asTrimmedString(op.summary);
-        }
-        if (text == null) {
-            text = asTrimmedString(op.label);
-        }
+        String text = silhouetteOpSurfaceText(op);
         if (text == null || text.isBlank()) {
             return false;
         }
@@ -4757,7 +5207,8 @@ public class CalypsoApiManager {
                 .replaceAll("\\s+", " ")
                 .trim();
 
-        if ("hard_boundaries".equals(facet)) {
+        String target = SilhouetteEvidence.normalizeTarget(op.target);
+        if ("anti_patterns".equals(target)) {
             return residual.length() <= 40;
         }
         return residual.length() <= 30;
@@ -4767,15 +5218,10 @@ public class CalypsoApiManager {
         if (op == null) {
             return false;
         }
-        String facet = SignalNormalizer.normalizeOne(op.key);
-        String kind = SignalNormalizer.normalizeOne(op.kind);
-        if (!"meta_observation".equals(facet) && !"meta_observation".equals(kind)) {
+        if (!"add_open_question".equals(op.op)) {
             return false;
         }
-        String text = asTrimmedString(op.text);
-        if (text == null) {
-            text = asTrimmedString(op.summary);
-        }
+        String text = asTrimmedString(op.openQuestion);
         if (text == null || text.isBlank()) {
             return true;
         }
@@ -4789,6 +5235,28 @@ public class CalypsoApiManager {
                 && (lowered.contains("lifestyle")
                         || lowered.contains("filters")
                         || lowered.contains("compatibility"));
+    }
+
+    private static String silhouetteOpSurfaceText(SilhouettePatch.Op op) {
+        if (op == null) {
+            return null;
+        }
+        if (op.concept != null && op.concept.label != null && !op.concept.label.isBlank()) {
+            return op.concept.label;
+        }
+        if (op.antiPattern != null && op.antiPattern.label != null && !op.antiPattern.label.isBlank()) {
+            return op.antiPattern.label;
+        }
+        if (op.tension != null && op.tension.a != null && op.tension.b != null) {
+            return op.tension.a + " " + op.tension.b;
+        }
+        if (op.label != null && !op.label.isBlank()) {
+            return op.label;
+        }
+        if (op.openQuestion != null && !op.openQuestion.isBlank()) {
+            return op.openQuestion;
+        }
+        return null;
     }
 
     private static String normalizePhraseText(String raw) {
@@ -4944,9 +5412,15 @@ public class CalypsoApiManager {
         if (normalizedSource == null || normalizedSource.isBlank()) {
             return null;
         }
-        // Public prompt reactions already carry calibrated valence via
-        // PUBLIC_REACTION_VALENCE_SCALE; do not dampen them again here.
+        // These sources carry pre-calibrated or already-observed valences; do not dampen.
         if (normalizedSource.contains("public_prompt_reaction")) {
+            return null;
+        }
+        // signal_concept_promotion replays observed drift-queue valences verbatim;
+        // the count-based ceiling (applyValenceCountCeiling) already constrains any
+        // first-hit replay to ≤ 0.20, so no additional source-level dampening is needed.
+        // The _owner_backfill variant also uses a pre-calibrated low fallback (0.30).
+        if (normalizedSource.contains("signal_concept_promotion")) {
             return null;
         }
         if (normalizedSource.contains("private_prompt")) {
@@ -4964,7 +5438,26 @@ public class CalypsoApiManager {
                     PUBLIC_PROMPT_FIRST_HIT_VALENCE_SCALE,
                     PUBLIC_PROMPT_REPEAT_VALENCE_SCALE);
         }
-        return null;
+        // All unrecognized sources (agent conversation, backfill, etc.) get conservative
+        // dampening so raw LLM valences don't land at full strength on first observation.
+        return new SourceValenceScaleProfile(
+                DEFAULT_SOURCE_FIRST_HIT_VALENCE_SCALE,
+                DEFAULT_SOURCE_REPEAT_VALENCE_SCALE);
+    }
+
+    /**
+     * Caps the magnitude of a stored valence based on how many observations have
+     * accumulated. ceiling(n) = n / (n + softness), so reaching 1.0 requires many
+     * strong observations rather than a single high-valence extraction.
+     */
+    private static double applyValenceCountCeiling(double valence, int count) {
+        if (count <= 0) {
+            return valence;
+        }
+        double ceiling = count / (count + VALENCE_COUNT_CEILING_SOFTNESS);
+        double sign = Math.signum(valence);
+        double magnitude = Math.abs(valence);
+        return sign * Math.min(magnitude, ceiling);
     }
 
     private static double blendStoredValence(double previousValence, double incomingValence, int priorCount) {
@@ -5387,9 +5880,50 @@ public class CalypsoApiManager {
         return out;
     }
 
-    private static String silhouetteDigest(Map<String, Object> silhouetteMap, int maxChars) {
+    private static List<String> sharedSignalTokens(Signals a, Signals b, int limit) {
+        if (a == null || b == null || !a.isSetRecords() || !b.isSetRecords()
+                || a.getRecords() == null || b.getRecords() == null) {
+            return List.of();
+        }
+        LinkedHashSet<String> left = new LinkedHashSet<>();
+        for (SignalRecord record : a.getRecords()) {
+            ParsedSignalToken parsed = parseSignalTokenAndValence(record);
+            if (parsed != null && parsed.token != null && !parsed.token.isBlank()) {
+                left.add(parsed.token);
+            }
+        }
+        if (left.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> shared = new LinkedHashSet<>();
+        for (SignalRecord record : b.getRecords()) {
+            ParsedSignalToken parsed = parseSignalTokenAndValence(record);
+            if (parsed == null || parsed.token == null || parsed.token.isBlank()) {
+                continue;
+            }
+            if (left.contains(parsed.token)) {
+                shared.add(parsed.token);
+            }
+            if (shared.size() >= limit) {
+                break;
+            }
+        }
+        return new ArrayList<>(shared);
+    }
+
+    private static String rankingGoalForMode(String mode) {
+        if ("exploratory".equalsIgnoreCase(mode)) {
+            return "discover";
+        }
+        if ("focused".equalsIgnoreCase(mode)) {
+            return "precision";
+        }
+        return "balance";
+    }
+
+    private static SilhouetteDigest silhouetteDigest(Map<String, Object> silhouetteMap) {
         SilhouetteState state = SilhouetteState.fromMap(silhouetteMap, mapLong(silhouetteMap, "accountId", 0L));
-        return state.digest(Math.max(240, maxChars));
+        return SilhouetteDigest.fromState(state);
     }
 
     private static String silhouetteMaturity(Map<String, Object> silhouetteMap) {
@@ -5416,6 +5950,10 @@ public class CalypsoApiManager {
         if (SILHOUETTE_WRITE_ENABLED) {
             triggerSilhouetteDrain(viewerId);
         }
+        CompletableFuture<Filters> viewerFiltersFuture = getFiltersFromAccountId
+                .invokeAsync(viewerId, viewerId)
+                .completeOnTimeout(null, 2, TimeUnit.SECONDS)
+                .exceptionally(ex -> null);
         CompletableFuture<Signals> viewerSignalsFuture = readSignalsSnapshot(viewerId, viewerId);
         CompletableFuture<Map<String, Object>> viewerSilhouetteFuture = readSilhouetteSnapshot(viewerId);
         HashMap<Long, CompletableFuture<Signals>> targetSignalFutures = new HashMap<>();
@@ -5433,12 +5971,14 @@ public class CalypsoApiManager {
         }
 
         ArrayList<CompletableFuture<?>> waits = new ArrayList<>();
+        waits.add(viewerFiltersFuture);
         waits.add(viewerSignalsFuture);
         waits.add(viewerSilhouetteFuture);
         waits.addAll(targetSignalFutures.values());
         waits.addAll(targetSilhouetteFutures.values());
         CompletableFuture<Void> all = CompletableFuture.allOf(waits.toArray(new CompletableFuture[0]));
         return all.thenApply(ignored -> {
+            Filters viewerFilters = viewerFiltersFuture.join();
             Signals viewerSignals = viewerSignalsFuture.join();
             Map<String, Object> viewerSilhouette = viewerSilhouetteFuture.join();
             HashMap<Long, Signals> targetSignalsById = new HashMap<>();
@@ -5458,13 +5998,12 @@ public class CalypsoApiManager {
 
             MatchReranker.RerankRequest request = new MatchReranker.RerankRequest();
             request.surface = surface;
+            request.rankingGoal = rankingGoalForMode(CalypsoHelpers.getModeSelfOrNull(viewerFilters));
             request.viewerSignals = toRerankSignals(viewerSignals, MATCH_RERANK_SIGNAL_LIMIT_VIEWER);
             if (SILHOUETTE_RERANK_ENABLED) {
-                request.viewerSilhouetteDigest = silhouetteDigest(viewerSilhouette, 420);
-                request.viewerSilhouetteMaturity = silhouetteMaturity(viewerSilhouette);
+                request.viewer = silhouetteDigest(viewerSilhouette);
             } else {
-                request.viewerSilhouetteDigest = "";
-                request.viewerSilhouetteMaturity = "empty";
+                request.viewer = new SilhouetteDigest();
             }
             for (GetMatch candidate : stage2) {
                 if (candidate == null || candidate.account == null || candidate.account.id == null
@@ -5476,16 +6015,16 @@ public class CalypsoApiManager {
                     continue;
                 }
                 MatchReranker.Candidate entry = new MatchReranker.Candidate();
-                entry.id = candidate.account.id;
+                entry.candidateId = candidate.account.id;
                 entry.stage2Normalized = clamp01(candidate.score / 100.0);
-                entry.signals = toRerankSignals(targetSignalsById.get(targetId), MATCH_RERANK_SIGNAL_LIMIT_CANDIDATE);
+                Signals targetSignals = targetSignalsById.get(targetId);
+                entry.signals = toRerankSignals(targetSignals, MATCH_RERANK_SIGNAL_LIMIT_CANDIDATE);
+                entry.sharedSignals = sharedSignalTokens(viewerSignals, targetSignals, 10);
                 if (SILHOUETTE_RERANK_ENABLED) {
                     Map<String, Object> candidateSilhouette = targetSilhouettesById.get(targetId);
-                    entry.silhouetteDigest = silhouetteDigest(candidateSilhouette, 280);
-                    entry.silhouetteMaturity = silhouetteMaturity(candidateSilhouette);
+                    entry.digest = silhouetteDigest(candidateSilhouette);
                 } else {
-                    entry.silhouetteDigest = "";
-                    entry.silhouetteMaturity = "empty";
+                    entry.digest = new SilhouetteDigest();
                 }
                 request.candidates.add(entry);
             }
@@ -5494,15 +6033,15 @@ public class CalypsoApiManager {
             }
 
             MatchReranker.RerankResult result = MatchReranker.rerank(openAI, request);
-            if (result == null || result.decisions == null || result.decisions.isEmpty()) {
+            if (result == null || result.rankedCandidates == null || result.rankedCandidates.isEmpty()) {
                 return limitedStage2;
             }
             HashMap<String, MatchReranker.Decision> decisionById = new HashMap<>();
-            for (MatchReranker.Decision decision : result.decisions) {
-                if (decision == null || decision.id == null || decision.id.isBlank()) {
+            for (MatchReranker.Decision decision : result.rankedCandidates) {
+                if (decision == null || decision.candidateId == null || decision.candidateId.isBlank()) {
                     continue;
                 }
-                decisionById.put(decision.id.trim(), decision);
+                decisionById.put(decision.candidateId.trim(), decision);
             }
             if (decisionById.isEmpty()) {
                 return limitedStage2;
@@ -5522,12 +6061,12 @@ public class CalypsoApiManager {
                 }
 
                 double compatibility = clamp01(
-                        decision.compatibility == null ? 0.5 : decision.compatibility.doubleValue());
+                        decision.finalScore == null ? 0.5 : decision.finalScore.doubleValue());
                 double confidence = clamp01(
                         decision.confidence == null ? 0.5 : decision.confidence.doubleValue());
                 double appliedWeight = MATCH_RERANK_MAX_WEIGHT * Math.max(MATCH_RERANK_CONFIDENCE_MIN, confidence);
                 double blendedNorm = clamp01((stage2Norm * (1.0 - appliedWeight)) + (compatibility * appliedWeight));
-                if (Boolean.TRUE.equals(decision.hardBlocker)) {
+                if ("deprioritize".equals(decision.recommendedUse)) {
                     blendedNorm = Math.min(blendedNorm, stage2Norm * MATCH_RERANK_BLOCKER_CAP);
                 }
                 blendedNorm = clamp01(blendedNorm);
@@ -5537,12 +6076,23 @@ public class CalypsoApiManager {
                 debug.put("tier2Score", candidate.score);
                 debug.put("tier2Normalized", stage2Norm);
                 debug.put("tier3Compatibility", compatibility);
+                debug.put("tier3Spark", decision.sparkScore == null ? 0.5 : clamp01(decision.sparkScore.doubleValue()));
+                debug.put("tier3Sustainability",
+                        decision.sustainabilityScore == null ? 0.5 : clamp01(decision.sustainabilityScore.doubleValue()));
+                debug.put("tier3LearningValue",
+                        decision.learningValueScore == null ? 0.5 : clamp01(decision.learningValueScore.doubleValue()));
                 debug.put("tier3Confidence", confidence);
                 debug.put("tier3AppliedWeight", appliedWeight);
-                debug.put("tier3HardBlocker", Boolean.TRUE.equals(decision.hardBlocker));
+                debug.put("tier3RecommendedUse", decision.recommendedUse);
                 debug.put("tier3Applied", true);
-                if (decision.reason != null && !decision.reason.isBlank()) {
-                    debug.put("tier3Reason", decision.reason.trim());
+                if (decision.fitSummaryInternal != null && !decision.fitSummaryInternal.isBlank()) {
+                    debug.put("tier3Reason", decision.fitSummaryInternal.trim());
+                }
+                if (decision.bestModePair != null) {
+                    HashMap<String, Object> bestModePair = new HashMap<>();
+                    bestModePair.put("viewerModeId", decision.bestModePair.viewerModeId);
+                    bestModePair.put("candidateModeId", decision.bestModePair.candidateModeId);
+                    debug.put("tier3BestModePair", bestModePair);
                 }
                 debug.put("scoreBeforeTier3", candidate.score);
                 debug.put("scoreAfterTier3", finalScore);
@@ -5895,7 +6445,6 @@ public class CalypsoApiManager {
                 });
         return loadRankedCandidates(requesterId, viewerId, fetchLimit, false)
                 .thenCompose(stage2 -> applyTier3Rerank(viewerId, stage2, clamped, "facecards"))
-                .thenCompose(reranked -> recordServedExposure(viewerId, reranked))
                 .completeOnTimeout(List.<GetMatch>of(), 8, TimeUnit.SECONDS)
                 .exceptionally(ex -> {
                     LOG.warn("Failed to load facecards for account {}", viewerId, ex);

@@ -26,8 +26,8 @@ public final class SignalExtractor {
     private static final int SPECIFICITY_ENRICH_MAX = 4;
     private static final int GLOBAL_SOFT_CAP = 200;
     private static final double FORCED_MENTION_VALENCE = 0.52;
-    private static final double EXPLICIT_ANSWER_FLOOR_YAP_HOURS = 0.68;
-    private static final double EXPLICIT_ANSWER_FLOOR_TALK_HOURS = 0.62;
+    private static final double EXPLICIT_ANSWER_FLOOR_YAP_HOURS = 0.65;
+    private static final double EXPLICIT_ANSWER_FLOOR_TALK_HOURS = 0.60;
     private static final double NEGATIVE_PREFERENCE_MIN_MAGNITUDE = 0.45;
 
     private SignalExtractor() {
@@ -57,7 +57,7 @@ public final class SignalExtractor {
                 break;
         }
 
-        return cleanupSpecificityConflicts(new ArrayList<>(acc.values()));
+        return applyBatchValenceNormalization(cleanupSpecificityConflicts(new ArrayList<>(acc.values())));
     }
 
     public static List<ExtractedSignal> extractFromAgentConversation(OpenAIClient openAI, List<String> conversation,
@@ -73,7 +73,7 @@ public final class SignalExtractor {
                 "agent_chat",
                 null);
         merge(acc, raw);
-        return cleanupSpecificityConflicts(filtered(acc.values(), normalizedAlreadyHave));
+        return applyBatchValenceNormalization(cleanupSpecificityConflicts(filtered(acc.values(), normalizedAlreadyHave)));
     }
 
     public static List<ExtractedSignal> extractFromPromptAnswer(OpenAIClient openAI, String question, String answer,
@@ -134,7 +134,7 @@ public final class SignalExtractor {
                 answer,
                 normalizedConversation,
                 enriched);
-        return applyPromptPostProcessing(promptId, question, answer, cleanupSpecificityConflicts(finalAdjusted));
+        return applyBatchValenceNormalization(applyPromptPostProcessing(promptId, question, answer, cleanupSpecificityConflicts(finalAdjusted)));
     }
 
     public static List<ExtractedSignal> augmentWithExplicitTitleMentions(
@@ -150,11 +150,16 @@ public final class SignalExtractor {
         }
         injectExplicitTitleMentions(promptId, question, answer, normalizedAlreadyHave, acc);
         injectExplicitCanonicalMentions(promptId, question, answer, normalizedAlreadyHave, acc);
+        List<ExtractedSignal> adjusted = applyPromptContextAdjustments(
+                question,
+                answer,
+                List.of(),
+                filtered(acc.values(), normalizedAlreadyHave));
         return applyPromptPostProcessing(
                 promptId,
                 question,
                 answer,
-                cleanupSpecificityConflicts(filtered(acc.values(), normalizedAlreadyHave)));
+                cleanupSpecificityConflicts(adjusted));
     }
 
     private static void injectExplicitTitleMentions(
@@ -201,13 +206,17 @@ public final class SignalExtractor {
             "private.hobbies",
             "private.communities.scene",
             "private.great.night",
-            "private.places.home");
+            "private.places.home",
+            "private.stuck.with",
+            "private.most.myself");
 
     private static final Set<String> CANONICAL_MENTION_INJECTION_PROMPTS = Set.of(
             "private.hobbies",
             "private.communities.scene",
             "private.great.night",
             "private.places.home",
+            "private.stuck.with",
+            "private.most.myself",
             "private.rabbit.hole",
             "private.popular.dislike",
             "private.not.my.person",
@@ -813,9 +822,14 @@ public final class SignalExtractor {
 
             String token = canonicalizePreferenceToken(sig.token());
             Double adjustedValence = forceNegativeValence(sig.valence());
-            ExtractedSignal normalized = ExtractedSignal.from(token, adjustedIntent, adjustedValence);
-            if (normalized != null) {
-                merge(adjusted, List.of(normalized));
+            ExtractedSignal seekingSig = ExtractedSignal.from(token, adjustedIntent, adjustedValence);
+            if (seekingSig != null) {
+                merge(adjusted, List.of(seekingSig));
+                // Mirror to SELF(-): "I don't want X in a partner" implies I also dislike X.
+                ExtractedSignal selfMirror = ExtractedSignal.from(token, SignalIntent.SELF, adjustedValence);
+                if (selfMirror != null) {
+                    merge(adjusted, List.of(selfMirror));
+                }
             }
         }
         if (adjusted.isEmpty())
@@ -893,6 +907,30 @@ public final class SignalExtractor {
                 "socialise",
                 "friend",
                 "friends");
+        boolean explicitBroadMusic = containsAny(context,
+                "all music",
+                "music in general",
+                "music overall",
+                "any music",
+                "most music");
+        boolean specificMusicDislike = containsAny(context,
+                "pop music",
+                "mainstream pop",
+                "country music",
+                "rap music",
+                "edm",
+                "kpop",
+                "jpop",
+                "taylor swift");
+        boolean explicitBroadTv = containsAny(context,
+                "all tv",
+                "tv in general",
+                "television in general",
+                "most tv");
+        boolean specificTvDislike = containsAny(context,
+                "reality tv",
+                "reality television",
+                "reality show");
         ArrayList<ExtractedSignal> out = new ArrayList<>();
         for (ExtractedSignal sig : signals) {
             if (sig == null || sig.token() == null) {
@@ -901,6 +939,12 @@ public final class SignalExtractor {
             String token = sig.token();
             if (!explicitBroadSocial
                     && ("socializing".equals(token) || "socializing_with_friends".equals(token))) {
+                continue;
+            }
+            if (!explicitBroadMusic && specificMusicDislike && "music".equals(token)) {
+                continue;
+            }
+            if (!explicitBroadTv && specificTvDislike && ("tv".equals(token) || "television".equals(token))) {
                 continue;
             }
             out.add(sig);
@@ -918,7 +962,12 @@ public final class SignalExtractor {
                 || text.contains("turn off")
                 || text.contains("turnoff")
                 || text.contains("don't like")
+                || text.contains("don't really like")
+                || text.contains("don't particularly like")
+                || text.contains("dont like")
+                || text.contains("dont really like")
                 || text.contains("do not like")
+                || text.contains("do not really like")
                 || text.contains("can't stand")
                 || text.contains("cannot stand")
                 || text.contains("avoid")
@@ -1083,6 +1132,33 @@ public final class SignalExtractor {
         } catch (NumberFormatException ex) {
             return null;
         }
+    }
+
+    private static List<ExtractedSignal> applyBatchValenceNormalization(List<ExtractedSignal> signals) {
+        if (signals == null || signals.isEmpty()) {
+            return signals;
+        }
+        double maxAbs = 0.0;
+        for (ExtractedSignal s : signals) {
+            if (s != null && s.valence() != null) {
+                maxAbs = Math.max(maxAbs, Math.abs(s.valence().doubleValue()));
+            }
+        }
+        if (maxAbs <= 0.65 || maxAbs <= 1.0e-9) {
+            return signals;
+        }
+        double scale = 0.65 / maxAbs;
+        ArrayList<ExtractedSignal> out = new ArrayList<>(signals.size());
+        for (ExtractedSignal s : signals) {
+            if (s == null || s.valence() == null) {
+                out.add(s);
+                continue;
+            }
+            double scaled = s.valence().doubleValue() * scale;
+            ExtractedSignal normalized = ExtractedSignal.from(s.token(), s.intent(), scaled);
+            out.add(normalized != null ? normalized : s);
+        }
+        return out;
     }
 
     private static Double clampSigned(Double value) {

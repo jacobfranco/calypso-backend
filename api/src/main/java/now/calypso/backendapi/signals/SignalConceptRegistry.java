@@ -67,11 +67,20 @@ public final class SignalConceptRegistry {
         public final String suggestedCanonical;
         public final Double suggestionScore;
         public final String suggestedCategory;
+        public final List<String> suggestedParents;
         public final boolean autoReady;
 
         public CandidateEntry(String rawToken, int seenCount, long firstSeen, long lastSeen, String lastSource,
                 List<String> exampleContexts, List<CandidateAccountIntentObservation> observedAccountIntents,
                 String suggestedCanonical, Double suggestionScore, String suggestedCategory, boolean autoReady) {
+            this(rawToken, seenCount, firstSeen, lastSeen, lastSource, exampleContexts, observedAccountIntents,
+                    suggestedCanonical, suggestionScore, suggestedCategory, List.of(), autoReady);
+        }
+
+        public CandidateEntry(String rawToken, int seenCount, long firstSeen, long lastSeen, String lastSource,
+                List<String> exampleContexts, List<CandidateAccountIntentObservation> observedAccountIntents,
+                String suggestedCanonical, Double suggestionScore, String suggestedCategory,
+                List<String> suggestedParents, boolean autoReady) {
             this.rawToken = rawToken;
             this.seenCount = seenCount;
             this.firstSeen = firstSeen;
@@ -82,6 +91,7 @@ public final class SignalConceptRegistry {
             this.suggestedCanonical = suggestedCanonical;
             this.suggestionScore = suggestionScore;
             this.suggestedCategory = suggestedCategory;
+            this.suggestedParents = suggestedParents == null ? List.of() : List.copyOf(suggestedParents);
             this.autoReady = autoReady;
         }
     }
@@ -98,11 +108,20 @@ public final class SignalConceptRegistry {
         public final String suggestedCanonical;
         public final Double suggestionScore;
         public final String suggestedCategory;
+        public final List<String> suggestedParents;
 
         public BlockedCandidateEntry(String rawToken, long blockedAt, int seenCount, long firstSeen, long lastSeen,
                 String lastSource, List<String> exampleContexts,
                 List<CandidateAccountIntentObservation> observedAccountIntents, String suggestedCanonical,
                 Double suggestionScore, String suggestedCategory) {
+            this(rawToken, blockedAt, seenCount, firstSeen, lastSeen, lastSource, exampleContexts,
+                    observedAccountIntents, suggestedCanonical, suggestionScore, suggestedCategory, List.of());
+        }
+
+        public BlockedCandidateEntry(String rawToken, long blockedAt, int seenCount, long firstSeen, long lastSeen,
+                String lastSource, List<String> exampleContexts,
+                List<CandidateAccountIntentObservation> observedAccountIntents, String suggestedCanonical,
+                Double suggestionScore, String suggestedCategory, List<String> suggestedParents) {
             this.rawToken = rawToken;
             this.blockedAt = blockedAt;
             this.seenCount = seenCount;
@@ -114,6 +133,7 @@ public final class SignalConceptRegistry {
             this.suggestedCanonical = suggestedCanonical;
             this.suggestionScore = suggestionScore;
             this.suggestedCategory = suggestedCategory;
+            this.suggestedParents = suggestedParents == null ? List.of() : List.copyOf(suggestedParents);
         }
     }
 
@@ -244,6 +264,7 @@ public final class SignalConceptRegistry {
                     suggestedCanonical,
                     suggestionScore,
                     suggestedCategory,
+                    suggestedParentConcepts(rawToken, suggestedCategory, exampleContexts),
                     autoReady);
         }
 
@@ -309,10 +330,11 @@ public final class SignalConceptRegistry {
                     candidate.lastSeen,
                     candidate.lastSource,
                     candidate.exampleContexts,
-                    candidate.observedAccountIntents,
-                    candidate.suggestedCanonical,
-                    candidate.suggestionScore,
-                    candidate.suggestedCategory);
+                candidate.observedAccountIntents,
+                candidate.suggestedCanonical,
+                candidate.suggestionScore,
+                candidate.suggestedCategory,
+                candidate.suggestedParents);
         }
     }
 
@@ -323,6 +345,7 @@ public final class SignalConceptRegistry {
     private static final Set<String> DYNAMIC_CANONICAL_CONCEPTS = ConcurrentHashMap.newKeySet();
     private static final ConcurrentHashMap<String, String> DYNAMIC_ALIAS_TO_CANONICAL = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, String> DYNAMIC_CATEGORY_BY_CONCEPT = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, ConcurrentHashMap<String, Double>> DYNAMIC_PARENTS_BY_CONCEPT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, CandidateStats> CANDIDATE_BY_RAW = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, BlockedCandidateStats> BLOCKED_CANDIDATE_BY_RAW = new ConcurrentHashMap<>();
     private static final AtomicLong REGISTRY_VERSION = new AtomicLong(1L);
@@ -400,6 +423,7 @@ public final class SignalConceptRegistry {
         addParent(seeds, "frieren_beyond_journeys_end", "anime", 0.86);
         addParent(seeds, "elden_ring", "soulslike", 0.86);
         addParent(seeds, "soulslike", "gaming", 0.78);
+        addParent(seeds, "video_games", "gaming", 0.82);
         addParent(seeds, "pc_gaming", "gaming", 0.72);
         addParent(seeds, "nintendo", "gaming", 0.68);
         addParent(seeds, "xbox", "gaming", 0.68);
@@ -567,6 +591,11 @@ public final class SignalConceptRegistry {
     }
 
     public static boolean promoteAlias(String rawToken, String canonicalToken, String category) {
+        return promoteAlias(rawToken, canonicalToken, category, List.of());
+    }
+
+    public static boolean promoteAlias(String rawToken, String canonicalToken, String category,
+            Collection<String> parentConcepts) {
         String raw = SignalNormalizer.normalizeOne(rawToken);
         String canonical = SignalNormalizer.normalizeOne(canonicalToken);
         if (raw == null || raw.isBlank() || canonical == null || canonical.isBlank()) {
@@ -576,9 +605,25 @@ public final class SignalConceptRegistry {
             DYNAMIC_CANONICAL_CONCEPTS.add(canonical);
         }
         DYNAMIC_ALIAS_TO_CANONICAL.put(raw, canonical);
-        if (category != null) {
-            setCanonicalCategory(canonical, category);
+        LinkedHashSet<String> parents = normalizeParentConcepts(parentConcepts);
+        String normalizedCategory = SignalTaxonomy.normalizeCategory(category);
+        String categoryAsParent = normalizedCategory == null ? SignalNormalizer.normalizeOne(category) : null;
+        if (categoryAsParent != null
+                && !categoryAsParent.isBlank()
+                && !categoryAsParent.equals(canonical)
+                && isCanonicalConcept(categoryAsParent)) {
+            parents.add(categoryAsParent);
+            normalizedCategory = SignalTaxonomy.normalizeCategory(categoryForConcept(categoryAsParent));
         }
+        if (normalizedCategory != null) {
+            setCanonicalCategory(canonical, normalizedCategory);
+        } else if (!parents.isEmpty()) {
+            String inferred = categoryForFirstParent(parents);
+            if (inferred != null) {
+                setCanonicalCategory(canonical, inferred);
+            }
+        }
+        setCanonicalParents(canonical, parents, 0.78);
         CANDIDATE_BY_RAW.remove(raw);
         BLOCKED_CANDIDATE_BY_RAW.remove(raw);
         REGISTRY_VERSION.incrementAndGet();
@@ -600,6 +645,35 @@ public final class SignalConceptRegistry {
         }
         REGISTRY_VERSION.incrementAndGet();
         return true;
+    }
+
+    public static boolean setCanonicalParents(String canonicalToken, Collection<String> parentConcepts, double weight) {
+        String canonical = SignalNormalizer.normalizeOne(canonicalToken);
+        if (canonical == null || canonical.isBlank() || !isCanonicalConcept(canonical)) {
+            return false;
+        }
+        LinkedHashSet<String> parents = normalizeParentConcepts(parentConcepts);
+        if (parents.isEmpty()) {
+            return false;
+        }
+        double boundedWeight = Double.isNaN(weight) || weight <= 0.0 ? 0.78 : Math.min(1.0, weight);
+        ConcurrentHashMap<String, Double> dynamicParents = DYNAMIC_PARENTS_BY_CONCEPT.computeIfAbsent(
+                canonical,
+                k -> new ConcurrentHashMap<>());
+        boolean changed = false;
+        for (String parent : parents) {
+            if (parent == null || parent.isBlank() || parent.equals(canonical) || !isCanonicalConcept(parent)) {
+                continue;
+            }
+            Double previous = dynamicParents.put(parent, boundedWeight);
+            if (!Objects.equals(previous, boundedWeight)) {
+                changed = true;
+            }
+        }
+        if (changed) {
+            REGISTRY_VERSION.incrementAndGet();
+        }
+        return changed;
     }
 
     public static boolean isCanonicalConcept(String token) {
@@ -777,7 +851,8 @@ public final class SignalConceptRegistry {
         for (ConceptSeed seed : BASE_CONCEPTS.values()) {
             List<String> aliases = new ArrayList<>(aliasesByCanonical.getOrDefault(seed.concept, new LinkedHashSet<>()));
             aliases.sort(String::compareTo);
-            out.put(seed.concept, new ConceptEntry(seed.concept, categoryForConcept(seed.concept), aliases, seed.parents));
+            out.put(seed.concept, new ConceptEntry(seed.concept, categoryForConcept(seed.concept), aliases,
+                    parentsFor(seed.concept)));
         }
 
         for (String dynamic : DYNAMIC_CANONICAL_CONCEPTS) {
@@ -786,7 +861,7 @@ public final class SignalConceptRegistry {
             }
             List<String> aliases = new ArrayList<>(aliasesByCanonical.getOrDefault(dynamic, new LinkedHashSet<>()));
             aliases.sort(String::compareTo);
-            out.put(dynamic, new ConceptEntry(dynamic, categoryForConcept(dynamic), aliases, Map.of()));
+            out.put(dynamic, new ConceptEntry(dynamic, categoryForConcept(dynamic), aliases, parentsFor(dynamic)));
         }
 
         ArrayList<ConceptEntry> sorted = new ArrayList<>(out.values());
@@ -931,11 +1006,116 @@ public final class SignalConceptRegistry {
         if (normalized == null || normalized.isBlank()) {
             return Map.of();
         }
+        LinkedHashMap<String, Double> out = new LinkedHashMap<>();
         ConceptSeed seed = BASE_CONCEPTS.get(normalized);
-        if (seed == null || seed.parents.isEmpty()) {
-            return Map.of();
+        if (seed != null && seed.parents != null && !seed.parents.isEmpty()) {
+            out.putAll(seed.parents);
         }
-        return Collections.unmodifiableMap(seed.parents);
+        Map<String, Double> dynamic = DYNAMIC_PARENTS_BY_CONCEPT.get(normalized);
+        if (dynamic != null && !dynamic.isEmpty()) {
+            for (Map.Entry<String, Double> entry : dynamic.entrySet()) {
+                if (entry == null || entry.getKey() == null || entry.getKey().isBlank()) {
+                    continue;
+                }
+                String parent = SignalNormalizer.normalizeOne(entry.getKey());
+                if (parent == null || parent.isBlank()) {
+                    continue;
+                }
+                double weight = entry.getValue() == null ? 0.0 : entry.getValue().doubleValue();
+                if (Double.isNaN(weight) || weight <= 0.0) {
+                    continue;
+                }
+                if (weight > 1.0) {
+                    weight = 1.0;
+                }
+                double existing = out.getOrDefault(parent, 0.0);
+                if (weight > existing) {
+                    out.put(parent, weight);
+                }
+            }
+        }
+        return out.isEmpty() ? Map.of() : Collections.unmodifiableMap(out);
+    }
+
+    private static LinkedHashSet<String> normalizeParentConcepts(Collection<String> rawParents) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (rawParents == null || rawParents.isEmpty()) {
+            return out;
+        }
+        for (String rawParent : rawParents) {
+            String parent = SignalNormalizer.normalizeOne(rawParent);
+            if (parent == null || parent.isBlank()) {
+                continue;
+            }
+            if (!isCanonicalConcept(parent)) {
+                continue;
+            }
+            out.add(parent);
+        }
+        return out;
+    }
+
+    private static String categoryForFirstParent(Collection<String> parents) {
+        if (parents == null || parents.isEmpty()) {
+            return null;
+        }
+        for (String parent : parents) {
+            String category = categoryForConcept(parent);
+            String normalized = SignalTaxonomy.normalizeCategory(category);
+            if (normalized != null) {
+                return normalized;
+            }
+        }
+        return null;
+    }
+
+    private static List<String> suggestedParentConcepts(String rawToken, String suggestedCategory,
+            Collection<String> contexts) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        String raw = SignalNormalizer.normalizeOne(rawToken);
+        StringBuilder context = new StringBuilder(raw == null ? "" : raw.replace('_', ' '));
+        if (contexts != null) {
+            for (String item : contexts) {
+                if (item != null && !item.isBlank()) {
+                    context.append(' ').append(item.toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+        String text = context.toString().toLowerCase(Locale.ROOT);
+        String category = SignalTaxonomy.normalizeCategory(suggestedCategory);
+        if (containsAny(text, "video game", "videogame", "gaming", "xbox", "playstation", "nintendo", "pc game")) {
+            out.add("video_games");
+        }
+        if (containsAny(text, "song", "album", "artist", "band", "singer", "music")) {
+            out.add("music");
+        }
+        if (containsAny(text, "book", "novel", "reading")) {
+            out.add("books");
+        }
+        if (containsAny(text, "anime")) {
+            out.add("anime");
+        }
+        if (containsAny(text, "manga")) {
+            out.add("manga");
+        }
+        if (SignalTaxonomy.MEDIA.equals(category)) {
+            if (out.isEmpty() && containsAny(text, "sci fi", "scifi", "science fiction")) {
+                out.add("sci_fi");
+            }
+        }
+        return new ArrayList<>(out);
+    }
+
+    private static boolean containsAny(String text, String... needles) {
+        if (text == null || text.isBlank() || needles == null) {
+            return false;
+        }
+        for (String needle : needles) {
+            if (needle != null && !needle.isBlank() && text.contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void addConcepts(Map<String, ConceptSeed> seeds, String... concepts) {
