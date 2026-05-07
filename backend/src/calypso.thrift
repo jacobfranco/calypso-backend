@@ -289,3 +289,11 @@ struct CursorAck {
   2: required i32       lastIndex;
   3: required bool      wrappedOnce;
 }
+
+struct DirectMessage {
+  1: required string    messageId;
+  2: required AccountId senderId;
+  3: required AccountId receiverId;
+  4: required string    text;
+  5: required Timestamp sentAt;
+}

@@ -40,6 +40,7 @@ public class CalypsoSerialization extends ThriftSerialization {
                 AgentMessage.class,
                 AgentSession.class,
                 TagPreference.class,
+                DirectMessage.class,
 
         };
         for (int i = 0; i < classes.length; i++)

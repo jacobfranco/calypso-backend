@@ -58,6 +58,12 @@ public class CalypsoHelpers {
         }
     }
 
+    public static class ExtractSenderId extends ExtractField {
+        public ExtractSenderId() {
+            super("senderId");
+        }
+    }
+
     public static class ExtractMapAccountId implements RamaFunction1<Map, Object> {
         @Override
         public Object invoke(Map obj) {

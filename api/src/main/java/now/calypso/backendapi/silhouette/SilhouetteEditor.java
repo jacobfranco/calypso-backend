@@ -157,6 +157,11 @@ public final class SilhouetteEditor {
         if ("private.popular.dislike".equals(normalizedPrompt) && answerLen < 64) {
             return true;
         }
+        // Short followup answers ("i like fashion", "yes", "not really") don't carry enough
+        // interpretive weight for an LLM silhouette update.
+        if (normalizedSource.contains("matchmaking_followup") && answerLen < 40) {
+            return true;
+        }
         // Identity-forward prompts carry high relational signal even in short answers;
         // always use the LLM path so the answer gets proper interpretive weight.
         boolean isIdentityForwardPrompt = "private.most.myself".equals(normalizedPrompt)
@@ -275,7 +280,7 @@ public final class SilhouetteEditor {
         if (normalizedSource != null && normalizedSource.contains("matchmaking_followup")) {
             return "relationship fit";
         }
-        return "emerging pattern";
+        return "interests";
     }
 
     private static double heuristicConfidenceForTarget(String target) {

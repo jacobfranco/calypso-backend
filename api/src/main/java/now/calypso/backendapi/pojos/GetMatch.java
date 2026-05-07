@@ -1,5 +1,6 @@
 package now.calypso.backendapi.pojos;
 
+import java.util.List;
 import java.util.Map;
 
 public class GetMatch {
@@ -7,6 +8,7 @@ public class GetMatch {
     public final double score;
     public final long computedAt;
     public final Map<String, Object> scorerDebug;
+    public List<String> sharedSignals;
 
     public GetMatch(GetAccount account, double score, long computedAt) {
         this(account, score, computedAt, null);

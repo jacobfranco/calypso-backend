@@ -78,6 +78,10 @@ public final class MatchReranker {
         TEST_OVERRIDE = null;
     }
 
+    public static boolean hasTestOverride() {
+        return TEST_OVERRIDE != null;
+    }
+
     public static RerankResult rerank(OpenAIClient client, RerankRequest request) {
         Function<RerankRequest, RerankResult> override = TEST_OVERRIDE;
         if (override != null) {

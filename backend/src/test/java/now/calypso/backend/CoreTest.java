@@ -886,4 +886,95 @@ public class CoreTest {
                         assertEquals("prefers pour over", storedRecord.getLastContext());
                 }
         }
+
+        @Test
+        public void facecardDeckRoundTripByAccountAndDay(TestInfo testInfo) throws Exception {
+                List<Class> serializations = Collections.singletonList(CalypsoSerialization.class);
+
+                try (InProcessCluster ipc = InProcessCluster.create(serializations)) {
+                        Core core = new Core();
+                        launchModuleDeterministic(ipc, core, testInfo);
+                        String moduleName = core.getClass().getName();
+
+                        Depot facecardDeckDepot = ipc.clusterDepot(moduleName, "*facecardDeckDepot");
+                        QueryTopologyClient<Map<String, Object>> getFacecardDeck = ipc.clusterQuery(moduleName,
+                                        "getFacecardDeck");
+
+                        Map<String, Object> card = new HashMap<>();
+                        card.put("targetId", 2L);
+                        card.put("score", 81.5);
+                        card.put("computedAt", 1234L);
+
+                        Map<String, Object> deck = new HashMap<>();
+                        deck.put("accountId", 1L);
+                        deck.put("dayKey", "2026-05-06");
+                        deck.put("status", "stage2");
+                        deck.put("fingerprint", "2");
+                        ArrayList<Map<String, Object>> cards = new ArrayList<>();
+                        cards.add(card);
+                        deck.put("cards", cards);
+                        deck.put("size", 1);
+                        deck.put("generatedAt", 1000L);
+
+                        append(ipc, facecardDeckDepot, deck);
+
+                        TestHelpers.attainConditionPred(
+                                        () -> getFacecardDeck.invoke(1L, 1L, "2026-05-06"),
+                                        stored -> stored != null && "stage2".equals(stored.get("status")));
+
+                        Map<String, Object> stored = getFacecardDeck.invoke(1L, 1L, "2026-05-06");
+                        assertEquals("2", stored.get("fingerprint"));
+                        assertEquals(1, stored.get("size"));
+                        assertTrue(stored.get("cards") instanceof List<?>);
+
+                        Map<String, Object> missing = getFacecardDeck.invoke(1L, 1L, "2026-05-07");
+                        assertNull(missing);
+                }
+        }
+
+        @Test
+        public void directMessagesRoundTripByConversation(TestInfo testInfo) throws Exception {
+                List<Class> serializations = Collections.singletonList(CalypsoSerialization.class);
+
+                try (InProcessCluster ipc = InProcessCluster.create(serializations)) {
+                        Core core = new Core();
+                        launchModuleDeterministic(ipc, core, testInfo);
+                        String moduleName = core.getClass().getName();
+
+                        Depot directMessageDepot = ipc.clusterDepot(moduleName, "*directMessageDepot");
+                        QueryTopologyClient<List<DirectMessage>> getDirectMessages = ipc.clusterQuery(moduleName,
+                                        "getDirectMessages");
+
+                        DirectMessage first = new DirectMessage()
+                                        .setMessageId("dm-1")
+                                        .setSenderId(1L)
+                                        .setReceiverId(2L)
+                                        .setText("hello")
+                                        .setSentAt(100L);
+                        DirectMessage second = new DirectMessage()
+                                        .setMessageId("dm-2")
+                                        .setSenderId(2L)
+                                        .setReceiverId(1L)
+                                        .setText("hey")
+                                        .setSentAt(200L);
+
+                        append(ipc, directMessageDepot, first);
+                        append(ipc, directMessageDepot, second);
+
+                        TestHelpers.attainConditionPred(
+                                        () -> getDirectMessages.invoke(1L, 1L, 2L),
+                                        messages -> messages != null && messages.size() == 2);
+
+                        List<DirectMessage> fromViewer = getDirectMessages.invoke(1L, 1L, 2L);
+                        assertEquals(2, fromViewer.size());
+                        assertEquals("dm-2", fromViewer.get(0).getMessageId(),
+                                        "Conversation should return newest message first.");
+                        assertEquals("dm-1", fromViewer.get(1).getMessageId());
+
+                        List<DirectMessage> fromTarget = getDirectMessages.invoke(2L, 2L, 1L);
+                        assertEquals(2, fromTarget.size());
+                        assertEquals("dm-2", fromTarget.get(0).getMessageId());
+                        assertEquals("dm-1", fromTarget.get(1).getMessageId());
+                }
+        }
 }

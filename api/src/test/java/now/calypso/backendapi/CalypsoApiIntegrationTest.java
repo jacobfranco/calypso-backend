@@ -39,6 +39,7 @@ import now.calypso.backend.data.ActivePrivatePrompt;
 import now.calypso.backend.data.AgentMessage;
 import now.calypso.backend.data.AgentMessageSender;
 import now.calypso.backend.data.AgentSession;
+import now.calypso.backend.data.DirectMessage;
 import now.calypso.backend.data.MatchCandidate;
 import now.calypso.backend.data.PrivatePromptAssignment;
 import now.calypso.backend.data.PrivatePromptStatus;
@@ -109,6 +110,35 @@ class CalypsoApiIntegrationTest {
             assertNotNull(coffee);
             assertEquals("prompt_like", coffee.getSource());
             assertEquals("prompt#ctx", coffee.getSourceId());
+        }
+    }
+
+    @Test
+    void directMessagesPersistAndFetchNewestFirst() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long senderId = createAccount(mgr, "DM Sender", "+1555000101");
+            long receiverId = createAccount(mgr, "DM Receiver", "+1555000102");
+
+            DirectMessage first = mgr.postDirectMessage(senderId, senderId, receiverId, "hello")
+                    .get(5, TimeUnit.SECONDS);
+            DirectMessage second = mgr.postDirectMessage(receiverId, receiverId, senderId, "hey")
+                    .get(5, TimeUnit.SECONDS);
+
+            assertNotNull(first.getMessageId());
+            assertNotEquals(first.getMessageId(), second.getMessageId());
+
+            List<DirectMessage> fromSender = mgr.fetchDirectMessages(senderId, senderId, receiverId, 50)
+                    .get(5, TimeUnit.SECONDS);
+            assertEquals(2, fromSender.size());
+            assertEquals(second.getMessageId(), fromSender.get(0).getMessageId());
+            assertEquals(first.getMessageId(), fromSender.get(1).getMessageId());
+
+            List<DirectMessage> fromReceiver = mgr.fetchDirectMessages(receiverId, receiverId, senderId, 50)
+                    .get(5, TimeUnit.SECONDS);
+            assertEquals(2, fromReceiver.size());
+            assertEquals(second.getMessageId(), fromReceiver.get(0).getMessageId());
+            assertEquals(first.getMessageId(), fromReceiver.get(1).getMessageId());
         }
     }
 
@@ -2279,6 +2309,52 @@ class CalypsoApiIntegrationTest {
     }
 
     @Test
+    void publicPromptReactionUpdatesPairSignalsAndRescoresHeap() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = createAccount(mgr, "Prompt Reactor", "+1555000962");
+            long targetId = createAccount(mgr, "Prompt Reacted", "+1555000963");
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetId).get(5, TimeUnit.SECONDS);
+
+            PublicPromptAnswer targetAnswer;
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"museum_walks","intent":"self","confidence":0.9}]}
+                    """);
+            try {
+                targetAnswer = mgr.postPublicPromptAnswer(
+                        targetId,
+                        "prompt.ideal.sunday",
+                        "Coffee, a long walk, and a museum stop.").get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            awaitFacecards(mgr, viewerId, 20, 20000);
+
+            PState heapP = ipc.clusterPState(Core.class.getName(), "$$accountIdToCandidateHeap");
+            PState pairReactionP = ipc.clusterPState(Core.class.getName(), "$$viewerIdToTargetIdToReactionScore");
+
+            waitFor(() -> candidateScoreFromHeap(heapP, viewerId, targetId) != null, 8000,
+                    "Target should be present in viewer heap before the public prompt reaction.");
+            Double beforeScore = candidateScoreFromHeap(heapP, viewerId, targetId);
+            assertNotNull(beforeScore);
+
+            mgr.postPublicPromptReaction(viewerId, targetAnswer.getAnswerId(), PromptReaction.DISLIKE)
+                    .get(5, TimeUnit.SECONDS);
+            waitFor(() -> {
+                Object raw = pairReactionP.selectOne(Path.key(viewerId, targetId));
+                return raw instanceof Number && ((Number) raw).doubleValue() <= -1.0;
+            }, 5000, "DISLIKE should apply negative public-prompt pair reaction score.");
+
+            waitFor(() -> {
+                Double updated = candidateScoreFromHeap(heapP, viewerId, targetId);
+                return updated == null || updated < beforeScore;
+            }, 8000, "Heap score should drop after public prompt dislike.");
+        }
+    }
+
+    @Test
     void facecardsTier3RerankCanPromoteLowerStage2Candidate() throws Exception {
         try (InProcessCluster ipc = newCluster()) {
             CalypsoApiManager mgr = newManager(ipc);
@@ -2290,7 +2366,9 @@ class CalypsoApiIntegrationTest {
             mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetA).get(5, TimeUnit.SECONDS);
             mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetB).get(5, TimeUnit.SECONDS);
 
+            AtomicInteger rerankCalls = new AtomicInteger();
             MatchReranker.setTestOverride(request -> {
+                rerankCalls.incrementAndGet();
                 MatchReranker.RerankResult result = new MatchReranker.RerankResult();
                 if (request == null || request.candidates == null || request.candidates.isEmpty()) {
                     return result;
@@ -2318,9 +2396,28 @@ class CalypsoApiIntegrationTest {
                 return result;
             });
 
-            List<?> reranked;
+            List<?> reranked = List.of();
             try {
-                reranked = awaitFacecards(mgr, viewerId, 20, 20000);
+                long deadline = System.currentTimeMillis() + 20000L;
+                while (System.currentTimeMillis() < deadline) {
+                    List<?> current = mgr.getFacecards(viewerId, viewerId, 20).get(20, TimeUnit.SECONDS);
+                    if (current != null && !current.isEmpty()) {
+                        reranked = current;
+                        boolean tier3Applied = false;
+                        for (Object raw : current) {
+                            if (raw instanceof GetMatch match
+                                    && match.scorerDebug != null
+                                    && Boolean.TRUE.equals(match.scorerDebug.get("tier3Applied"))) {
+                                tier3Applied = true;
+                                break;
+                            }
+                        }
+                        if (tier3Applied) {
+                            break;
+                        }
+                    }
+                    Thread.sleep(75);
+                }
             } finally {
                 MatchReranker.clearTestOverride();
             }
@@ -2347,6 +2444,7 @@ class CalypsoApiIntegrationTest {
             }
             assertTrue(appliedCount >= 1, "Expected tier3 rerank metadata on at least one facecard.");
             assertTrue(adjustedCount >= 1, "Expected tier3 rerank to change at least one facecard score.");
+            assertEquals(1, rerankCalls.get(), "Daily facecard deck should queue at most one rerank for the deck.");
         }
     }
 
@@ -2449,18 +2547,59 @@ class CalypsoApiIntegrationTest {
             }, 12000, "Target prompt-like evidence should be persisted.");
 
             String targetSerialized = now.calypso.backend.CalypsoHelpers.serializeAccountId(targetId);
-            waitFor(() -> {
-                List<GetMatch> matches = mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
-                if (matches == null || matches.isEmpty()) {
-                    return false;
+            String viewerSerialized = now.calypso.backend.CalypsoHelpers.serializeAccountId(viewerId);
+            AtomicInteger matchRerankCalls = new AtomicInteger();
+            MatchReranker.setTestOverride(request -> {
+                matchRerankCalls.incrementAndGet();
+                MatchReranker.RerankResult result = new MatchReranker.RerankResult();
+                if (request == null || request.candidates == null) {
+                    return result;
                 }
-                for (GetMatch match : matches) {
-                    if (match != null && match.account != null && targetSerialized.equals(match.account.id)) {
-                        return true;
+                for (MatchReranker.Candidate candidate : request.candidates) {
+                    if (candidate == null || candidate.candidateId == null) {
+                        continue;
                     }
+                    MatchReranker.Decision decision = new MatchReranker.Decision();
+                    decision.candidateId = candidate.candidateId;
+                    decision.finalScore = 0.0;
+                    decision.confidence = 1.0;
+                    decision.recommendedUse = "deprioritize";
+                    result.rankedCandidates.add(decision);
                 }
-                return false;
-            }, 35000, "Reciprocal prompt + facecard likes should produce a mutual match.");
+                return result;
+            });
+            try {
+                waitFor(() -> findMatch(mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS),
+                        targetSerialized) != null, 35000,
+                        "Reciprocal prompt + facecard likes should produce a mutual match.");
+                waitFor(() -> findMatch(mgr.getMatches(targetId, targetId, 20).get(8, TimeUnit.SECONDS),
+                        viewerSerialized) != null, 35000,
+                        "Reciprocal prompt + facecard likes should produce the reverse mutual match.");
+
+                List<GetMatch> viewerMatches = mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
+                List<GetMatch> targetMatches = mgr.getMatches(targetId, targetId, 20).get(8, TimeUnit.SECONDS);
+                GetMatch viewerMatch = findMatch(viewerMatches, targetSerialized);
+                GetMatch targetMatch = findMatch(targetMatches, viewerSerialized);
+                assertNotNull(viewerMatch);
+                assertNotNull(targetMatch);
+                assertEquals(0, matchRerankCalls.get(), "Matches must not invoke the LLM reranker.");
+                assertNotNull(viewerMatch.scorerDebug);
+                assertNotNull(targetMatch.scorerDebug);
+                assertEquals("deterministicMutualMin", viewerMatch.scorerDebug.get("matchScoreSource"));
+                assertEquals("deterministicMutualMin", targetMatch.scorerDebug.get("matchScoreSource"));
+                assertFalse(Boolean.TRUE.equals(viewerMatch.scorerDebug.get("tier3Applied")));
+                assertFalse(Boolean.TRUE.equals(targetMatch.scorerDebug.get("tier3Applied")));
+
+                Double viewerHeapScore = candidateScoreFromHeap(heapP, viewerId, targetId);
+                Double targetHeapScore = candidateScoreFromHeap(heapP, targetId, viewerId);
+                assertNotNull(viewerHeapScore);
+                assertNotNull(targetHeapScore);
+                double expectedMutualScore = Math.min(viewerHeapScore.doubleValue(), targetHeapScore.doubleValue());
+                assertEquals(expectedMutualScore, viewerMatch.score, 0.0001);
+                assertEquals(expectedMutualScore, targetMatch.score, 0.0001);
+            } finally {
+                MatchReranker.clearTestOverride();
+            }
         }
     }
 
@@ -2778,6 +2917,21 @@ class CalypsoApiIntegrationTest {
             MatchCandidate candidate = (MatchCandidate) entry;
             if (candidate.getTargetAccountId() == targetId) {
                 return candidate.getStage0Score();
+            }
+        }
+        return null;
+    }
+
+    private GetMatch findMatch(List<GetMatch> matches, String serializedAccountId) {
+        if (matches == null || serializedAccountId == null) {
+            return null;
+        }
+        for (GetMatch match : matches) {
+            if (match == null || match.account == null) {
+                continue;
+            }
+            if (Objects.equals(serializedAccountId, match.account.id)) {
+                return match;
             }
         }
         return null;

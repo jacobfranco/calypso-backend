@@ -285,10 +285,22 @@ public final class SignalExtractor {
         String normalized = promptId == null || promptId.isBlank() ? "" : promptId.trim().toLowerCase(Locale.ROOT);
         if ("private.drawn.to".equals(normalized)
                 || "private.not.my.person".equals(normalized)
-                || "private.popular.dislike".equals(normalized)
-                || "matchmaking.followup".equals(normalized)
-                || "private.matchmaking.followup".equals(normalized)) {
+                || "private.popular.dislike".equals(normalized)) {
             return SignalIntent.SEEKING;
+        }
+        if ("matchmaking.followup".equals(normalized) || "private.matchmaking.followup".equals(normalized)) {
+            // Questions about the user's own attributes → SELF; partner-directed → SEEKING; ambiguous → BOTH
+            String q = question == null ? "" : question.toLowerCase(Locale.ROOT);
+            boolean selfCue = containsAny(q,
+                    "to you", "for you", "do you", "are you", "you enjoy", "you like",
+                    "your style", "your taste", "yourself", "how important", "how much do you",
+                    "what's your", "what is your", "how do you");
+            boolean seekingCue = containsAny(q,
+                    "partner", "they would", "someone who", "your person", "in others",
+                    "you look for", "you want in", "attract you", "drawn to");
+            if (selfCue && !seekingCue) return SignalIntent.SELF;
+            if (seekingCue && !selfCue) return SignalIntent.SEEKING;
+            return SignalIntent.BOTH;
         }
         if ("private.fictional.characters".equals(normalized)) {
             String context = combinedLowerText(question, answer, List.of());

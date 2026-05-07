@@ -1184,4 +1184,59 @@ public class CalypsoApiController {
                 .map(GetMatches::new);
     }
 
+    @PostMapping(value = "/api/accounts/{id}/direct-messages/{targetId}", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<Map<String, Object>> postDirectMessage(
+            @PathVariable("id") String idStr,
+            @PathVariable("targetId") String targetIdStr,
+            @RequestBody Map<String, Object> body,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = (Long) session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+        long targetId = CalypsoHelpers.parseAccountId(targetIdStr);
+        String text = body == null ? null : (body.get("text") instanceof String ? (String) body.get("text") : null);
+        return Mono.fromFuture(manager.postDirectMessage(me, accountId, targetId, text))
+                .map(msg -> {
+                    Map<String, Object> out = new LinkedHashMap<>();
+                    out.put("messageId", msg.getMessageId());
+                    out.put("senderId", msg.getSenderId() + "-a");
+                    out.put("receiverId", msg.getReceiverId() + "-a");
+                    out.put("text", msg.getText());
+                    out.put("sentAt", msg.getSentAt());
+                    return out;
+                });
+    }
+
+    @GetMapping("/api/accounts/{id}/direct-messages/{targetId}")
+    public Mono<Map<String, Object>> getDirectMessages(
+            @PathVariable("id") String idStr,
+            @PathVariable("targetId") String targetIdStr,
+            @RequestParam(name = "limit", defaultValue = "50") int limit,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = (Long) session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+        long targetId = CalypsoHelpers.parseAccountId(targetIdStr);
+        return Mono.fromFuture(manager.fetchDirectMessages(me, accountId, targetId, limit))
+                .map(messages -> {
+                    List<Map<String, Object>> serialized = new ArrayList<>();
+                    for (DirectMessage msg : messages) {
+                        Map<String, Object> m = new LinkedHashMap<>();
+                        m.put("messageId", msg.getMessageId());
+                        m.put("senderId", msg.getSenderId() + "-a");
+                        m.put("receiverId", msg.getReceiverId() + "-a");
+                        m.put("text", msg.getText());
+                        m.put("sentAt", msg.getSentAt());
+                        serialized.add(m);
+                    }
+                    Map<String, Object> out = new LinkedHashMap<>();
+                    out.put("messages", serialized);
+                    return out;
+                });
+    }
+
 }
