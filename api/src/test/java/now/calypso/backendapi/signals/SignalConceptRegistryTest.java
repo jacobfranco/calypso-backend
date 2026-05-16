@@ -231,6 +231,33 @@ class SignalConceptRegistryTest {
     }
 
     @Test
+    void candidateSnapshot_suggestsVideoGamesParentFromOldComputerGamesContext() {
+        String raw = "nanosaur_parent_probe_" + System.nanoTime();
+        SignalConceptRegistry.observeUnresolved(raw, "test", "old computer games like Bugdom and Nanosaur");
+
+        SignalConceptRegistry.CandidateEntry candidate = SignalConceptRegistry.candidateSnapshot(500).stream()
+                .filter(entry -> entry != null && raw.equals(entry.rawToken))
+                .findFirst()
+                .orElseThrow();
+
+        assertTrue(candidate.suggestedParents.contains("video_games"));
+    }
+
+    @Test
+    void suggestedParentConceptsFor_identifiesSpecificFormativeMediaParents() {
+        assertTrue(SignalConceptRegistry.suggestedParentConceptsFor(
+                "yu_yu_hakusho",
+                "vintage anime like DBZ and Yu Yu Hakusho").contains("anime"));
+        assertTrue(SignalConceptRegistry.suggestedParentConceptsFor(
+                "nanosaur",
+                "old computer games like Bugdom and Nanosaur").contains("video_games"));
+        assertTrue(SignalConceptRegistry.suggestedParentConceptsFor(
+                "where_in_the_world_is_carmen_sandiego_treasures_of_knowledge",
+                "Where in the World Is Carmen Sandiego? Treasures of Knowledge was a childhood game")
+                .contains("video_games"));
+    }
+
+    @Test
     void expandedConceptWeights_propagatesFranchiseToGenreAndBooks() {
         var weights = SignalConceptRegistry.expandedConceptWeights("red_rising", 3);
         assertNotNull(weights);

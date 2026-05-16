@@ -4,7 +4,8 @@ import java.util.*;
 import java.util.regex.Pattern;
 
 public final class SignalNormalizer {
-    private static final Pattern VALID = Pattern.compile("^[a-z0-9_]{2,48}$");
+    private static final int MAX_TOKEN_CHARS = 96;
+    private static final Pattern VALID = Pattern.compile("^[a-z0-9_]{2," + MAX_TOKEN_CHARS + "}$");
     private static final Pattern SINGULAR_POSSESSIVE = Pattern.compile("([a-z0-9])['’]s\\b");
     private static final Pattern PLURAL_POSSESSIVE = Pattern.compile("([a-z0-9])s['’]\\b");
     private static final Pattern UNDERSCORE_POSSESSIVE_SEGMENT = Pattern.compile("(?<=[a-z0-9])_s(?=_[a-z0-9]|$)");
@@ -26,8 +27,8 @@ public final class SignalNormalizer {
         s = canonicalizeNegationPrefix(s);
         if (s.isEmpty() || STOP.contains(s))
             return null;
-        if (s.length() > 48)
-            s = s.substring(0, 48);
+        if (s.length() > MAX_TOKEN_CHARS)
+            s = s.substring(0, MAX_TOKEN_CHARS);
         if (!VALID.matcher(s).matches())
             return null;
         return s;

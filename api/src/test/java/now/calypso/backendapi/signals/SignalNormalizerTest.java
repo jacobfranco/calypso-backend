@@ -51,6 +51,13 @@ class SignalNormalizerTest {
     }
 
     @Test
+    void normalizeOne_preservesLongSpecificMediaTitleTokens() {
+        assertEquals(
+                "where_in_the_world_is_carmen_sandiego_treasures_of_knowledge",
+                SignalNormalizer.normalizeOne("where_in_the_world_is_carmen_sandiego_treasures_of_knowledge"));
+    }
+
+    @Test
     void normalizeOne_stripsIntentSuffixesOnly() {
         assertEquals("weeb", SignalNormalizer.normalizeOne("weebself"));
         assertEquals("anime", SignalNormalizer.normalizeOne("anime_seeking"));

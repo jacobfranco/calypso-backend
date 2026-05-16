@@ -33,8 +33,9 @@ public final class MatchReranker {
 
             You evaluate whether candidates should be ranked highly as potential matches.
 
-            You are given compressed silhouettes for a viewer and multiple candidates.
+            You are given silhouettes for a viewer and multiple candidates.
             Each silhouette contains one or more modes. A mode is a coherent relationship configuration: how the user may show up, what they are drawn to, what creates spark, what sustains connection, what aesthetics resonate, and what tends to repel them.
+            The `silhouette` text is the richest context. The structured digest is a backup index for mode ids and sections.
 
             Important principles:
             - Do not treat a user as one fixed personality.
@@ -146,7 +147,10 @@ public final class MatchReranker {
 
     private static String buildInput(RerankRequest request) {
         LinkedHashMap<String, Object> root = new LinkedHashMap<>();
-        root.put("viewer", request.viewer == null ? new SilhouetteDigest().toMap() : request.viewer.toMap());
+        LinkedHashMap<String, Object> viewer = new LinkedHashMap<>();
+        viewer.put("silhouette", nonBlank(request.viewerSilhouette, ""));
+        viewer.put("digest", request.viewer == null ? new SilhouetteDigest().toMap() : request.viewer.toMap());
+        root.put("viewer", viewer);
         ArrayList<Object> candidates = new ArrayList<>();
         if (request.candidates != null) {
             for (Candidate candidate : request.candidates) {
@@ -155,6 +159,7 @@ public final class MatchReranker {
                 }
                 LinkedHashMap<String, Object> item = new LinkedHashMap<>();
                 item.put("candidateId", candidate.candidateId.trim());
+                item.put("silhouette", nonBlank(candidate.silhouette, ""));
                 item.put("digest", candidate.digest == null ? new SilhouetteDigest().toMap() : candidate.digest.toMap());
                 item.put("stage2Normalized", clamp01(candidate.stage2Normalized));
                 item.put("signals", signalMaps(candidate.signals));
@@ -369,6 +374,7 @@ public final class MatchReranker {
     public static final class RerankRequest {
         public String surface;
         public String rankingGoal;
+        public String viewerSilhouette;
         public SilhouetteDigest viewer;
         public List<Signal> viewerSignals = new ArrayList<>();
         public List<Candidate> candidates = new ArrayList<>();
@@ -376,6 +382,7 @@ public final class MatchReranker {
 
     public static final class Candidate {
         public String candidateId;
+        public String silhouette;
         public Double stage2Normalized;
         public SilhouetteDigest digest;
         public List<Signal> signals = new ArrayList<>();

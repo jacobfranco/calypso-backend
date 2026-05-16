@@ -140,13 +140,13 @@ public final class SilhouettePatch {
             out.modeId = SilhouetteModelUtils.normalizeKey(
                     SilhouetteModelUtils.first(map, "modeId", "mode_id"));
             out.target = SilhouetteEvidence.normalizeTarget(SilhouetteModelUtils.text(map.get("target"), 64));
-            out.label = SilhouetteModelUtils.text(map.get("label"), 96);
+            out.label = SilhouetteModelUtils.text(map.get("label"), 140);
             out.status = SilhouetteMode.normalizeStatus(SilhouetteModelUtils.text(map.get("status"), 32));
             out.weight = optional01(map.get("weight"));
             out.confidence = optional01(map.get("confidence"));
             out.strength = optional01(map.get("strength"));
             out.openQuestion = SilhouetteModelUtils.text(
-                    SilhouetteModelUtils.first(map, "openQuestion", "open_question", "question"), 180);
+                    SilhouetteModelUtils.first(map, "openQuestion", "open_question", "question"), 260);
 
             Map<String, Object> modeMap = SilhouetteModelUtils.objectMap(map.get("mode"));
             out.mode = SilhouetteMode.fromMap(modeMap);
@@ -180,7 +180,7 @@ public final class SilhouettePatch {
                 out.put("target", SilhouetteEvidence.normalizeTarget(target));
             }
             if (label != null && !label.isBlank()) {
-                out.put("label", SilhouetteModelUtils.text(label, 96));
+                out.put("label", SilhouetteModelUtils.text(label, 140));
             }
             if (status != null && !status.isBlank()) {
                 out.put("status", SilhouetteMode.normalizeStatus(status));
@@ -210,7 +210,7 @@ public final class SilhouettePatch {
                 out.put("evidence", evidence.toMap());
             }
             if (openQuestion != null && !openQuestion.isBlank()) {
-                out.put("openQuestion", SilhouetteModelUtils.text(openQuestion, 180));
+                out.put("openQuestion", SilhouetteModelUtils.text(openQuestion, 260));
             }
             return out;
         }

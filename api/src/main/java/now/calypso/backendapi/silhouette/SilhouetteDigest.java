@@ -68,14 +68,14 @@ public class SilhouetteDigest {
             }
         }
         out.put("topModes", modes);
-        out.put("openQuestions", SilhouetteModelUtils.stringList(openQuestions, 5, 180));
+        out.put("openQuestions", SilhouetteModelUtils.stringList(openQuestions, 5, 260));
         return out;
     }
 
     private static SilhouetteModeDigest modeDigest(SilhouetteMode mode) {
         SilhouetteModeDigest out = new SilhouetteModeDigest();
         out.id = mode.id;
-        out.label = mode.label;
+        out.label = SilhouetteMode.canonicalLabel(mode.label);
         out.status = SilhouetteMode.normalizeStatus(mode.status);
         out.weight = SilhouetteModelUtils.clamp01(mode.weight);
         out.confidence = SilhouetteModelUtils.clamp01(mode.confidence);
@@ -84,6 +84,7 @@ public class SilhouetteDigest {
         out.sparkTriggers = conceptLabels(mode.sparkTriggers);
         out.sustainabilityNeeds = conceptLabels(mode.sustainabilityNeeds);
         out.aestheticField = conceptLabels(mode.aestheticField);
+        out.realWorldComps = conceptLabels(mode.realWorldComps);
         out.antiPatterns = antiPatternLabels(mode.antiPatterns);
         out.tensions = tensionLabels(mode.tensions);
         out.evidenceSummary = evidenceSummaries(mode.evidence);
@@ -114,8 +115,8 @@ public class SilhouetteDigest {
         });
         ArrayList<String> out = new ArrayList<>();
         for (SilhouetteConcept concept : ranked) {
-            out.add(SilhouetteModelUtils.text(concept.label, 120));
-            if (out.size() >= 8) {
+            out.add(SilhouetteModelUtils.text(concept.label, 160));
+            if (out.size() >= 10) {
                 break;
             }
         }
@@ -135,8 +136,8 @@ public class SilhouetteDigest {
                 SilhouetteModelUtils.clamp01(a.confidence)));
         ArrayList<String> out = new ArrayList<>();
         for (SilhouetteAntiPattern anti : ranked) {
-            out.add(SilhouetteModelUtils.text(anti.label, 120));
-            if (out.size() >= 5) {
+            out.add(SilhouetteModelUtils.text(anti.label, 160));
+            if (out.size() >= 6) {
                 break;
             }
         }
@@ -178,20 +179,22 @@ public class SilhouetteDigest {
             }
         }
         ranked.sort((a, b) -> {
-            int byCreated = Long.compare(b.createdAt, a.createdAt);
-            if (byCreated != 0) {
-                return byCreated;
+            double aScore = a.strength * a.confidence * a.sourceWeight;
+            double bScore = b.strength * b.confidence * b.sourceWeight;
+            int byScore = Double.compare(bScore, aScore);
+            if (byScore != 0) {
+                return byScore;
             }
-            return Double.compare(b.strength * b.confidence * b.sourceWeight, a.strength * a.confidence * a.sourceWeight);
+            return Long.compare(b.createdAt, a.createdAt);
         });
         ArrayList<String> out = new ArrayList<>();
         for (SilhouetteEvidence item : ranked) {
             String source = SilhouetteEvidence.normalizeSource(item.source);
-            String value = SilhouetteModelUtils.text(item.value, 120);
+            String value = SilhouetteModelUtils.text(item.value, 180);
             if (!value.isBlank()) {
                 out.add(source + ": " + value);
             }
-            if (out.size() >= 5) {
+            if (out.size() >= 10) {
                 break;
             }
         }
@@ -206,7 +209,7 @@ public class SilhouetteDigest {
                     continue;
                 }
                 for (String question : mode.openQuestions) {
-                    String text = SilhouetteModelUtils.text(question, 180);
+                    String text = SilhouetteModelUtils.text(question, 260);
                     if (!text.isBlank() && !containsIgnoreCase(out, text)) {
                         out.add(text);
                     }

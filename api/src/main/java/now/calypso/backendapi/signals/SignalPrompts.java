@@ -15,7 +15,7 @@ public final class SignalPrompts {
             HARD CONSTRAINTS:
             - Return at most %d signals.
             - Every signal MUST include: token, intent ("self" | "seeking" | "both" | "meta"), valence (-1..1).
-            - token must be lowercase snake_case, 2-48 chars, reusable, and concept-stable.
+            - token must be lowercase snake_case, 2-96 chars, reusable, and concept-stable.
             - token must be a neutral concept label (no sentiment words in token text).
             - Never output tokens listed in already_have (exact string match).
             - Prefer fewer high-signal concepts over many weak/redundant ones.
@@ -33,6 +33,14 @@ public final class SignalPrompts {
             - seeking: what the speaker wants/avoids in a partner.
             - both: only when explicit mirroring cue exists (also/too/both/same/we both).
             - meta: rare evaluative worldview framing that is not a direct preference.
+            - Use meta for high-meaning resonance features that should not behave like repeated hobbies:
+              nostalgia/aesthetic/attraction archetypes, emotional media imprints, fictional-character attraction patterns,
+              and visual/style fields. Do not use meta for routine broad hobbies, media formats, genres, or ordinary likes.
+              Preserve the concrete title as self/both/seeking when explicit, and add at most 1-2 meta resonance tokens
+              only when the answer gives emotional or aesthetic framing.
+            - Meta tokens should be specific typed labels, not generic axes. Prefer shapes like
+              nostalgia_whimsical_ps2, aesthetic_frutiger_aero, attraction_archetype_playful_competence, or
+              emotional_media_melancholy_adventure. Never output bare nostalgia, aesthetic, attraction, or media as meta.
 
             VALENCE RULES:
             - positive valence => affinity/attraction/alignment.
@@ -74,12 +82,27 @@ public final class SignalPrompts {
             Rules:
             - Return at most %d signals.
             - Use prompt_question and conversation_context for interpretation.
+            - Do not extract example options from prompt_question unless prompt_answer explicitly chooses or mentions them.
             - Extract stable self traits and seeking preferences.
             - Never output tokens listed in already_have.
             - There is NO downstream semantic canonicalizer: output final, reusable concept tags directly.
             - Keep canonical concept labels and dedupe synonyms.
             - Prefer canonical noun forms (travel, career, cooking) over phrasing variants (traveling, career_development, homemade_meals).
             - For named media/franchises, preserve the official title in snake_case (keep lexical letters; e.g. jojos_bizarre_adventure, red_rising).
+            - If the user gives a subtitle, edition, or specific installment, preserve it in the token when it changes
+              the reference (e.g., where_in_the_world_is_carmen_sandiego_treasures_of_knowledge, not only
+              where_in_the_world_is_carmen_sandiego).
+            - If a named title, childhood reference, aesthetic, or fictional-character comparison carries emotional,
+              nostalgic, visual, or attraction meaning, emit the concrete title/reference and at most 1-2 intent="meta"
+              resonance tokens for the broader pattern. Example shape: exact title as self plus a compact meta token
+              for the aesthetic/nostalgia/archetype cluster.
+            - For formative/nostalgia answers, do not turn childhood role fantasies ("wanted to be a spy/secret agent")
+              into literal durable signals unless the answer says this is a current adult identity or active interest.
+            - For formative/nostalgia answers that only list references, emit exact references only. Do not output generic
+              wrappers like nostalgia_formative_games, nostalgic_formative_games, formative_games, or childhood_media.
+            - Do not use intent="meta" for ordinary broad hobbies, formats, genres, or likes. Meta is only for specific
+              resonance patterns, using typed labels such as nostalgia_whimsical_ps2, aesthetic_frutiger_aero,
+              attraction_archetype_playful_competence, or emotional_media_melancholy_adventure.
             - For concrete media formats explicitly named in the answer, emit reusable format concepts (e.g., reality_tv).
             - Prefer atomic head concepts over phrasing wrappers (e.g., cooking over cooking_homemade_meals; sports over sports_fandom; gaming over casual_gaming).
             - When language is person-descriptor form ("fans of X", "people into X", "X types", "people who watch X"), extract X itself as the token, not the person-group form (taylor_swift not taylor_swift_fans; gym not gym_goers; church not church_attendees; reality_tv not reality_tv_viewers).

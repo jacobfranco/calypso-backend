@@ -704,6 +704,14 @@ public final class SignalConceptRegistry {
         return SignalTaxonomy.categoryForToken(canonical);
     }
 
+    public static List<String> suggestedParentConceptsFor(String rawToken, String contextMaybe) {
+        String category = categoryForConcept(rawToken);
+        List<String> contexts = contextMaybe == null || contextMaybe.isBlank()
+                ? List.of()
+                : List.of(contextMaybe);
+        return suggestedParentConcepts(rawToken, category, contexts);
+    }
+
     public static Set<String> canonicalConceptsSnapshot() {
         LinkedHashSet<String> out = new LinkedHashSet<>(BASE_CONCEPTS.keySet());
         out.addAll(DYNAMIC_CANONICAL_CONCEPTS);
@@ -1083,7 +1091,10 @@ public final class SignalConceptRegistry {
         }
         String text = context.toString().toLowerCase(Locale.ROOT);
         String category = SignalTaxonomy.normalizeCategory(suggestedCategory);
-        if (containsAny(text, "video game", "videogame", "gaming", "xbox", "playstation", "nintendo", "pc game")) {
+        if (containsAny(text, "video game", "videogame", "computer game", "old computer games",
+                "gaming", "xbox", "playstation", "nintendo", "pc game")
+                || containsAny(text, "okami", "katamari", "bugdom", "nanosaur", "carmen sandiego",
+                        "treasures of knowledge")) {
             out.add("video_games");
         }
         if (containsAny(text, "song", "album", "artist", "band", "singer", "music")) {
@@ -1092,7 +1103,8 @@ public final class SignalConceptRegistry {
         if (containsAny(text, "book", "novel", "reading")) {
             out.add("books");
         }
-        if (containsAny(text, "anime")) {
+        if (containsAny(text, "anime", "dbz", "dragon ball", "dragonball", "yu yu hakusho", "yu-yu hakusho",
+                "yuyu hakusho", "hakusho")) {
             out.add("anime");
         }
         if (containsAny(text, "manga")) {

@@ -7,17 +7,70 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 public final class SilhouetteModeMerger {
-    public static final int MAX_MODES = 5;
-    public static final int MAX_CONCEPTS_PER_SECTION = 8;
+    public static final int MAX_MODES = 7;
+    public static final int MAX_CONCEPTS_PER_SECTION = 10;
     public static final int MAX_ANTI_PATTERNS_PER_MODE = 6;
     public static final int MAX_TENSIONS_PER_MODE = 4;
-    public static final int MAX_EVIDENCE_PER_MODE = 12;
+    public static final int MAX_EVIDENCE_PER_MODE = 18;
     public static final int MAX_OPEN_QUESTIONS_PER_MODE = 5;
 
-    private static final int RERANKER_SUMMARY_MAX_CHARS = 1600;
-    private static final int ADMIN_SUMMARY_MAX_CHARS = 2400;
+    private static final int SILHOUETTE_SUMMARY_MAX_CHARS = 4200;
+    private static final Set<String> LOW_VALUE_FORMATIVE_CONCEPT_WORDS = Set.of(
+            "nostalgia",
+            "nostalgic",
+            "formative",
+            "imprint",
+            "imprints",
+            "emotional",
+            "media",
+            "game",
+            "games",
+            "book",
+            "books",
+            "toy",
+            "toys",
+            "website",
+            "websites",
+            "place",
+            "places",
+            "show",
+            "shows",
+            "movie",
+            "movies",
+            "thing",
+            "things",
+            "childhood",
+            "growing",
+            "up",
+            "self",
+            "expression",
+            "interest",
+            "interests",
+            "affinity",
+            "and",
+            "or",
+            "of",
+            "from",
+            "via",
+            "with",
+            "toward",
+            "towards",
+            "worldview",
+            "worldviews",
+            "shaping",
+            "shaped",
+            "influence",
+            "influences",
+            "influenced",
+            "emerging",
+            "resonance",
+            "resonant",
+            "pattern",
+            "patterns",
+            "mode");
 
     private SilhouetteModeMerger() {
     }
@@ -78,10 +131,11 @@ public final class SilhouetteModeMerger {
             boolean modeHasSeeking = hasConcepts(mode.seekingExpression);
             boolean modeHasSpark = hasConcepts(mode.sparkTriggers);
             boolean modeHasSustainability = hasConcepts(mode.sustainabilityNeeds);
+            boolean modeHasComps = hasConcepts(mode.realWorldComps);
             boolean modeHasAnti = mode.antiPatterns != null && !mode.antiPatterns.isEmpty();
             hasSelf |= modeHasSelf;
             hasSeeking |= modeHasSeeking;
-            hasSpark |= modeHasSpark;
+            hasSpark |= modeHasSpark || modeHasComps;
             hasSustainability |= modeHasSustainability;
             hasAntiPattern |= modeHasAnti;
             int coverage = coverageCount(mode);
@@ -114,8 +168,7 @@ public final class SilhouetteModeMerger {
         SilhouetteSummaryCache cache = out.summaryCache == null
                 ? new SilhouetteSummaryCache()
                 : new SilhouetteSummaryCache(out.summaryCache);
-        cache.rerankerShort = buildRerankerSummary(out);
-        cache.adminLong = buildAdminSummary(out);
+        cache.silhouette = buildSilhouetteSummary(out);
         cache.generatedFromVersion = Math.max(1, out.version);
         cache.updatedAt = out.updatedAt > 0L ? out.updatedAt : System.currentTimeMillis();
         out.summaryCache = cache;
@@ -134,6 +187,16 @@ public final class SilhouetteModeMerger {
         if (out == null || op == null || op.op == null || op.op.isBlank()) {
             return;
         }
+        if (shouldDropFormativeSilhouetteOp(promptId, op)) {
+            return;
+        }
+        repairFormativeConceptOp(promptId, op);
+        if (isLowValueFormativeConceptOp(promptId, op)) {
+            addEvidenceFromSuppressedFormativeConcept(out, op, sourceWeight, source, sourceId, promptId, eventId,
+                    evidenceExcerpt, now);
+            return;
+        }
+        repairLowValueFormativeModeLabel(promptId, op);
         switch (op.op) {
             case "upsert_mode" -> upsertMode(out, op, now);
             case "reinforce_mode" -> reinforceMode(out, op, now);
@@ -150,6 +213,174 @@ public final class SilhouetteModeMerger {
             case "add_open_question" -> addOpenQuestion(out, op, now);
             default -> {
             }
+        }
+    }
+
+    private static void repairFormativeConceptOp(String promptId, SilhouettePatch.Op op) {
+        String normalizedPrompt = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
+        if (!"private.formative.imprints".equals(normalizedPrompt)
+                || op == null
+                || op.concept == null
+                || op.concept.label == null) {
+            return;
+        }
+        String label = op.concept.label.toLowerCase(Locale.ROOT);
+        String evidence = op.evidence == null || op.evidence.value == null
+                ? ""
+                : op.evidence.value.toLowerCase(Locale.ROOT);
+        String surface = label + " " + evidence;
+        if (surface.contains("karate kid")
+                || surface.contains("jaden smith")
+                || surface.contains("female lead")
+                || surface.contains("childhood crush")
+                || (surface.contains("crush") && surface.contains("adult attraction"))) {
+            op.target = "real_world_comps";
+            op.concept.label = "Wenwen Han / Meiying";
+            op.concept.id = SilhouetteModelUtils.normalizeId(null, "concept", op.concept.label);
+            op.concept.role = "context";
+            if (op.evidence != null) {
+                op.evidence.target = "real_world_comps";
+                String value = op.evidence.value == null ? "" : op.evidence.value;
+                String normalizedValue = value.toLowerCase(Locale.ROOT);
+                if (normalizedValue.contains("childhood crush")
+                        || normalizedValue.contains("adult attraction type")
+                        || normalizedValue.contains("female lead crush")) {
+                    op.evidence.value = "The Karate Kid (2010)'s Meiying / Wenwen Han is a non-exclusive physical-type reference point";
+                }
+            }
+        }
+    }
+
+    private static boolean shouldDropFormativeSilhouetteOp(String promptId, SilhouettePatch.Op op) {
+        String normalizedPrompt = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
+        if (!"private.formative.imprints".equals(normalizedPrompt) || op == null) {
+            return false;
+        }
+        String label = op.concept == null || op.concept.label == null ? "" : op.concept.label.toLowerCase(Locale.ROOT);
+        String evidence = op.evidence == null || op.evidence.value == null
+                ? ""
+                : op.evidence.value.toLowerCase(Locale.ROOT);
+        if (!evidence.contains("lady gaga")) {
+            return false;
+        }
+        if (evidence.contains("physical")
+                || evidence.contains("type")
+                || evidence.contains("crush")
+                || evidence.contains("attraction")
+                || evidence.contains("meiying")
+                || evidence.contains("wenwen")) {
+            return false;
+        }
+        return evidence.contains("karate kid")
+                || evidence.contains("music")
+                || evidence.contains("song")
+                || evidence.contains("era")
+                || label.contains("lady gaga");
+    }
+
+    private static boolean isLowValueFormativeConceptOp(String promptId, SilhouettePatch.Op op) {
+        String normalizedPrompt = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
+        if (!"private.formative.imprints".equals(normalizedPrompt) || op == null || op.op == null) {
+            return false;
+        }
+        if (!"upsert_concept".equals(op.op) && !"reinforce_concept".equals(op.op)) {
+            return false;
+        }
+        String label = op.concept == null ? null : SilhouetteModelUtils.text(op.concept.label, 160);
+        if (label == null || label.isBlank()) {
+            label = SilhouetteModelUtils.text(op.label, 160);
+        }
+        return isLowValueFormativeLabel(label);
+    }
+
+    private static void addEvidenceFromSuppressedFormativeConcept(
+            SilhouetteState out,
+            SilhouettePatch.Op op,
+            double sourceWeight,
+            String source,
+            String sourceId,
+            String promptId,
+            String eventId,
+            String evidenceExcerpt,
+            long now) {
+        if (out == null || op == null) {
+            return;
+        }
+        SilhouettePatch.Op evidenceOp = new SilhouettePatch.Op();
+        evidenceOp.op = "add_evidence";
+        evidenceOp.modeId = op.modeId;
+        evidenceOp.label = op.label;
+        evidenceOp.target = op.target;
+        evidenceOp.mode = op.mode;
+        evidenceOp.evidence = op.evidence == null ? null : new SilhouetteEvidence(op.evidence);
+        repairLowValueFormativeModeLabel(promptId, evidenceOp);
+        addEvidenceOnly(out, evidenceOp, sourceWeight, source, sourceId, promptId, eventId, evidenceExcerpt, now);
+    }
+
+    private static boolean isLowValueFormativeLabel(String label) {
+        if (label == null || label.isBlank()) {
+            return true;
+        }
+        String normalized = label.toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9 ]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (normalized.isBlank()) {
+            return true;
+        }
+        if (isKnownLossyFormativeLabel(normalized)) {
+            return true;
+        }
+        int meaningfulWords = 0;
+        for (String word : normalized.split("\\s+")) {
+            if (word == null || word.isBlank()) {
+                continue;
+            }
+            if (!LOW_VALUE_FORMATIVE_CONCEPT_WORDS.contains(word)) {
+                meaningfulWords += 1;
+            }
+        }
+        return meaningfulWords == 0;
+    }
+
+    private static boolean isKnownLossyFormativeLabel(String normalized) {
+        if (normalized == null || normalized.isBlank()) {
+            return true;
+        }
+        if (normalized.contains("nostalgic formative media and worldview shaping")
+                || normalized.contains("formative media and aesthetic imprint")
+                || normalized.contains("asian aesthetic influence from formative games")) {
+            return true;
+        }
+        boolean promptEcho = normalized.matches(".*\\b(formative|media|games?)\\b.*")
+                && normalized.matches(".*\\b(worldview|shaping|influence|imprint|nostalgia|nostalgic)\\b.*");
+        boolean hasSpecificImprintCue = normalized.matches(".*\\b(travel|ordinary|secret|agent|spy|surreal|playful|eastern|japanese|early|internet|game-world|worldly)\\b.*");
+        if (promptEcho && !hasSpecificImprintCue) {
+            return true;
+        }
+        return normalized.matches(".*\\binfluence\\b.*\\bfrom\\b.*\\bformative\\b.*\\bgames?\\b.*");
+    }
+
+    private static void repairLowValueFormativeModeLabel(String promptId, SilhouettePatch.Op op) {
+        String normalizedPrompt = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
+        if (!"private.formative.imprints".equals(normalizedPrompt) || op == null) {
+            return;
+        }
+        String label = SilhouetteModelUtils.text(op.label, 160);
+        if ((label == null || label.isBlank()) && op.mode != null) {
+            label = SilhouetteModelUtils.text(op.mode.label, 160);
+        }
+        if (!isLowValueFormativeLabel(label)) {
+            return;
+        }
+        op.label = "formative media imprints";
+        if (op.mode != null) {
+            op.mode.label = op.label;
+        }
+        if (op.modeId == null
+                || op.modeId.isBlank()
+                || isLowValueFormativeLabel(op.modeId.replace('_', ' '))) {
+            op.modeId = "mode_formative_media_imprints";
         }
     }
 
@@ -255,6 +486,7 @@ public final class SilhouetteModeMerger {
         removeConcept(mode.selfExpression, conceptId);
         removeConcept(mode.seekingExpression, conceptId);
         removeConcept(mode.sparkTriggers, conceptId);
+        removeConcept(mode.realWorldComps, conceptId);
         removeConcept(mode.sustainabilityNeeds, conceptId);
         removeConcept(mode.aestheticField, conceptId);
         mode.updatedAt = now;
@@ -337,6 +569,15 @@ public final class SilhouetteModeMerger {
         if (evidence == null) {
             return;
         }
+        if ("private.formative.imprints".equals(promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT))
+                && isLowValueFormativeLabel(op.label)) {
+            if (op.modeId == null
+                    || op.modeId.isBlank()
+                    || isLowValueFormativeLabel(op.modeId.replace('_', ' '))) {
+                op.modeId = "mode_formative_media_imprints";
+            }
+            op.label = "formative media imprints";
+        }
         SilhouetteMode mode = modeFor(out, op, evidence.target, null, true, now);
         if (mode == null) {
             return;
@@ -347,7 +588,7 @@ public final class SilhouetteModeMerger {
     }
 
     private static void addOpenQuestion(SilhouetteState out, SilhouettePatch.Op op, long now) {
-        String question = SilhouetteModelUtils.text(op.openQuestion, 180);
+        String question = SilhouetteModelUtils.text(op.openQuestion, 260);
         if (question.isBlank()) {
             return;
         }
@@ -509,10 +750,10 @@ public final class SilhouetteModeMerger {
         evidence.target = SilhouetteEvidence.normalizeTarget(
                 target == null || target.isBlank() ? evidence.target : target);
         if (evidence.value == null || evidence.value.isBlank()) {
-            evidence.value = SilhouetteModelUtils.text(fallbackValue, 180);
+            evidence.value = SilhouetteModelUtils.text(fallbackValue, 320);
         }
         if (evidence.value == null || evidence.value.isBlank()) {
-            evidence.value = SilhouetteModelUtils.text(evidenceExcerpt, 180);
+            evidence.value = SilhouetteModelUtils.text(evidenceExcerpt, 320);
         }
         if (evidence.value == null || evidence.value.isBlank()) {
             return null;
@@ -548,11 +789,34 @@ public final class SilhouetteModeMerger {
         if ("private.fictional.characters".equals(prompt)) {
             return "fictional_comp";
         }
-        if ("private.visual.aesthetic".equals(prompt) || "private.color.presence".equals(prompt)) {
+        if ("private.formative.imprints".equals(prompt) || "private.media.revisit".equals(prompt)) {
+            return "formative_imprint";
+        }
+        if ("private.visual.aesthetic".equals(prompt) || "private.color.presence".equals(prompt)
+                || "private.inner.weather".equals(prompt)) {
             return "visual_aesthetic";
+        }
+        if ("private.gravitational.pull".equals(prompt) || "private.drawn.to".equals(prompt)) {
+            return "attraction_pattern";
         }
         if ("private.music.feels.like".equals(prompt)) {
             return "music";
+        }
+        if ("private.communities.scene".equals(prompt) || "private.great.night".equals(prompt)) {
+            return "social_scene";
+        }
+        if ("private.places.home".equals(prompt) || "private.home.texture".equals(prompt)
+                || "private.most.myself".equals(prompt)) {
+            return "home_atmosphere";
+        }
+        if ("private.makes.you.laugh".equals(prompt) || "private.humor.language".equals(prompt)) {
+            return "humor_play";
+        }
+        if ("private.repair.rhythm".equals(prompt) || "private.stuck.with".equals(prompt)) {
+            return "sustainability_pattern";
+        }
+        if ("private.popular.dislike".equals(prompt) || "private.not.my.person".equals(prompt)) {
+            return "boundary_pattern";
         }
         String source = eventSource == null ? "" : eventSource.trim().toLowerCase(Locale.ROOT);
         if (source.contains("facecard") || source.contains("behavior")) {
@@ -689,7 +953,7 @@ public final class SilhouetteModeMerger {
                 continue;
             }
             mode.id = SilhouetteModelUtils.normalizeId(mode.id, "mode", mode.label);
-            mode.label = SilhouetteModelUtils.text(mode.label, 96);
+            mode.label = SilhouetteModelUtils.text(mode.label, 140);
             mode.status = SilhouetteMode.normalizeStatus(mode.status);
             mode.updatedAt = mode.updatedAt > 0L ? mode.updatedAt : now;
             mode.createdAt = mode.createdAt > 0L ? mode.createdAt : mode.updatedAt;
@@ -697,6 +961,7 @@ public final class SilhouetteModeMerger {
             mode.selfExpression = capConcepts(mode.selfExpression);
             mode.seekingExpression = capConcepts(mode.seekingExpression);
             mode.sparkTriggers = capConcepts(mode.sparkTriggers);
+            mode.realWorldComps = capConcepts(mode.realWorldComps);
             mode.sustainabilityNeeds = capConcepts(mode.sustainabilityNeeds);
             mode.aestheticField = capConcepts(mode.aestheticField);
             mode.antiPatterns = capAntiPatterns(mode.antiPatterns);
@@ -886,21 +1151,7 @@ public final class SilhouetteModeMerger {
         return SilhouetteModelUtils.stringList(raw, MAX_OPEN_QUESTIONS_PER_MODE, 180);
     }
 
-    private static String buildRerankerSummary(SilhouetteState out) {
-        SilhouetteDigest digest = SilhouetteDigest.fromState(out);
-        StringBuilder buf = new StringBuilder();
-        if (digest.topModes != null) {
-            for (SilhouetteModeDigest mode : digest.topModes) {
-                if (mode == null) {
-                    continue;
-                }
-                appendModeDigestSummary(buf, mode, false);
-            }
-        }
-        return SilhouetteModelUtils.text(buf.toString(), RERANKER_SUMMARY_MAX_CHARS);
-    }
-
-    private static String buildAdminSummary(SilhouetteState out) {
+    private static String buildSilhouetteSummary(SilhouetteState out) {
         SilhouetteDigest digest = SilhouetteDigest.fromState(out);
         StringBuilder buf = new StringBuilder();
         buf.append("maturity=").append(out == null ? "empty" : SilhouetteState.normalizeMaturity(out.maturity));
@@ -909,33 +1160,60 @@ public final class SilhouetteModeMerger {
                 if (mode == null) {
                     continue;
                 }
+                if (!hasSilhouetteContent(mode)) {
+                    continue;
+                }
                 buf.append('\n');
-                appendModeDigestSummary(buf, mode, true);
+                appendModeDigestSummary(buf, mode);
             }
         }
-        return SilhouetteModelUtils.text(buf.toString(), ADMIN_SUMMARY_MAX_CHARS);
+        return SilhouetteModelUtils.text(buf.toString(), SILHOUETTE_SUMMARY_MAX_CHARS);
     }
 
-    private static void appendModeDigestSummary(StringBuilder buf, SilhouetteModeDigest mode, boolean includeScores) {
+    private static void appendModeDigestSummary(StringBuilder buf, SilhouetteModeDigest mode) {
         if (buf == null || mode == null) {
             return;
         }
         if (buf.length() > 0 && !buf.toString().endsWith("\n")) {
             buf.append(" | ");
         }
-        buf.append(mode.label == null || mode.label.isBlank() ? mode.id : mode.label);
-        if (includeScores) {
-            buf.append("@")
-                    .append(String.format(Locale.ROOT, "%.2f", SilhouetteModelUtils.clamp01(mode.weight)))
-                    .append("/")
-                    .append(String.format(Locale.ROOT, "%.2f", SilhouetteModelUtils.clamp01(mode.confidence)));
-        }
+        buf.append("mode: ").append(mode.label == null || mode.label.isBlank() ? mode.id : mode.label)
+                .append(" [").append(SilhouetteMode.normalizeStatus(mode.status)).append("]")
+                .append(" weight=")
+                .append(String.format(Locale.ROOT, "%.2f", SilhouetteModelUtils.clamp01(mode.weight)))
+                .append(" confidence=")
+                .append(String.format(Locale.ROOT, "%.2f", SilhouetteModelUtils.clamp01(mode.confidence)));
         appendListSummary(buf, "self", mode.self);
         appendListSummary(buf, "seeking", mode.seeking);
         appendListSummary(buf, "spark", mode.sparkTriggers);
+        appendListSummary(buf, "comps", mode.realWorldComps);
         appendListSummary(buf, "sustain", mode.sustainabilityNeeds);
         appendListSummary(buf, "aesthetic", mode.aestheticField);
         appendListSummary(buf, "anti", mode.antiPatterns);
+    }
+
+    private static boolean hasSilhouetteContent(SilhouetteModeDigest mode) {
+        return mode != null
+                && (hasValues(mode.self)
+                        || hasValues(mode.seeking)
+                        || hasValues(mode.sparkTriggers)
+                        || hasValues(mode.realWorldComps)
+                        || hasValues(mode.sustainabilityNeeds)
+                        || hasValues(mode.aestheticField)
+                        || hasValues(mode.antiPatterns)
+                        || hasValues(mode.evidenceSummary));
+    }
+
+    private static boolean hasValues(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return false;
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void appendListSummary(StringBuilder buf, String label, List<String> values) {
@@ -944,11 +1222,11 @@ public final class SilhouetteModeMerger {
         }
         ArrayList<String> kept = new ArrayList<>();
         for (String value : values) {
-            String text = SilhouetteModelUtils.text(value, 70);
+            String text = SilhouetteModelUtils.text(value, 110);
             if (!text.isBlank()) {
                 kept.add(text);
             }
-            if (kept.size() >= 3) {
+            if (kept.size() >= 5) {
                 break;
             }
         }
@@ -1017,6 +1295,7 @@ public final class SilhouetteModeMerger {
         return containsConcept(mode.selfExpression, conceptId)
                 || containsConcept(mode.seekingExpression, conceptId)
                 || containsConcept(mode.sparkTriggers, conceptId)
+                || containsConcept(mode.realWorldComps, conceptId)
                 || containsConcept(mode.sustainabilityNeeds, conceptId)
                 || containsConcept(mode.aestheticField, conceptId);
     }
@@ -1055,6 +1334,7 @@ public final class SilhouetteModeMerger {
             case "spark_triggers" -> "spark pattern";
             case "sustainability_needs" -> "connection pattern";
             case "aesthetic_field" -> "aesthetic pattern";
+            case "real_world_comps" -> "real-world comps";
             default -> "emerging mode";
         };
     }
@@ -1139,6 +1419,9 @@ public final class SilhouetteModeMerger {
             count++;
         }
         if (hasConcepts(mode.sparkTriggers)) {
+            count++;
+        }
+        if (hasConcepts(mode.realWorldComps)) {
             count++;
         }
         if (hasConcepts(mode.sustainabilityNeeds)) {
@@ -1239,6 +1522,7 @@ public final class SilhouetteModeMerger {
         addAll(out, mode.selfExpression);
         addAll(out, mode.seekingExpression);
         addAll(out, mode.sparkTriggers);
+        addAll(out, mode.realWorldComps);
         addAll(out, mode.sustainabilityNeeds);
         addAll(out, mode.aestheticField);
         return out;

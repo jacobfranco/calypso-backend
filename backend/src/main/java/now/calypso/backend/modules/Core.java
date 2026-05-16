@@ -34,6 +34,8 @@ public class Core implements RamaModule {
       private static final double FACECARD_PAIR_DELTA_DISLIKE = -14.0;
       private static final double FACECARD_PAIR_DELTA_SKIP = -1.0;
       private static final double SIGNAL_PRESENT_EPSILON = 1.0e-6;
+      private static final double RESONANCE_POSITIVE_MAX_DELTA = 0.10;
+      private static final double RESONANCE_NEGATIVE_MAX_DELTA = 0.05;
 
       // ---------------------------
       // Low-level helpers
@@ -312,6 +314,98 @@ public class Core implements RamaModule {
             return clamp01(0.5 + (0.5 * linear));
       }
 
+      private static double resonanceSourceScale(SignalRecord record) {
+            if (record == null || !record.isSetSource() || record.getSource() == null) {
+                  return 1.0;
+            }
+            String source = record.getSource().trim().toLowerCase(Locale.ROOT);
+            if (source.isBlank()) {
+                  return 1.0;
+            }
+            if (source.contains("public_prompt_reaction")) {
+                  return 0.75;
+            }
+            if (source.contains("signal_hierarchy")) {
+                  return 0.65;
+            }
+            if (source.contains("private_prompt") || source.contains("agent") || source.contains("freeform")) {
+                  return 1.0;
+            }
+            return 0.90;
+      }
+
+      private static Map<String, Double> toResonanceWeights(Signals signals) {
+            LinkedHashMap<String, Double> out = new LinkedHashMap<>();
+            if (signals == null || !signals.isSetRecords() || signals.getRecords() == null) {
+                  return out;
+            }
+            for (SignalRecord record : signals.getRecords()) {
+                  if (record == null) {
+                        continue;
+                  }
+                  SignalIntent intent = record.isSetIntent() ? record.getIntent() : null;
+                  if (intent != SignalIntent.META) {
+                        continue;
+                  }
+                  ParsedSignalToken parsed = parseTokenAndValence(record);
+                  if (parsed == null || parsed.token == null || parsed.token.isBlank()) {
+                        continue;
+                  }
+                  double valence = clampSigned(parsed.valence);
+                  double absValence = Math.abs(valence);
+                  if (absValence <= SIGNAL_PRESENT_EPSILON) {
+                        continue;
+                  }
+                  int count = record.isSetCount() ? Math.max(1, record.getCount()) : 1;
+                  double countScale = Math.min(1.25, 0.85 + (Math.log1p(count) / 4.0));
+                  double signedWeight = Math.signum(valence)
+                              * Math.max(0.35, absValence)
+                              * countScale
+                              * resonanceSourceScale(record);
+                  if (Math.abs(signedWeight) <= SIGNAL_PRESENT_EPSILON) {
+                        continue;
+                  }
+                  accumulateSignalWeight(out, parsed.token, signedWeight);
+            }
+            return out;
+      }
+
+      private static ResonanceScore resonanceScore(Map<String, Double> a, Map<String, Double> b) {
+            if (a == null || b == null || a.isEmpty() || b.isEmpty()) {
+                  return new ResonanceScore(0.0, 0);
+            }
+            double totalA = 0.0;
+            double totalB = 0.0;
+            for (Double value : a.values()) {
+                  totalA += value == null ? 0.0 : Math.abs(value.doubleValue());
+            }
+            for (Double value : b.values()) {
+                  totalB += value == null ? 0.0 : Math.abs(value.doubleValue());
+            }
+            double signedOverlap = 0.0;
+            int sharedCount = 0;
+            for (Map.Entry<String, Double> entry : a.entrySet()) {
+                  String token = entry.getKey();
+                  if (token == null || token.isBlank() || !b.containsKey(token)) {
+                        continue;
+                  }
+                  double av = entry.getValue() == null ? 0.0 : entry.getValue().doubleValue();
+                  double bv = b.get(token) == null ? 0.0 : b.get(token).doubleValue();
+                  double aAbs = Math.abs(av);
+                  double bAbs = Math.abs(bv);
+                  if (aAbs <= SIGNAL_PRESENT_EPSILON || bAbs <= SIGNAL_PRESENT_EPSILON) {
+                        continue;
+                  }
+                  signedOverlap += Math.min(aAbs, bAbs) * Math.signum(av) * Math.signum(bv);
+                  sharedCount++;
+            }
+            if (sharedCount == 0 || Math.abs(signedOverlap) <= SIGNAL_PRESENT_EPSILON) {
+                  return new ResonanceScore(0.0, sharedCount);
+            }
+            double normalizer = Math.max(1.5, Math.min(totalA, totalB));
+            return new ResonanceScore(clampSigned(signedOverlap / normalizer), sharedCount);
+      }
+
       private static double computeUncertainty(Map<String, Double> desired, Map<String, Double> otherSelf) {
             if (desired == null || desired.isEmpty())
                   return 0.15;
@@ -371,6 +465,16 @@ public class Core implements RamaModule {
             ParsedSignalToken(String token, double valence) {
                   this.token = token;
                   this.valence = valence;
+            }
+      }
+
+      private static final class ResonanceScore {
+            final double alignment;
+            final int sharedCount;
+
+            ResonanceScore(double alignment, int sharedCount) {
+                  this.alignment = alignment;
+                  this.sharedCount = sharedCount;
             }
       }
 
@@ -518,10 +622,13 @@ public class Core implements RamaModule {
             Map<String, Double> viewerDesired = toSignalWeights(viewerSignals, true);
             Map<String, Double> targetSelf = toSignalWeights(targetSignals, false);
             Map<String, Double> targetDesired = toSignalWeights(targetSignals, true);
+            Map<String, Double> viewerResonance = toResonanceWeights(viewerSignals);
+            Map<String, Double> targetResonance = toResonanceWeights(targetSignals);
 
             double viewerNeedsMetByTarget = directionalCompatibility(viewerDesired, targetSelf);
             double targetNeedsMetByViewer = directionalCompatibility(targetDesired, viewerSelf);
             double sharedSelfOverlap = weightedJaccard(viewerSelf, targetSelf);
+            ResonanceScore resonance = resonanceScore(viewerResonance, targetResonance);
 
             double signalAlignment = clamp01(
                         0.45 * viewerNeedsMetByTarget + 0.35 * targetNeedsMetByViewer + 0.20 * sharedSelfOverlap);
@@ -532,9 +639,13 @@ public class Core implements RamaModule {
                                     + 0.50 * filterPreferenceFit);
             double noveltyScore = noveltyBoost(exposureMap, targetId, now);
 
-            double finalScore = clamp01(
+            double finalScoreBeforeResonance = clamp01(
                         0.50 * profileSignalBlend + 0.30 * viewerReactionScore + 0.15 * targetInterestScore
                                     + 0.05 * noveltyScore);
+            double resonanceDelta = resonance.alignment >= 0.0
+                        ? resonance.alignment * RESONANCE_POSITIVE_MAX_DELTA
+                        : resonance.alignment * RESONANCE_NEGATIVE_MAX_DELTA;
+            double finalScore = clamp01(finalScoreBeforeResonance + resonanceDelta);
             double finalScorePercent = finalScore * 100.0;
 
             String viewerMode = CalypsoHelpers.getModeSelfOrNull(viewer);
@@ -556,6 +667,10 @@ public class Core implements RamaModule {
             reasons.add(String.format(Locale.ROOT, "viewerReactionScore=%.3f", viewerReactionScore));
             reasons.add(String.format(Locale.ROOT, "targetInterestScore=%.3f", targetInterestScore));
             reasons.add(String.format(Locale.ROOT, "noveltyScore=%.3f", noveltyScore));
+            reasons.add(String.format(Locale.ROOT, "resonanceAlignment=%.3f", resonance.alignment));
+            reasons.add(String.format(Locale.ROOT, "resonanceSharedCount=%.3f", (double) resonance.sharedCount));
+            reasons.add(String.format(Locale.ROOT, "resonanceDelta=%.3f", resonanceDelta));
+            reasons.add(String.format(Locale.ROOT, "finalScoreBeforeResonance=%.3f", finalScoreBeforeResonance));
             reasons.add(String.format(Locale.ROOT, "finalScore=%.3f", finalScore));
             candidate.setReasons(reasons);
 
@@ -802,8 +917,7 @@ public class Core implements RamaModule {
             out.put("maturity", "empty");
             out.put("modes", new ArrayList<>());
             HashMap<String, Object> summary = new HashMap<>();
-            summary.put("rerankerShort", "");
-            summary.put("adminLong", "");
+            summary.put("silhouette", "");
             summary.put("generatedFromVersion", 1L);
             summary.put("updatedAt", 0L);
             out.put("summaryCache", summary);
@@ -834,8 +948,7 @@ public class Core implements RamaModule {
             }
             if (!(summary instanceof Map<?, ?>)) {
                   HashMap<String, Object> fallbackSummary = new HashMap<>();
-                  fallbackSummary.put("rerankerShort", "");
-                  fallbackSummary.put("adminLong", "");
+                  fallbackSummary.put("silhouette", "");
                   fallbackSummary.put("generatedFromVersion", 1L);
                   fallbackSummary.put("updatedAt", 0L);
                   out.put("summaryCache", fallbackSummary);

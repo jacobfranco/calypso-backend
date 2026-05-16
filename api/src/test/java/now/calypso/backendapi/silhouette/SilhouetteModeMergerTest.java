@@ -40,7 +40,7 @@ class SilhouetteModeMergerTest {
         assertNotNull(merged);
         assertEquals(1, merged.modes.size());
         assertEquals("grounded whimsy", merged.modes.get(0).label);
-        assertFalse(merged.summaryCache.rerankerShort.isBlank());
+        assertFalse(merged.summaryCache.silhouette.isBlank());
         assertEquals(merged.version, merged.summaryCache.generatedFromVersion);
     }
 
@@ -167,7 +167,9 @@ class SilhouetteModeMergerTest {
         assertEquals("romantic pull", decoded.modes.get(0).label);
         assertEquals(1, decoded.modes.get(0).sparkTriggers.size());
         assertNotNull(decoded.summaryCache);
-        assertTrue(decoded.summaryCache.rerankerShort.toLowerCase().contains("romantic"));
+        assertTrue(decoded.summaryCache.silhouette.toLowerCase().contains("romantic"));
+        assertFalse(decoded.summaryCache.toMap().containsKey("rerankerShort"));
+        assertFalse(decoded.summaryCache.toMap().containsKey("adminLong"));
     }
 
     @Test
@@ -196,6 +198,179 @@ class SilhouetteModeMergerTest {
                 System.currentTimeMillis());
 
         assertEquals("emerging", merged.maturity);
+    }
+
+    @Test
+    void apply_formativePromptSuppressesGenericConceptButKeepsEvidenceAsLightSeed() {
+        SilhouettePatch patch = new SilhouettePatch();
+        patch.ops.add(conceptOp("mode_formative_imprint", "formative imprint", "self_expression",
+                "nostalgic formative games", "context", "Okami", "formative_imprint", 0.60, 0.58));
+        patch.ops.add(evidenceOp("mode_formative_imprint", "formative imprint", "self_expression",
+                "Okami", "formative_imprint", 0.68, 0.62));
+
+        SilhouetteState merged = SilhouetteModeMerger.apply(
+                SilhouetteState.empty(48L),
+                patch,
+                1.0,
+                "private_prompt",
+                "instance",
+                "private.formative.imprints",
+                "event",
+                "Okami and Katamari Damacy.",
+                System.currentTimeMillis());
+
+        assertEquals(1, merged.modes.size());
+        assertEquals("formative media imprints", merged.modes.get(0).label);
+        assertTrue(merged.modes.get(0).selfExpression.isEmpty());
+        assertEquals(1, merged.modes.get(0).evidence.size());
+        assertFalse(merged.summaryCache.silhouette.toLowerCase().contains("nostalgic formative games"));
+        assertTrue(merged.summaryCache.silhouette.toLowerCase().contains("formative media imprints"));
+        assertTrue(merged.modes.get(0).evidence.stream().anyMatch(e -> e.value.equals("Okami")),
+                "Evidence-only formative references should stay as stored evidence without becoming summary concepts.");
+    }
+
+    @Test
+    void apply_formativePromptRepairsGenericModeAndPreservesDistinctFacetsInSilhouette() {
+        SilhouettePatch patch = new SilhouettePatch();
+        patch.ops.add(conceptOp("mode_formative_media_nostalgia", "formative media nostalgia", "aesthetic_field",
+                "playful surreal asian aesthetic affinity", "context", "Okami and Katamari Damacy",
+                "formative_imprint", 0.78, 0.72));
+        patch.ops.add(conceptOp("mode_formative_media_nostalgia", "formative media nostalgia", "self_expression",
+                "travel adventure curiosity", "context", "Carmen Sandiego secret agent travel fantasy",
+                "formative_imprint", 0.74, 0.70));
+        patch.ops.add(conceptOp("mode_formative_media_nostalgia", "formative media nostalgia", "aesthetic_field",
+                "early 2000s game-world texture", "context", "Bugdom and Nanosaur",
+                "formative_imprint", 0.68, 0.64));
+
+        SilhouetteState merged = SilhouetteModeMerger.apply(
+                SilhouetteState.empty(49L),
+                patch,
+                1.0,
+                "private_prompt",
+                "instance",
+                "private.formative.imprints",
+                "event",
+                "Okami and Katamari exposed me to Asian aesthetics. Carmen Sandiego made me want to be a secret agent and travel the world. Bugdom and Nanosaur are old early-2000s games.",
+                System.currentTimeMillis());
+
+        String silhouette = merged.summaryCache.silhouette.toLowerCase();
+        assertEquals(1, merged.modes.size());
+        assertEquals("formative media imprints", merged.modes.get(0).label);
+        assertFalse(silhouette.contains("formative media nostalgia"));
+        assertTrue(silhouette.contains("playful surreal asian aesthetic affinity"));
+        assertTrue(silhouette.contains("travel adventure curiosity"));
+        assertTrue(silhouette.contains("early 2000s game-world texture"));
+        assertFalse(silhouette.contains("matching:"));
+        assertTrue(merged.modes.get(0).evidence.stream().anyMatch(e -> e.value.contains("Okami and Katamari")));
+        assertTrue(merged.modes.get(0).evidence.stream().anyMatch(e -> e.value.contains("Carmen Sandiego")));
+        assertTrue(merged.modes.get(0).evidence.stream().anyMatch(e -> e.value.contains("Bugdom and Nanosaur")));
+    }
+
+    @Test
+    void apply_formativePromptShowsInterpretiveImprintsSeparatelyFromReferenceSeeds() {
+        SilhouettePatch patch = new SilhouettePatch();
+        patch.ops.add(conceptOp("mode_formative_media_nostalgia", "formative media nostalgia", "self_expression",
+                "ordinary-life world travel curiosity", "context",
+                "Carmen Sandiego made international travel feel exciting, ordinary, and livable",
+                "formative_imprint", 0.78, 0.74));
+        patch.ops.add(evidenceOp("mode_formative_media_nostalgia", "formative media nostalgia", "self_expression",
+                "Okami", "formative_imprint", 0.62, 0.68));
+
+        SilhouetteState merged = SilhouetteModeMerger.apply(
+                SilhouetteState.empty(50L),
+                patch,
+                1.0,
+                "private_prompt",
+                "instance",
+                "private.formative.imprints",
+                "event",
+                "Okami gave me playful aesthetics. Carmen Sandiego made me want to travel internationally and notice ordinary life in other countries.",
+                System.currentTimeMillis());
+
+        String silhouette = merged.summaryCache.silhouette.toLowerCase();
+        assertTrue(silhouette.contains("self:ordinary-life world travel curiosity"));
+        assertFalse(silhouette.contains("imprint:"));
+        assertFalse(silhouette.contains("seed:"));
+        assertTrue(merged.modes.get(0).evidence.stream()
+                .anyMatch(e -> e.value.toLowerCase().contains("carmen sandiego made international travel feel exciting")));
+        assertTrue(merged.modes.get(0).evidence.stream().anyMatch(e -> e.value.equals("Okami")));
+    }
+
+    @Test
+    void apply_formativePromptDowngradesLossyUmbrellaConceptButKeepsImprintEvidence() {
+        SilhouettePatch patch = new SilhouettePatch();
+        patch.ops.add(conceptOp("mode_formative_media", "formative media and aesthetic imprint", "self_expression",
+                "nostalgic formative media and worldview shaping", "context",
+                "Carmen Sandiego made international travel feel exciting, ordinary, and livable",
+                "formative_imprint", 0.58, 0.56));
+
+        SilhouetteState merged = SilhouetteModeMerger.apply(
+                SilhouetteState.empty(51L),
+                patch,
+                1.0,
+                "private_prompt",
+                "instance",
+                "private.formative.imprints",
+                "event",
+                "Carmen Sandiego made me want to travel internationally and experience mundane normal life in other countries.",
+                System.currentTimeMillis());
+
+        String silhouette = merged.summaryCache.silhouette.toLowerCase();
+        assertTrue(merged.modes.get(0).selfExpression.isEmpty());
+        assertFalse(silhouette.contains("nostalgic formative media and worldview shaping"));
+        assertFalse(silhouette.contains("imprint:"));
+        assertTrue(merged.modes.get(0).evidence.stream()
+                .anyMatch(e -> e.value.toLowerCase().contains("carmen sandiego made international travel feel exciting")));
+    }
+
+    @Test
+    void apply_formativePromptRepairsChildhoodCrushWordingIntoAdultPhysicalTypeCue() {
+        SilhouettePatch patch = new SilhouettePatch();
+        patch.ops.add(conceptOp("mode_formative_media", "formative media imprints", "self_expression",
+                "childhood crush shaping adult attraction", "context",
+                "Karate Kid (Jaden Smith) female lead crush influenced adult attraction type",
+                "formative_imprint", 0.75, 0.70));
+
+        SilhouetteState merged = SilhouetteModeMerger.apply(
+                SilhouetteState.empty(52L),
+                patch,
+                1.0,
+                "private_prompt",
+                "instance",
+                "private.formative.imprints",
+                "event",
+                "The Karate Kid made me notice that the female lead is physically my type as an adult.",
+                System.currentTimeMillis());
+
+        assertTrue(merged.modes.get(0).selfExpression.isEmpty());
+        assertTrue(merged.modes.get(0).sparkTriggers.isEmpty());
+        assertTrue(merged.modes.get(0).realWorldComps.stream()
+                .anyMatch(c -> "Wenwen Han / Meiying".equals(c.label)));
+        assertTrue(merged.modes.get(0).evidence.stream()
+                .anyMatch(e -> e.value.contains("Meiying / Wenwen Han")));
+    }
+
+    @Test
+    void apply_formativePromptDropsBareLadyGagaMovieEraFromSilhouette() {
+        SilhouettePatch patch = new SilhouettePatch();
+        patch.ops.add(conceptOp("mode_formative_media", "formative media imprints", "real_world_comps",
+                "Wenwen Han / Meiying", "context",
+                "Lady Gaga music influence tied to Karate Kid movie era and image",
+                "formative_imprint", 0.70, 0.65));
+
+        SilhouetteState merged = SilhouetteModeMerger.apply(
+                SilhouetteState.empty(53L),
+                patch,
+                1.0,
+                "private_prompt",
+                "instance",
+                "private.formative.imprints",
+                "event",
+                "Lady Gaga was also part of that Karate Kid movie era.",
+                System.currentTimeMillis());
+
+        assertTrue(merged.modes.isEmpty());
+        assertFalse(merged.summaryCache.silhouette.toLowerCase().contains("lady gaga"));
     }
 
     private static SilhouettePatch patchWith(SilhouettePatch.Op op) {
@@ -231,5 +406,31 @@ class SilhouetteModeMergerTest {
         evidence.createdAt = System.currentTimeMillis();
 
         return SilhouettePatch.Op.upsertConcept(modeId, modeLabel, target, concept, evidence);
+    }
+
+    private static SilhouettePatch.Op evidenceOp(
+            String modeId,
+            String modeLabel,
+            String target,
+            String evidenceValue,
+            String evidenceSource,
+            double confidence,
+            double strength) {
+        SilhouetteEvidence evidence = new SilhouetteEvidence();
+        evidence.source = evidenceSource;
+        evidence.target = target;
+        evidence.value = evidenceValue;
+        evidence.strength = strength;
+        evidence.confidence = confidence;
+        evidence.sourceWeight = SilhouetteEvidence.defaultSourceWeight(evidenceSource);
+        evidence.createdAt = System.currentTimeMillis();
+
+        SilhouettePatch.Op op = new SilhouettePatch.Op();
+        op.op = "add_evidence";
+        op.modeId = modeId;
+        op.label = modeLabel;
+        op.target = target;
+        op.evidence = evidence;
+        return op;
     }
 }

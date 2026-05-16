@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openai.client.OpenAIClient;
 
 import now.calypso.backend.data.SignalIntent;
+import now.calypso.backendapi.prompts.PromptLibrary;
 import now.calypso.backendapi.signals.ExtractedSignal;
 import now.calypso.backendapi.signals.PromptSignalProfiles;
 import now.calypso.backendapi.signals.SignalExtractor;
@@ -21,19 +22,23 @@ import now.calypso.backendapi.silhouette.SilhouettePatch;
 
 public final class PrivatePromptUnderstanding {
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final int USER_PROMPT_QUESTION_CHARS = 300;
+    private static final int USER_PROMPT_ANSWER_CHARS = 1600;
+    private static final int USER_PROMPT_CONVERSATION_ITEM_CHARS = 260;
+    private static final long MAX_OUTPUT_TOKENS = 1800L;
     private static final String SYSTEM_PROMPT = """
             You are Calypso's private prompt understanding engine.
 
             Return JSON only in this exact shape:
             {
               "signals":[{"token":"stable_reusable_concept","intent":"self","valence":0.72}],
-              "silhouettePatch":{"ops":[{"op":"upsert_concept","modeId":"mode_compact_label","label":"compact mode label","target":"self_expression","concept":{"id":"specific_relational_concept","label":"specific relational concept","role":"context","confidence":0.62,"strength":0.58},"evidence":{"source":"private_prompt","target":"self_expression","value":"compact derived evidence","strength":0.60,"confidence":0.62}}]},
+              "silhouettePatch":{"ops":[{"op":"upsert_concept","modeId":"mode_interpretive_label","label":"interpretive mode label","target":"self_expression","concept":{"id":"specific_relational_concept","label":"specific relational concept","role":"context","confidence":0.62,"strength":0.58},"evidence":{"source":"private_prompt","target":"self_expression","value":"specific derived evidence","strength":0.60,"confidence":0.62}}]},
               "metaObservations":[{"key":"depth_vs_surface_focus","summary":"...","confidence":0.44}]
             }
 
             Goals:
             - Extract context-free durable signals for retrieval/filtering.
-            - Produce a compact silhouette patch for context-dependent relationship modes.
+            - Produce an interpretive silhouette patch for context-dependent relationship modes.
 
             Signal constraints:
             - max 8 signals.
@@ -41,13 +46,59 @@ public final class PrivatePromptUnderstanding {
             - intent: "self" | "seeking" | "both" | "meta".
             - valence: [-1,1].
             - Include explicit media/franchise titles when named (e.g., red_rising).
+            - Preserve subtitles/installments when the user gives them and they identify a different reference
+              (e.g., where_in_the_world_is_carmen_sandiego_treasures_of_knowledge).
             - Include explicit concrete media formats when named (e.g., reality_tv).
+            - Use intent="meta" for rare high-meaning resonance features that should affect discovery but not behave
+              like repeated hobbies: nostalgia clusters, visual/aesthetic fields, attraction archetypes, and emotional
+              media imprints. Do not use meta for routine broad hobbies, media formats, genres, or ordinary likes.
+              Preserve exact titles/references as concrete self/both/seeking signals when explicit, then add at most
+              1-2 specific meta resonance tokens if the answer gives emotional or aesthetic framing.
+            - Meta tokens should be typed labels, not generic axes. Prefer shapes like nostalgia_whimsical_ps2,
+              aesthetic_frutiger_aero, attraction_archetype_playful_competence, or
+              emotional_media_melancholy_adventure. Never output bare nostalgia, aesthetic, attraction, or media as meta.
             - Avoid character-name-only tags unless context-free durability is clear.
             - Preserve explicit concrete activities as signals even when an abstract trait is also implied (e.g., "the gym" => gym, not only discipline).
             - In dislike prompts, keep negative signals specific; do not turn dislike of a genre/artist/show format into dislike of all music, TV, or media.
 
+            Silhouette domain guidance:
+            - prompt_silhouette_domains names the intended extraction domain when available.
+            - formative_imprints: preserve exact formative references as signals/evidence, then extract the emotional imprint pattern.
+              The exact references and the synthesized pattern should both be present: use the references as
+              source=formative_imprint evidence, and use the concept label for the durable emotional shape they imply.
+              If the answer only names references without explaining the feeling or why they matter, preserve the
+              references as signals/evidence but do not synthesize generic concepts like "nostalgic formative games".
+              Childhood role fantasies ("wanted to be a spy/secret agent") are evidence for the imprint, not literal
+              self/seeking signals, unless the answer explicitly says this is a current adult identity or active interest.
+              If one answer gives multiple imprints, emit separate concept/evidence pairs for each: aesthetic taste,
+              travel/world curiosity, role fantasy, social longing, worldview, or specific sensory texture should not
+              be collapsed into one umbrella nostalgia concept.
+              For each formative concept, evidence.value should connect the reference to the imprint, not only name
+              the title. Example: "Carmen Sandiego made international travel feel exciting, ordinary, and livable."
+              If a childhood media answer mentions attraction to a real performer/person, use target=real_world_comps
+              for the exact comp and phrase the evidence as a non-exclusive adult physical-type cue. Do not imply that
+              one childhood crush is the user's whole type or current fixation.
+              Do not turn a bare formative artist/movie-era mention into a silhouette concept unless the user explains
+              the lasting taste, identity, attraction, or worldview imprint. Keep references like Lady Gaga as signals
+              unless the answer explains what they changed.
+              Bad formative labels: "nostalgic formative media and worldview shaping",
+              "formative media and aesthetic imprint", "asian aesthetic influence from formative games". These are
+              lossy prompt echoes. Split them into the actual imprints the answer gives, such as
+              "playful surreal eastern aesthetic affinity", "ordinary-life world travel curiosity",
+              "secret-agent adventure fantasy", or "early 2000s game-world texture" when supported.
+            - aesthetic_field: visual, musical, sensory, style-world, and vibe patterns.
+            - real_world_comps: exact real people, celebrities, public figures, or actors the user names as attraction
+              reference points. Keep these as comps until repeated examples justify a broader attraction pattern.
+            - spark_archetypes: attraction templates, fictional comparisons, chemistry triggers, and romantic pull.
+            - social_belonging: communities, scenes, social worlds, and friend-group rhythm.
+            - home_atmosphere: places, rooms, cities, domestic rhythm, and settings that feel grounding or alive.
+            - humor_play: humor style, teasing, bits, irony/sincerity balance, and playful conversational rhythm.
+            - sustainability_needs: repair style, reassurance, autonomy, consistency, and communication rhythm.
+            - anti_patterns: disliked worlds, lifestyles, behaviors, or social energies that signal "not my person".
+
             Silhouette patch constraints:
-            - Keep ops minimal and high-precision (0-8 typically).
+            - Use as many high-precision ops as needed for distinct high-meaning facets (0-14 typically).
+              Do not collapse separate meanings merely to keep the patch short.
             - Do not treat the user as one fixed personality.
             - Extract coherent relationship modes when possible.
             - Fictional characters, music, aesthetics, prompt answers, and reactions are evidence. They are not the mode itself.
@@ -56,16 +107,21 @@ public final class PrivatePromptUnderstanding {
             - If new evidence adds texture, reinforce or extend the nearest compatible mode.
             - If new evidence implies a distinct relationship configuration, create a new mode.
             - Separate how the user may show up, what they are drawn to, what creates spark, what sustains connection, what repels them, and what remains uncertain.
-            - Allowed targets: self_expression, seeking_expression, spark_triggers, sustainability_needs, aesthetic_field, anti_patterns, tensions.
+            - Allowed targets: self_expression, seeking_expression, spark_triggers, real_world_comps, sustainability_needs, aesthetic_field, anti_patterns, tensions.
             - Allowed ops: upsert_mode, reinforce_mode, deprecate_mode, upsert_concept, reinforce_concept, retract_concept, upsert_anti_pattern, upsert_tension, add_evidence, add_open_question.
             - Use spark_triggers for chemistry, intrigue, attraction, aesthetic pull, curiosity, or romantic energy.
             - Use sustainability_needs for consistency, emotional workability, patience, autonomy, reassurance, communication rhythm, or long-term fit.
             - Do not over-infer sustainability from sparse evidence. Use add_open_question when uncertain.
-            - Keep concept labels concise and non-clinical.
+            - Keep concept labels specific and non-clinical. Concision is useful, but never at the cost of the
+              answer's meaning; 3-7 word labels are fine when they preserve the imprint.
             - Concrete hobbies/titles should usually be signals and/or evidence values, not identity concepts.
             - Comparative fictional references should be evidence with source=fictional_comp.
             - Visual aesthetic evidence should use source=visual_aesthetic.
             - Music evidence should use source=music.
+            - Formative imprint evidence should use source=formative_imprint.
+            - Non-character attraction archetype evidence should use source=attraction_pattern.
+            - Social scene, home atmosphere, humor/play, repair, and boundary evidence should use source=social_scene,
+              home_atmosphere, humor_play, sustainability_pattern, and boundary_pattern respectively.
             - For dislike, turn-off, and not-my-person prompts, prefer anti_patterns or open_questions; do not create self_expression concepts from dislikes.
             - Meta observations must be neutral and non-moralizing.
             - confidence in [0,1].
@@ -100,7 +156,7 @@ public final class PrivatePromptUnderstanding {
                             normalizedPromptId == null || normalizedPromptId.isBlank() ? "private_prompt_answer"
                                     : normalizedPromptId,
                             normalizedPromptId,
-                            520L));
+                            MAX_OUTPUT_TOKENS));
             ParsedPayload parsed = parse(raw);
             if (!parsed.parsed) {
                 return Result.empty(false);
@@ -124,11 +180,15 @@ public final class PrivatePromptUnderstanding {
             String answer,
             Collection<String> conversationLines,
             Collection<String> alreadyHave) {
-        String conversation = jsonArray(conversationLines, 10, 140);
+        String conversation = jsonArray(conversationLines, 10, USER_PROMPT_CONVERSATION_ITEM_CHARS);
         String already = jsonArray(alreadyHave, 12, 40);
+        String signalDomains = jsonArray(PromptLibrary.signalDomainsForPromptId(promptId), 12, 48);
+        String silhouetteDomains = jsonArray(PromptLibrary.silhouetteDomainsForPromptId(promptId), 12, 48);
         return """
                 prompt_id: %s
                 prompt_profile_hint: %s
+                prompt_signal_domains: %s
+                prompt_silhouette_domains: %s
                 prompt_question: %s
                 prompt_answer: %s
                 conversation_context: %s
@@ -136,8 +196,10 @@ public final class PrivatePromptUnderstanding {
                 """.formatted(
                 jsonQuote(promptId),
                 jsonQuote(clampForPrompt(profileHint, 140)),
-                jsonQuote(clampForPrompt(question, 220)),
-                jsonQuote(clampForPrompt(answer, 260)),
+                signalDomains,
+                silhouetteDomains,
+                jsonQuote(clampForPrompt(question, USER_PROMPT_QUESTION_CHARS)),
+                jsonQuote(clampForPrompt(answer, USER_PROMPT_ANSWER_CHARS)),
                 conversation,
                 already);
     }

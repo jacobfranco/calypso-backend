@@ -6,6 +6,9 @@ import java.util.List;
 import java.util.Map;
 
 public class SilhouetteMode {
+    private static final String LEGACY_FORMATIVE_SEED_AFFINITIES = "formative seed affinities";
+    private static final String FORMATIVE_MEDIA_IMPRINTS = "formative media imprints";
+
     public String id;
     public String label;
     public String status;
@@ -16,6 +19,7 @@ public class SilhouetteMode {
     public List<SilhouetteConcept> sparkTriggers;
     public List<SilhouetteConcept> sustainabilityNeeds;
     public List<SilhouetteConcept> aestheticField;
+    public List<SilhouetteConcept> realWorldComps;
     public List<SilhouetteAntiPattern> antiPatterns;
     public List<SilhouetteTension> tensions;
     public List<SilhouetteEvidence> evidence;
@@ -35,6 +39,7 @@ public class SilhouetteMode {
         this.sparkTriggers = new ArrayList<>();
         this.sustainabilityNeeds = new ArrayList<>();
         this.aestheticField = new ArrayList<>();
+        this.realWorldComps = new ArrayList<>();
         this.antiPatterns = new ArrayList<>();
         this.tensions = new ArrayList<>();
         this.evidence = new ArrayList<>();
@@ -51,7 +56,7 @@ public class SilhouetteMode {
             return;
         }
         this.id = other.id;
-        this.label = other.label;
+        this.label = canonicalLabel(other.label);
         this.status = other.status;
         this.weight = other.weight;
         this.confidence = other.confidence;
@@ -60,6 +65,7 @@ public class SilhouetteMode {
         this.sparkTriggers = copyConcepts(other.sparkTriggers);
         this.sustainabilityNeeds = copyConcepts(other.sustainabilityNeeds);
         this.aestheticField = copyConcepts(other.aestheticField);
+        this.realWorldComps = copyConcepts(other.realWorldComps);
         this.antiPatterns = copyAntiPatterns(other.antiPatterns);
         this.tensions = copyTensions(other.tensions);
         this.evidence = copyEvidence(other.evidence);
@@ -73,11 +79,12 @@ public class SilhouetteMode {
         if (map == null || map.isEmpty()) {
             return null;
         }
-        String label = SilhouetteModelUtils.text(map.get("label"), 96);
+        String label = SilhouetteModelUtils.text(map.get("label"), 140);
         String id = SilhouetteModelUtils.normalizeId(map.get("id"), "mode", label);
         if (label.isBlank()) {
             label = id.replace('_', ' ');
         }
+        label = canonicalLabel(label);
         SilhouetteMode out = new SilhouetteMode();
         out.id = id;
         out.label = label;
@@ -89,11 +96,12 @@ public class SilhouetteMode {
         out.sparkTriggers = conceptsFrom(map.get("sparkTriggers"), map.get("spark_triggers"));
         out.sustainabilityNeeds = conceptsFrom(map.get("sustainabilityNeeds"), map.get("sustainability_needs"));
         out.aestheticField = conceptsFrom(map.get("aestheticField"), map.get("aesthetic_field"));
+        out.realWorldComps = conceptsFrom(map.get("realWorldComps"), map.get("real_world_comps"));
         out.antiPatterns = antiPatternsFrom(map.get("antiPatterns"), map.get("anti_patterns"));
         out.tensions = tensionsFrom(map.get("tensions"));
         out.evidence = evidenceFrom(map.get("evidence"));
         out.openQuestions = SilhouetteModelUtils.stringList(
-                SilhouetteModelUtils.first(map, "openQuestions", "open_questions"), 8, 180);
+                SilhouetteModelUtils.first(map, "openQuestions", "open_questions"), 8, 260);
         long now = System.currentTimeMillis();
         out.createdAt = SilhouetteModelUtils.parseLong(map.get("createdAt"), now);
         out.updatedAt = SilhouetteModelUtils.parseLong(map.get("updatedAt"), out.createdAt);
@@ -104,7 +112,7 @@ public class SilhouetteMode {
     public Map<String, Object> toMap() {
         LinkedHashMap<String, Object> out = new LinkedHashMap<>();
         out.put("id", SilhouetteModelUtils.normalizeId(id, "mode", label));
-        out.put("label", SilhouetteModelUtils.text(label, 96));
+        out.put("label", canonicalLabel(label));
         out.put("status", normalizeStatus(status));
         out.put("weight", SilhouetteModelUtils.clamp01(weight));
         out.put("confidence", SilhouetteModelUtils.clamp01(confidence));
@@ -113,10 +121,11 @@ public class SilhouetteMode {
         out.put("sparkTriggers", conceptMaps(sparkTriggers));
         out.put("sustainabilityNeeds", conceptMaps(sustainabilityNeeds));
         out.put("aestheticField", conceptMaps(aestheticField));
+        out.put("realWorldComps", conceptMaps(realWorldComps));
         out.put("antiPatterns", antiPatternMaps(antiPatterns));
         out.put("tensions", tensionMaps(tensions));
         out.put("evidence", evidenceMaps(evidence));
-        out.put("openQuestions", SilhouetteModelUtils.stringList(openQuestions, 8, 180));
+        out.put("openQuestions", SilhouetteModelUtils.stringList(openQuestions, 8, 260));
         out.put("createdAt", createdAt);
         out.put("updatedAt", updatedAt);
         out.put("lastReinforcedAt", lastReinforcedAt);
@@ -129,6 +138,7 @@ public class SilhouetteMode {
             case "spark_triggers" -> sparkTriggers;
             case "sustainability_needs" -> sustainabilityNeeds;
             case "aesthetic_field" -> aestheticField;
+            case "real_world_comps" -> realWorldComps;
             default -> selfExpression;
         };
     }
@@ -136,6 +146,16 @@ public class SilhouetteMode {
     public static String normalizeStatus(String raw) {
         return SilhouetteModelUtils.oneOf(raw, "emerging",
                 "emerging", "active", "mature", "dormant", "deprecated");
+    }
+
+    public static String canonicalLabel(String raw) {
+        String text = SilhouetteModelUtils.text(raw, 140);
+        String normalized = text.trim().toLowerCase(java.util.Locale.ROOT);
+        if (LEGACY_FORMATIVE_SEED_AFFINITIES.equals(normalized)
+                || "mode formative seed affinities".equals(normalized)) {
+            return FORMATIVE_MEDIA_IMPRINTS;
+        }
+        return text;
     }
 
     private static List<SilhouetteConcept> conceptsFrom(Object primary, Object secondary) {

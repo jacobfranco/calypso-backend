@@ -7,7 +7,7 @@ import java.util.Locale;
 import java.util.Map;
 
 public final class SilhouetteState {
-    private static final int RERANKER_DIGEST_MAX = 1600;
+    private static final int SILHOUETTE_DIGEST_MAX = 2800;
 
     public long accountId;
     public int version;
@@ -108,10 +108,10 @@ public final class SilhouetteState {
 
     public String digest(int maxChars) {
         int cap = Math.max(240, maxChars);
-        String cachedSummary = summaryCache == null ? "" : SilhouetteModelUtils.text(summaryCache.rerankerShort,
-                RERANKER_DIGEST_MAX);
+        String cachedSummary = summaryCache == null ? "" : SilhouetteModelUtils.text(summaryCache.silhouette,
+                SILHOUETTE_DIGEST_MAX);
         if (!cachedSummary.isBlank()) {
-            return clampDigest("maturity=" + normalizeMaturity(maturity) + "\nsummary: " + cachedSummary, cap);
+            return clampDigest(cachedSummary, cap);
         }
         SilhouetteDigest digest = SilhouetteDigest.fromState(this);
         StringBuilder buf = new StringBuilder();
@@ -128,6 +128,7 @@ public final class SilhouetteState {
                 appendDigestList(buf, "self", mode.self);
                 appendDigestList(buf, "seeking", mode.seeking);
                 appendDigestList(buf, "spark", mode.sparkTriggers);
+                appendDigestList(buf, "comps", mode.realWorldComps);
                 appendDigestList(buf, "sustain", mode.sustainabilityNeeds);
             }
         }

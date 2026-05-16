@@ -124,6 +124,77 @@ class SignalExtractorExplicitMentionTest {
     }
 
     @Test
+    void augmentWithExplicitTitleMentions_suppressesFormativeChildhoodRoleSignals() {
+        List<ExtractedSignal> out = SignalExtractor.augmentWithExplicitTitleMentions(
+                "private.formative.imprints",
+                "What game, show, book, toy, website, place, or other thing from growing up still has a strange emotional hold on you?",
+                "Carmen Sandiego made me want to travel and be a secret agent as a kid.",
+                List.of(),
+                List.of(
+                        ExtractedSignal.from("secret_agent", SignalIntent.SELF, 0.70),
+                        ExtractedSignal.from("travel", SignalIntent.SEEKING, 0.62),
+                        ExtractedSignal.from("carmen_sandiego", SignalIntent.SELF, 0.66)));
+
+        assertNull(find(out, "secret_agent"),
+                "Childhood role fantasy tokens should remain silhouette evidence instead of durable signals.");
+        assertNotNull(find(out, "travel", SignalIntent.SEEKING));
+        assertNotNull(find(out, "carmen_sandiego", SignalIntent.SELF));
+    }
+
+    @Test
+    void augmentWithExplicitTitleMentions_suppressesFormativePromptOptionsAbsentFromAnswer() {
+        List<ExtractedSignal> out = SignalExtractor.augmentWithExplicitTitleMentions(
+                "private.formative.imprints",
+                "What game, show, book, toy, website, place, or other thing from growing up still has a strange emotional hold on you?",
+                "Okami and Katamari Damacy made the world feel strange and hopeful.",
+                List.of(),
+                List.of(
+                        ExtractedSignal.from("books", SignalIntent.SELF, 0.65),
+                        ExtractedSignal.from("okami", SignalIntent.SELF, 0.58),
+                        ExtractedSignal.from("katamari_damacy", SignalIntent.SELF, 0.58)));
+
+        assertNull(find(out, "books"),
+                "Prompt option words should not become signals when the answer never mentions them.");
+        assertNotNull(find(out, "okami", SignalIntent.SELF));
+        assertNotNull(find(out, "katamari_damacy", SignalIntent.SELF));
+    }
+
+    @Test
+    void augmentWithExplicitTitleMentions_suppressesGenericFormativeNostalgiaSignals() {
+        List<ExtractedSignal> out = SignalExtractor.augmentWithExplicitTitleMentions(
+                "private.formative.imprints",
+                "What things from growing up still have a hold on you or bring you nostalgia?",
+                "Okami, Katamari Damacy, and a Carmen Sandiego game.",
+                List.of(),
+                List.of(
+                        ExtractedSignal.from("nostalgic_formative_games", SignalIntent.META, 0.62),
+                        ExtractedSignal.from("games", SignalIntent.SELF, 0.58),
+                        ExtractedSignal.from("okami", SignalIntent.SELF, 0.58),
+                        ExtractedSignal.from("katamari_damacy", SignalIntent.SELF, 0.58)));
+
+        assertNull(find(out, "nostalgic_formative_games"));
+        assertNull(find(out, "games"));
+        assertNotNull(find(out, "okami", SignalIntent.SELF));
+        assertNotNull(find(out, "katamari_damacy", SignalIntent.SELF));
+    }
+
+    @Test
+    void augmentWithExplicitTitleMentions_preservesCarmenSandiegoTreasuresSubtitle() {
+        List<ExtractedSignal> out = SignalExtractor.augmentWithExplicitTitleMentions(
+                "private.formative.imprints",
+                "What things from growing up still have a hold on you or bring you nostalgia?",
+                "Where in the World Is Carmen Sandiego? Treasures of Knowledge made travel feel possible.",
+                List.of(),
+                List.of(ExtractedSignal.from(
+                        "where_in_the_world_is_carmen_sandiego",
+                        SignalIntent.SELF,
+                        0.62)));
+
+        assertNull(find(out, "where_in_the_world_is_carmen_sandiego", SignalIntent.SELF));
+        assertNotNull(find(out, "where_in_the_world_is_carmen_sandiego_treasures_of_knowledge", SignalIntent.SELF));
+    }
+
+    @Test
     void augmentWithExplicitTitleMentions_mirrorsSelfHobbiesIntoSeekingWhenAnswerSaysAllOfThose() {
         List<ExtractedSignal> out = SignalExtractor.augmentWithExplicitTitleMentions(
                 "private.hobbies",

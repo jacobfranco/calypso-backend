@@ -40,7 +40,7 @@ public class SilhouetteConcept {
         if (map == null || map.isEmpty()) {
             return null;
         }
-        String label = SilhouetteModelUtils.text(map.get("label"), 120);
+        String label = SilhouetteModelUtils.text(map.get("label"), 160);
         String id = SilhouetteModelUtils.normalizeId(map.get("id"), "concept", label);
         if (label.isBlank()) {
             label = id.replace('_', ' ');
@@ -61,7 +61,7 @@ public class SilhouetteConcept {
     public Map<String, Object> toMap() {
         LinkedHashMap<String, Object> out = new LinkedHashMap<>();
         out.put("id", SilhouetteModelUtils.normalizeId(id, "concept", label));
-        out.put("label", SilhouetteModelUtils.text(label, 120));
+        out.put("label", SilhouetteModelUtils.text(label, 160));
         out.put("role", SilhouetteModelUtils.oneOf(role, "context", "core", "accent", "context", "experimental"));
         out.put("confidence", SilhouetteModelUtils.clamp01(confidence));
         out.put("strength", SilhouetteModelUtils.clamp01(strength));

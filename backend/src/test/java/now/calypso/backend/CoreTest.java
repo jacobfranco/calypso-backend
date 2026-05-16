@@ -219,6 +219,26 @@ public class CoreTest {
                 refillDepot.append(r);
         }
 
+        private static SignalRecord signalRecord(String token, SignalIntent intent, double valence) {
+                return new SignalRecord()
+                                .setToken(token)
+                                .setCanonicalToken(token)
+                                .setIntent(intent)
+                                .setValence(valence)
+                                .setCount(1)
+                                .setSource("private_prompt")
+                                .setSourceId("test-" + token)
+                                .setFirstSeen(100L)
+                                .setLastSeen(100L);
+        }
+
+        private static Signals signals(long accountId, SignalRecord... records) {
+                Signals out = new Signals();
+                out.setAccountId(accountId);
+                out.setRecords(records == null ? List.of() : List.of(records));
+                return out;
+        }
+
         private static OneToManyFilter oneToMany(String self, List<String> seeking, Importance imp) {
                 OneToManyFilter f = new OneToManyFilter();
                 if (self != null)
@@ -837,6 +857,61 @@ public class CoreTest {
 
                         assertTrue(preferred.getStage0Score() > neutral.getStage0Score(),
                                         "Candidate matching viewer's religion preference should have higher score");
+                }
+        }
+
+        @Test
+        public void resonanceSignalsBoostCandidateHeapScore(TestInfo ti) throws Exception {
+                List<Class> ser = List.of(CalypsoSerialization.class);
+                try (InProcessCluster ipc = InProcessCluster.create(ser)) {
+                        Core core = new Core();
+                        launchModuleDeterministic(ipc, core, ti);
+
+                        String coreName = core.getClass().getName();
+
+                        Depot filtersDepot = ipc.clusterDepot(coreName, "*filtersDepot");
+                        Depot signalsDepot = ipc.clusterDepot(coreName, "*signalsDepot");
+                        Depot refillDepot = ipc.clusterDepot(coreName, "*matchRefillDepot");
+                        PState heapP = ipc.clusterPState(coreName, "$$accountIdToCandidateHeap");
+
+                        double[] SEA = CITY_LL.get("Seattle, WA, USA");
+                        append(ipc, filtersDepot, mkFilters(1L, SEA[0], SEA[1], radiusKmFromToken("my_city"),
+                                        "balanced", "woman", List.of("man"), 27, 22, 34, null, null, null, null));
+                        append(ipc, filtersDepot, mkFilters(2L, SEA[0], SEA[1], radiusKmFromToken("my_city"),
+                                        "balanced", "man", List.of("woman"), 28, 22, 34, null, null, null, null));
+                        append(ipc, filtersDepot, mkFilters(3L, SEA[0], SEA[1], radiusKmFromToken("my_city"),
+                                        "balanced", "man", List.of("woman"), 28, 22, 34, null, null, null, null));
+
+                        append(ipc, signalsDepot, signals(1L,
+                                        signalRecord("katamari_damacy", SignalIntent.SELF, 0.90),
+                                        signalRecord("nostalgia_whimsical_ps2", SignalIntent.META, 0.90)));
+                        append(ipc, signalsDepot, signals(2L,
+                                        signalRecord("katamari_damacy", SignalIntent.SELF, 0.90),
+                                        signalRecord("nostalgia_whimsical_ps2", SignalIntent.META, 0.90)));
+                        append(ipc, signalsDepot, signals(3L,
+                                        signalRecord("katamari_damacy", SignalIntent.SELF, 0.90)));
+
+                        requestRefill(refillDepot, 1L, 10);
+
+                        TestHelpers.attainConditionPred(
+                                        () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
+                                        heap -> heap != null && heap.size() >= 2);
+
+                        List<MatchCandidate> heap = (List<MatchCandidate>) heapP.selectOne(Path.key(1L));
+                        MatchCandidate resonant = heap.stream()
+                                        .filter(c -> c.getTargetAccountId() == 2L)
+                                        .findFirst()
+                                        .orElseThrow(() -> new AssertionError("Resonant candidate not found"));
+                        MatchCandidate neutral = heap.stream()
+                                        .filter(c -> c.getTargetAccountId() == 3L)
+                                        .findFirst()
+                                        .orElseThrow(() -> new AssertionError("Neutral candidate not found"));
+
+                        assertTrue(resonant.getStage0Score() > neutral.getStage0Score() + 4.0,
+                                        "Shared meta resonance should lift otherwise equivalent candidates.");
+                        assertTrue(resonant.getReasons().stream()
+                                        .anyMatch(reason -> reason != null && reason.startsWith("resonanceDelta=")),
+                                        "Candidate debug should expose the resonance scoring lane.");
                 }
         }
 

@@ -29,6 +29,27 @@ public final class SignalExtractor {
     private static final double EXPLICIT_ANSWER_FLOOR_YAP_HOURS = 0.65;
     private static final double EXPLICIT_ANSWER_FLOOR_TALK_HOURS = 0.60;
     private static final double NEGATIVE_PREFERENCE_MIN_MAGNITUDE = 0.45;
+    private static final Set<String> FORMATIVE_ROLE_FANTASY_TOKENS = Set.of(
+            "secret_agent",
+            "spy",
+            "detective");
+    private static final Set<String> FORMATIVE_PROMPT_OPTION_TOKENS = Set.of(
+            "books",
+            "book",
+            "reading",
+            "game",
+            "games",
+            "video_games",
+            "board_games",
+            "media");
+    private static final Set<String> LOW_VALUE_FORMATIVE_SIGNAL_TOKENS = Set.of(
+            "nostalgia_formative_games",
+            "nostalgic_formative_games",
+            "formative_games",
+            "formative_media",
+            "nostalgic_media",
+            "childhood_media",
+            "childhood_games");
 
     private SignalExtractor() {
     }
@@ -222,6 +243,7 @@ public final class SignalExtractor {
             "private.not.my.person",
             "private.drawn.to",
             "private.fictional.characters",
+            "private.formative.imprints",
             "private.media.revisit",
             "matchmaking.followup",
             "private.matchmaking.followup");
@@ -278,6 +300,7 @@ public final class SignalExtractor {
         String normalized = promptId.trim().toLowerCase(Locale.ROOT);
         return "private.drawn.to".equals(normalized)
                 || "private.fictional.characters".equals(normalized)
+                || "private.formative.imprints".equals(normalized)
                 || "private.media.revisit".equals(normalized);
     }
 
@@ -360,7 +383,7 @@ public final class SignalExtractor {
         }
         int boundedMax = Math.max(1, maxMentions);
         for (int i = 0; i < words.size(); i++) {
-            for (int n = 1; n <= 4; n++) {
+            for (int n = 1; n <= 10; n++) {
                 int end = i + n;
                 if (end > words.size()) {
                     break;
@@ -408,7 +431,7 @@ public final class SignalExtractor {
         }
         int boundedMax = Math.max(1, maxMentions);
         for (int i = 0; i < words.size(); i++) {
-            for (int n = 1; n <= 4; n++) {
+            for (int n = 1; n <= 10; n++) {
                 int end = i + n;
                 if (end > words.size()) {
                     break;
@@ -585,9 +608,101 @@ public final class SignalExtractor {
             return List.of();
         }
         List<ExtractedSignal> adjusted = cleanupSpecificityConflicts(signals);
+        adjusted = applyFormativeTitleSpecificity(promptId, answer, adjusted);
         adjusted = applyHobbyShareMirroring(promptId, question, answer, adjusted);
         adjusted = applyDrawnToMediaIntentRouting(promptId, adjusted);
+        adjusted = applyFormativeImprintRoleSuppression(promptId, adjusted);
+        adjusted = applyFormativePromptOptionSuppression(promptId, adjusted);
         return cleanupSpecificityConflicts(adjusted);
+    }
+
+    private static List<ExtractedSignal> applyFormativeTitleSpecificity(
+            String promptId,
+            String answer,
+            List<ExtractedSignal> signals) {
+        if (signals == null || signals.isEmpty()) {
+            return List.of();
+        }
+        String normalizedPromptId = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
+        if (!"private.formative.imprints".equals(normalizedPromptId)) {
+            return signals;
+        }
+        String lower = answer == null ? "" : answer.toLowerCase(Locale.ROOT);
+        boolean carmenTreasures = lower.contains("carmen sandiego") && lower.contains("treasures of knowledge");
+        if (!carmenTreasures) {
+            return signals;
+        }
+        ArrayList<ExtractedSignal> out = new ArrayList<>(signals.size());
+        for (ExtractedSignal signal : signals) {
+            if (signal == null || signal.token() == null || signal.token().isBlank()) {
+                continue;
+            }
+            String token = SignalNormalizer.normalizeOne(signal.token());
+            if ("where_in_the_world_is_carmen_sandiego".equals(token)
+                    || "carmen_sandiego".equals(token)) {
+                ExtractedSignal rewritten = ExtractedSignal.from(
+                        "where_in_the_world_is_carmen_sandiego_treasures_of_knowledge",
+                        signal.intent(),
+                        signal.valence());
+                if (rewritten != null) {
+                    out.add(rewritten);
+                    continue;
+                }
+            }
+            out.add(signal);
+        }
+        return out;
+    }
+
+    private static List<ExtractedSignal> applyFormativePromptOptionSuppression(
+            String promptId,
+            List<ExtractedSignal> signals) {
+        if (signals == null || signals.isEmpty()) {
+            return List.of();
+        }
+        String normalizedPromptId = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
+        if (!"private.formative.imprints".equals(normalizedPromptId)) {
+            return signals;
+        }
+        ArrayList<ExtractedSignal> out = new ArrayList<>(signals.size());
+        for (ExtractedSignal signal : signals) {
+            if (signal == null || signal.token() == null || signal.token().isBlank()) {
+                continue;
+            }
+            String token = SignalNormalizer.normalizeOne(signal.token());
+            if (token != null && LOW_VALUE_FORMATIVE_SIGNAL_TOKENS.contains(token)) {
+                continue;
+            }
+            if (token != null && FORMATIVE_PROMPT_OPTION_TOKENS.contains(token)) {
+                continue;
+            }
+            out.add(signal);
+        }
+        return out;
+    }
+
+    private static List<ExtractedSignal> applyFormativeImprintRoleSuppression(
+            String promptId,
+            List<ExtractedSignal> signals) {
+        if (signals == null || signals.isEmpty()) {
+            return List.of();
+        }
+        String normalizedPromptId = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
+        if (!"private.formative.imprints".equals(normalizedPromptId)) {
+            return signals;
+        }
+        ArrayList<ExtractedSignal> out = new ArrayList<>(signals.size());
+        for (ExtractedSignal signal : signals) {
+            if (signal == null || signal.token() == null || signal.token().isBlank()) {
+                continue;
+            }
+            String token = SignalNormalizer.normalizeOne(signal.token());
+            if (token != null && FORMATIVE_ROLE_FANTASY_TOKENS.contains(token)) {
+                continue;
+            }
+            out.add(signal);
+        }
+        return out;
     }
 
     private static List<ExtractedSignal> applyHobbyShareMirroring(

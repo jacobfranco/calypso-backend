@@ -1516,9 +1516,9 @@ class CalypsoApiIntegrationTest {
             SignalRecord promoted = findRecord(after, canonical, SignalIntent.SELF);
             assertNotNull(promoted);
             assertTrue(promoted.isSetValence());
-            // Count-based ceiling at count=1 is ~0.20; drift-queue average ≤ 0.65
-            // → stored ≈ min(0.65, 0.20) = 0.20.
             assertTrue(promoted.getValence() > 0.15);
+            assertTrue(promoted.getValence() < 0.25,
+                    "Promotion replay should be source-dampened like other first-hit observations.");
         }
     }
 
@@ -1571,15 +1571,203 @@ class CalypsoApiIntegrationTest {
 
             Signals after = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
             SignalRecord nightlife = findRecord(after, "nightlife", SignalIntent.SELF);
-            assertNotNull(nightlife);
-            assertTrue(nightlife.isSetSource());
-            assertEquals("signal_hierarchy_derived", nightlife.getSource(),
-                    "New derived hierarchy records from promotion should use derived source labeling.");
+            assertNull(nightlife,
+                    "Promotion replay should backfill only the approved canonical concept, not broad hierarchy parents.");
             SignalRecord socializing = findRecord(after, "socializing", SignalIntent.SELF);
             assertNotNull(socializing);
             assertTrue(socializing.isSetSource());
             assertEquals("public_prompt_reaction", socializing.getSource(),
                     "Existing derived signal metadata should not be overwritten by promotion replay.");
+        }
+    }
+
+    @Test
+    void privateFormativePrompt_doesNotPersistHierarchyParentsFromExactEvidence() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 95432L;
+            String titleToken = "formative_title_" + UUID.randomUUID().toString().replace("-", "");
+            String canonicalTitle = SignalNormalizer.normalizeOne(titleToken);
+            assertNotNull(canonicalTitle);
+
+            assertTrue(mgr.createSignalConceptWithDebug(canonicalTitle, "media", List.of("books"))
+                    .get(10, TimeUnit.SECONDS).changed);
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"%s","intent":"self","valence":0.65}]}
+                    """.formatted(canonicalTitle));
+            try {
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "private.formative.imprints",
+                        PromptLibrary.getById("private.formative.imprints").getText(),
+                        "This childhood game made the future feel strange and possible.",
+                        "private_prompt",
+                        UUID.randomUUID().toString()).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals after = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(findRecord(after, canonicalTitle, SignalIntent.SELF));
+            assertNull(findRecord(after, "books", SignalIntent.SELF),
+                    "Formative exact references should stay as evidence/signals without broad media parent noise.");
+        }
+    }
+
+    @Test
+    void privateFormativePrompt_persistsAllowedVideoGameParentFromExactGameEvidence() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 95433L;
+            String titleToken = "formative_game_title_" + UUID.randomUUID().toString().replace("-", "");
+            String canonicalTitle = SignalNormalizer.normalizeOne(titleToken);
+            assertNotNull(canonicalTitle);
+
+            assertTrue(mgr.createSignalConceptWithDebug(canonicalTitle, "media", List.of("video_games"))
+                    .get(10, TimeUnit.SECONDS).changed);
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"%s","intent":"self","valence":0.74}]}
+                    """.formatted(canonicalTitle));
+            try {
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "private.formative.imprints",
+                        PromptLibrary.getById("private.formative.imprints").getText(),
+                        "Bugdom and Nanosaur were old computer games that still have a hold on me.",
+                        "private_prompt",
+                        UUID.randomUUID().toString()).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals after = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(findRecord(after, canonicalTitle, SignalIntent.SELF));
+            assertNotNull(findRecord(after, "video_games", SignalIntent.SELF),
+                    "Formative game-title evidence should keep the useful video_games parent.");
+            assertNull(findRecord(after, "gaming", SignalIntent.SELF),
+                    "Promotion/formative replay should not fan out into every broad hierarchy parent.");
+        }
+    }
+
+    @Test
+    void privateFormativePrompt_persistsAllowedVideoGameParentFromUnresolvedDriftTitles() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 95435L;
+            String rawGameOne = SignalNormalizer.normalizeOne(
+                    "nanosaur_probe_" + UUID.randomUUID().toString().replace("-", ""));
+            String rawGameTwo = SignalNormalizer.normalizeOne(
+                    "bugdom_probe_" + UUID.randomUUID().toString().replace("-", ""));
+            assertNotNull(rawGameOne);
+            assertNotNull(rawGameTwo);
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[
+                      {"token":"%s","intent":"self","valence":0.72},
+                      {"token":"%s","intent":"self","valence":0.72}
+                    ]}
+                    """.formatted(rawGameOne, rawGameTwo));
+            try {
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "private.formative.imprints",
+                        PromptLibrary.getById("private.formative.imprints").getText(),
+                        "Bugdom and Nanosaur were old computer games that still have a hold on me.",
+                        "private_prompt",
+                        UUID.randomUUID().toString()).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals after = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNull(findRecord(after, rawGameOne, SignalIntent.SELF),
+                    "UUID-backed private prompt drift titles should wait for promotion before persisting directly.");
+            SignalRecord videoGames = findRecord(after, "video_games", SignalIntent.SELF);
+            assertNotNull(videoGames,
+                    "Unresolved formative game-title candidates should still create the useful video_games parent.");
+            assertTrue(videoGames.getValence() >= 0.24,
+                    "Repeated exact game support should make the parent more than a one-off weak hint.");
+            assertNull(findRecord(after, "gaming", SignalIntent.SELF),
+                    "Formative drift parent hints should not fan out into every broad hierarchy parent.");
+        }
+    }
+
+    @Test
+    void privateFormativePrompt_reinforcesAnimeParentFromMultipleSpecificAnimeRefs() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 95436L;
+            String rawAnimeOne = SignalNormalizer.normalizeOne(
+                    "yu_yu_hakusho_probe_" + UUID.randomUUID().toString().replace("-", ""));
+            String rawAnimeTwo = SignalNormalizer.normalizeOne(
+                    "dragon_ball_z_probe_" + UUID.randomUUID().toString().replace("-", ""));
+            assertNotNull(rawAnimeOne);
+            assertNotNull(rawAnimeTwo);
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[
+                      {"token":"%s","intent":"self","valence":0.62},
+                      {"token":"%s","intent":"self","valence":0.62}
+                    ]}
+                    """.formatted(rawAnimeOne, rawAnimeTwo));
+            try {
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "private.formative.imprints",
+                        PromptLibrary.getById("private.formative.imprints").getText(),
+                        "Vintage anime like DBZ and Yu Yu Hakusho shaped my later Japanese and Asian aesthetic preferences.",
+                        "private_prompt",
+                        UUID.randomUUID().toString()).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals after = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord anime = findRecord(after, "anime", SignalIntent.SELF);
+            assertNotNull(anime,
+                    "Specific unresolved anime titles should create the anime parent before candidate promotion.");
+            assertTrue(anime.getValence() >= 0.24,
+                    "Multiple specific anime references should reinforce anime above a sparse first-hit score.");
+            assertNull(findRecord(after, rawAnimeOne, SignalIntent.SELF),
+                    "Unresolved specific titles should remain drift candidates until promotion.");
+        }
+    }
+
+    @Test
+    void promoteSignalConcept_backfillsAllowedVideoGameParentForPromotedGameTitle() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 95434L;
+            String rawAlias = "nanosaur_alias_" + UUID.randomUUID().toString().replace("-", "");
+            String canonical = "nanosaur_canonical_" + UUID.randomUUID().toString().replace("-", "");
+            String normalizedRaw = SignalNormalizer.normalizeOne(rawAlias);
+            String normalizedCanonical = SignalNormalizer.normalizeOne(canonical);
+            assertNotNull(normalizedRaw);
+            assertNotNull(normalizedCanonical);
+
+            SignalConceptRegistry.observeUnresolved(
+                    normalizedRaw,
+                    "private_prompt",
+                    "old computer games like Bugdom and Nanosaur",
+                    accountId,
+                    SignalIntent.SELF,
+                    0.78);
+
+            assertTrue(mgr.promoteSignalConceptWithDebug(normalizedRaw, normalizedCanonical, "media", List.of("video_games"))
+                    .get(10, TimeUnit.SECONDS).changed);
+
+            waitFor(() -> {
+                Signals afterWait = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+                return findRecord(afterWait, normalizedCanonical, SignalIntent.SELF) != null
+                        && findRecord(afterWait, "video_games", SignalIntent.SELF) != null;
+            }, 5000, "Promotion replay should backfill the promoted game title and video_games parent.");
+
+            Signals after = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNotNull(findRecord(after, normalizedCanonical, SignalIntent.SELF));
+            assertNotNull(findRecord(after, "video_games", SignalIntent.SELF));
+            assertNull(findRecord(after, "gaming", SignalIntent.SELF));
         }
     }
 
@@ -2613,6 +2801,8 @@ class CalypsoApiIntegrationTest {
             assertNotNull(first);
             assertEquals(PrivatePromptStatus.ACTIVE, first.getAssignment().getStatus());
             assertTrue(first.getPrompt().isSetPromptId());
+            assertTrue(PromptLibrary.silhouetteDomains(first.getPrompt()).contains("formative_imprints"),
+                    "Fresh private prompt scheduling should start with the first missing silhouette domain.");
 
             ActivePrivatePrompt second = mgr.getActivePrivatePrompt(accountId).get(5, TimeUnit.SECONDS);
             assertNotNull(second);
@@ -2672,6 +2862,8 @@ class CalypsoApiIntegrationTest {
             assertNotNull(next);
             assertNotEquals(answered.getAssignment().getInstanceId(), next.getAssignment().getInstanceId());
             assertNotEquals(answered.getPrompt().getPromptId(), next.getPrompt().getPromptId());
+            assertTrue(PromptLibrary.silhouetteDomains(next.getPrompt()).contains("aesthetic_field"),
+                    "After formative coverage, scheduler should move to another uncovered silhouette domain.");
         }
     }
 

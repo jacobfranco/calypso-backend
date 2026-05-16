@@ -16,6 +16,7 @@ public class SilhouetteModeDigest {
     public List<String> sparkTriggers;
     public List<String> sustainabilityNeeds;
     public List<String> aestheticField;
+    public List<String> realWorldComps;
     public List<String> antiPatterns;
     public List<String> tensions;
     public List<String> evidenceSummary;
@@ -31,6 +32,7 @@ public class SilhouetteModeDigest {
         this.sparkTriggers = new ArrayList<>();
         this.sustainabilityNeeds = new ArrayList<>();
         this.aestheticField = new ArrayList<>();
+        this.realWorldComps = new ArrayList<>();
         this.antiPatterns = new ArrayList<>();
         this.tensions = new ArrayList<>();
         this.evidenceSummary = new ArrayList<>();
@@ -43,14 +45,15 @@ public class SilhouetteModeDigest {
         out.put("status", status);
         out.put("weight", SilhouetteModelUtils.clamp01(weight));
         out.put("confidence", SilhouetteModelUtils.clamp01(confidence));
-        out.put("self", safeList(self, 8, 120));
-        out.put("seeking", safeList(seeking, 8, 120));
-        out.put("sparkTriggers", safeList(sparkTriggers, 8, 120));
-        out.put("sustainabilityNeeds", safeList(sustainabilityNeeds, 8, 120));
-        out.put("aestheticField", safeList(aestheticField, 8, 120));
-        out.put("antiPatterns", safeList(antiPatterns, 5, 120));
+        out.put("self", safeList(self, 10, 160));
+        out.put("seeking", safeList(seeking, 10, 160));
+        out.put("sparkTriggers", safeList(sparkTriggers, 10, 160));
+        out.put("sustainabilityNeeds", safeList(sustainabilityNeeds, 10, 160));
+        out.put("aestheticField", safeList(aestheticField, 10, 160));
+        out.put("realWorldComps", safeList(realWorldComps, 10, 160));
+        out.put("antiPatterns", safeList(antiPatterns, 6, 160));
         out.put("tensions", safeList(tensions, 3, 140));
-        out.put("evidenceSummary", safeList(evidenceSummary, 5, 160));
+        out.put("evidenceSummary", safeList(evidenceSummary, 10, 220));
         return out;
     }
 

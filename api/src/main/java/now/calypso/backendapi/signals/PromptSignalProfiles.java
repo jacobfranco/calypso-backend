@@ -98,9 +98,18 @@ public final class PromptSignalProfiles {
                 6, 1, false));
 
         // Private prompt profiles.
+        add(byId, profile("private.formative.imprints",
+                "Extract exact formative media titles, places, websites, games, books, toys, or scenes as concrete self signals. If the answer only lists references, do not add generic nostalgia or formative-games tokens. If the answer explains an emotional imprint, add at most 1-2 typed intent=meta resonance tokens such as nostalgia_whimsical_ps2 or emotional_media_melancholy_adventure.",
+                8, 1, false));
+        add(byId, profile("private.inner.weather",
+                "Extract exact media/music/place/aesthetic references as concrete self signals, then add typed aesthetic or emotional-media meta tokens only when the answer gives a durable feeling pattern.",
+                8, 1, false));
         add(byId, profile("private.fictional.characters",
                 "Extract attraction patterns and relational archetype preferences. Keep only context-free durable concepts as signals; preserve explicit franchise/work titles, but avoid character-name-only tags.",
                 7, 1, false));
+        add(byId, profile("private.gravitational.pull",
+                "Extract partner-side attraction traits with seeking intent. If the pull is an archetype rather than a concrete trait, emit one typed intent=meta attraction_archetype_* token.",
+                6, 1, false));
         add(byId, profile("private.color.presence",
                 "Treat this as vibe and social energy preference context; avoid literal color-only tokens.",
                 5, 1, false));
@@ -122,6 +131,9 @@ public final class PromptSignalProfiles {
         add(byId, profile("private.drawn.to",
                 "Primary output should be context-free seeking preferences for partner traits and lifestyle. Preserve explicit franchise/work titles as self-side taste context when named (for example red_rising), but avoid character-name-only tags.",
                 7, 1, false));
+        add(byId, profile("private.repair.rhythm",
+                "Extract communication, reassurance, autonomy, repair, and conflict-rhythm needs with seeking intent. Avoid vague therapy words unless the answer explicitly supports them.",
+                6, 1, false));
         add(byId, profile("private.music.feels.like",
                 "Extract identity and taste signals; keep derived umbrella tags weaker than explicit artists/genres.",
                 6, 1, false));
@@ -131,12 +143,18 @@ public final class PromptSignalProfiles {
         add(byId, profile("private.makes.you.laugh",
                 "Extract humor style and social tone preferences.",
                 5, 1, false));
+        add(byId, profile("private.humor.language",
+                "Extract concrete humor styles, social play, teasing style, irony/sincerity preferences, and conversational rhythm. Keep named shows/comedians/media if explicit.",
+                6, 1, false));
         add(byId, profile("private.rabbit.hole",
                 "Extract specific curiosity domains and keep broad umbrella tags weaker.",
                 6, 1, false));
         add(byId, profile("private.places.home",
                 "Extract place-style and environment preferences as stable lifestyle context.",
                 5, 1, false));
+        add(byId, profile("private.home.texture",
+                "Extract stable place, environment, domestic rhythm, city/room/late-night atmosphere, and sensory aesthetic signals. Preserve specific named places when explicit.",
+                6, 1, false));
         add(byId, profile("private.great.night",
                 "Extract durable social style and activity preferences. Avoid seasonal, weather, or time-of-day specifics (not 'warm_summer_night'). For balanced or flexible answers ('X but also good with Y'), emit both X and Y as separate signals. Prefer stable concepts like 'home_socializing', 'social_drinking', 'nightlife'.",
                 5, 1, false));

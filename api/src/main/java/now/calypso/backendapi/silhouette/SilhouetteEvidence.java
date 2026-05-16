@@ -54,7 +54,7 @@ public class SilhouetteEvidence {
         if (map == null || map.isEmpty()) {
             return null;
         }
-        String value = SilhouetteModelUtils.text(map.get("value"), 220);
+        String value = SilhouetteModelUtils.text(map.get("value"), 360);
         if (value.isBlank()) {
             return null;
         }
@@ -81,7 +81,7 @@ public class SilhouetteEvidence {
         out.put("id", SilhouetteModelUtils.normalizeId(id, "ev", source + "_" + target + "_" + value + "_" + createdAt));
         out.put("source", normalizeSource(source));
         out.put("target", normalizeTarget(target));
-        out.put("value", SilhouetteModelUtils.text(value, 220));
+        out.put("value", SilhouetteModelUtils.text(value, 360));
         out.put("derivedConceptIds", SilhouetteConcept.normalizedIds(derivedConceptIds, 16));
         out.put("strength", SilhouetteModelUtils.clamp01(strength));
         out.put("confidence", SilhouetteModelUtils.clamp01(confidence));
@@ -95,6 +95,8 @@ public class SilhouetteEvidence {
     public static String normalizeSource(String raw) {
         return SilhouetteModelUtils.oneOf(raw, "fallback",
                 "fictional_comp", "visual_aesthetic", "music", "prompt_answer",
+                "formative_imprint", "attraction_pattern", "social_scene", "home_atmosphere",
+                "humor_play", "sustainability_pattern", "boundary_pattern",
                 "private_prompt", "matchmaking_followup", "prompt_reaction", "behavior",
                 "public_prompt", "fallback");
     }
@@ -102,7 +104,8 @@ public class SilhouetteEvidence {
     public static String normalizeTarget(String raw) {
         return SilhouetteModelUtils.oneOf(raw, "self_expression",
                 "self_expression", "seeking_expression", "spark_triggers",
-                "sustainability_needs", "aesthetic_field", "anti_patterns", "tensions");
+                "sustainability_needs", "aesthetic_field", "real_world_comps",
+                "anti_patterns", "tensions");
     }
 
     public static double defaultSourceWeight(String source) {
@@ -114,6 +117,13 @@ public class SilhouetteEvidence {
             case "fictional_comp" -> 0.80;
             case "visual_aesthetic" -> 0.70;
             case "music" -> 0.60;
+            case "formative_imprint" -> 0.75;
+            case "attraction_pattern" -> 0.75;
+            case "social_scene" -> 0.70;
+            case "home_atmosphere" -> 0.70;
+            case "humor_play" -> 0.65;
+            case "sustainability_pattern" -> 0.80;
+            case "boundary_pattern" -> 0.70;
             case "behavior" -> 1.10;
             case "public_prompt" -> 0.45;
             default -> 0.30;
