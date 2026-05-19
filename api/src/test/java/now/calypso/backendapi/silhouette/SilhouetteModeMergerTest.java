@@ -373,6 +373,219 @@ class SilhouetteModeMergerTest {
         assertFalse(merged.summaryCache.silhouette.toLowerCase().contains("lady gaga"));
     }
 
+    @Test
+    void apply_formativePromptRepairsEasyTravelMisframeIntoDurableFascination() {
+        SilhouettePatch patch = new SilhouettePatch();
+        patch.ops.add(conceptOp("mode_formative_media", "formative media imprints", "self_expression",
+                "childhood sense that international travel is easy and common", "context",
+                "Where in the World Is Carmen Sandiego? Treasures of Knowledge made user think international travel was easy and frequent, inspiring travel aspirations",
+                "formative_imprint", 0.80, 0.75));
+
+        SilhouetteState merged = SilhouetteModeMerger.apply(
+                SilhouetteState.empty(54L),
+                patch,
+                1.0,
+                "private_prompt",
+                "instance",
+                "private.formative.imprints",
+                "event",
+                "Carmen Sandiego made me think travel happened all the time, so I knew as a kid I wanted to do that just to see the world.",
+                System.currentTimeMillis());
+
+        String silhouette = merged.summaryCache.silhouette.toLowerCase();
+        assertTrue(silhouette.contains("world travel fascination since childhood"));
+        assertFalse(silhouette.contains("childhood sense"));
+        assertFalse(silhouette.contains("easy and common"));
+        assertTrue(merged.modes.get(0).evidence.stream()
+                .anyMatch(e -> e.value.toLowerCase().contains("sparked a childhood desire to see the world")));
+    }
+
+    @Test
+    void apply_formativePromptDoesNotConvertAllImprintsToRealWorldCompWhenAnswerMentionsKarateKid() {
+        SilhouettePatch patch = new SilhouettePatch();
+        patch.ops.add(conceptOp("mode_formative_media", "formative media imprints", "self_expression",
+                "world travel fascination since childhood", "context",
+                "Carmen Sandiego sparked a childhood desire to see the world through international travel",
+                "formative_imprint", 0.76, 0.74));
+        patch.ops.add(conceptOp("mode_formative_media", "formative media imprints", "self_expression",
+                "secret-agent adventure fantasy", "context",
+                "Johnny Quest and Carmen Sandiego gave the travel fantasy a secret-agent adventure flavor",
+                "formative_imprint", 0.72, 0.70));
+        patch.ops.add(conceptOp("mode_formative_media", "formative media imprints", "aesthetic_field",
+                "early Asian aesthetic exposure", "context",
+                "Okami, Katamari Damacy, DBZ, and Yu Yu Hakusho exposed the user early to Japanese/Asian aesthetics, influencing later tastes",
+                "formative_imprint", 0.78, 0.74));
+        patch.ops.add(conceptOp("mode_formative_media", "formative media imprints", "real_world_comps",
+                "Wenwen Han / Meiying", "context",
+                "Where in the World Is Carmen Sandiego made travel feel easy, Okami shaped aesthetics, and The Karate Kid (2010)'s female lead shaped attraction patterns",
+                "formative_imprint", 0.74, 0.70));
+
+        SilhouetteState merged = SilhouetteModeMerger.apply(
+                SilhouetteState.empty(55L),
+                patch,
+                1.0,
+                "private_prompt",
+                "instance",
+                "private.formative.imprints",
+                "event",
+                "Carmen Sandiego made me want to see the world. Johnny Quest added secret-agent fantasy. Okami, Katamari, DBZ, and Yu Yu Hakusho shaped Japanese/Asian aesthetic taste. The Karate Kid with Jaden Smith made Meiying feel like a physical type reference.",
+                System.currentTimeMillis());
+
+        SilhouetteMode mode = merged.modes.get(0);
+        assertTrue(mode.selfExpression.stream()
+                .anyMatch(c -> "world travel fascination since childhood".equals(c.label)));
+        assertTrue(mode.selfExpression.stream()
+                .anyMatch(c -> "secret-agent adventure fantasy".equals(c.label)));
+        assertTrue(mode.aestheticField.stream()
+                .anyMatch(c -> "early Asian aesthetic exposure".equals(c.label)));
+        assertTrue(mode.realWorldComps.stream()
+                .anyMatch(c -> "Wenwen Han / Meiying".equals(c.label)));
+        SilhouetteConcept comp = mode.realWorldComps.stream()
+                .filter(c -> "Wenwen Han / Meiying".equals(c.label))
+                .findFirst()
+                .orElseThrow();
+        List<String> compEvidence = mode.evidence.stream()
+                .filter(e -> comp.evidenceIds.contains(e.id))
+                .map(e -> e.value)
+                .toList();
+        assertTrue(compEvidence.stream()
+                .anyMatch(value -> value.contains("non-exclusive physical-type reference point")));
+        assertFalse(compEvidence.stream()
+                .anyMatch(value -> value.toLowerCase().contains("carmen sandiego")));
+
+        String silhouette = merged.summaryCache.silhouette.toLowerCase();
+        assertTrue(silhouette.contains("self:world travel fascination since childhood,secret-agent adventure fantasy"));
+        assertTrue(silhouette.contains("aesthetic:early asian aesthetic exposure"));
+        assertTrue(silhouette.contains("comps:wenwen han / meiying"));
+    }
+
+    @Test
+    void apply_formativePromptKeepsSpecificAestheticLabelAsConceptNotModeHeading() {
+        SilhouettePatch patch = new SilhouettePatch();
+        patch.ops.add(conceptOp("mode_early_asian_aesthetic_exposure", "early Asian aesthetic exposure", "aesthetic_field",
+                "early Asian aesthetic exposure", "context",
+                "Okami, Katamari Damacy, DBZ, and Yu Yu Hakusho exposed the user early to Japanese/Asian aesthetics, influencing later tastes",
+                "formative_imprint", 0.78, 0.74));
+        patch.ops.add(conceptOp("mode_early_asian_aesthetic_exposure", "early Asian aesthetic exposure", "self_expression",
+                "world travel fascination since childhood", "context",
+                "Carmen Sandiego sparked a childhood desire to see the world through international travel",
+                "formative_imprint", 0.76, 0.74));
+
+        SilhouetteState merged = SilhouetteModeMerger.apply(
+                SilhouetteState.empty(56L),
+                patch,
+                1.0,
+                "private_prompt",
+                "instance",
+                "private.formative.imprints",
+                "event",
+                "Okami, Katamari, DBZ, and Yu Yu Hakusho shaped Japanese/Asian aesthetics. Carmen Sandiego made me want to see the world.",
+                System.currentTimeMillis());
+
+        String silhouette = merged.summaryCache.silhouette.toLowerCase();
+        assertEquals("formative media imprints", merged.modes.get(0).label);
+        assertFalse(silhouette.contains("mode: early asian aesthetic exposure"));
+        assertTrue(silhouette.contains("aesthetic:early asian aesthetic exposure"));
+        assertTrue(silhouette.contains("self:world travel fascination since childhood"));
+    }
+
+    @Test
+    void apply_formativePromptCollapsesEquivalentTravelAndSecretAgentAliases() {
+        SilhouettePatch patch = new SilhouettePatch();
+        patch.ops.add(conceptOp("mode_formative_media", "formative media imprints", "self_expression",
+                "childhood world travel fascination", "context",
+                "Where in the World Is Carmen Sandiego game made user think international travel was easy and common, sparking desire to see the world",
+                "formative_imprint", 0.76, 0.74));
+        patch.ops.add(conceptOp("mode_formative_media", "formative media imprints", "self_expression",
+                "world travel fascination since childhood", "context",
+                "Where in the World Is Carmen Sandiego? Treasures of Knowledge and Johnny Quest sparked a childhood desire to see the world through international travel",
+                "formative_imprint", 0.76, 0.74));
+        patch.ops.add(conceptOp("mode_formative_media", "formative media imprints", "self_expression",
+                "secret agent adventure fantasy", "context",
+                "Johnny Quest and Carmen Sandiego inspired user's childhood secret agent fantasy",
+                "formative_imprint", 0.72, 0.70));
+        patch.ops.add(conceptOp("mode_formative_media", "formative media imprints", "self_expression",
+                "secret-agent adventure fantasy", "context",
+                "Where in the World Is Carmen Sandiego? Treasures of Knowledge, Johnny Quest, and Tintin gave the travel fantasy a secret-agent adventure flavor",
+                "formative_imprint", 0.72, 0.70));
+
+        SilhouetteState merged = SilhouetteModeMerger.apply(
+                SilhouetteState.empty(57L),
+                patch,
+                1.0,
+                "private_prompt",
+                "instance",
+                "private.formative.imprints",
+                "event",
+                "Carmen Sandiego Treasures of Knowledge made me want to see the world. Johnny Quest and Tintin added a secret-agent adventure fantasy.",
+                System.currentTimeMillis());
+
+        SilhouetteMode mode = merged.modes.get(0);
+        long travelConcepts = mode.selfExpression.stream()
+                .filter(c -> "world travel fascination since childhood".equals(c.label))
+                .count();
+        long secretAgentConcepts = mode.selfExpression.stream()
+                .filter(c -> "secret-agent adventure fantasy".equals(c.label))
+                .count();
+        assertEquals(1, travelConcepts);
+        assertEquals(1, secretAgentConcepts);
+        assertFalse(mode.selfExpression.stream().anyMatch(c -> "childhood world travel fascination".equals(c.label)));
+        assertFalse(mode.selfExpression.stream().anyMatch(c -> "secret agent adventure fantasy".equals(c.label)));
+        assertEquals(2, mode.selfExpression.size());
+        assertTrue(mode.evidence.stream()
+                .anyMatch(e -> e.value.contains("sparked a childhood desire to see the world through international travel")));
+        assertTrue(mode.evidence.stream()
+                .anyMatch(e -> e.value.contains("Tintin gave the travel fantasy a secret-agent adventure flavor")));
+        assertEquals(2, mode.evidence.size());
+    }
+
+    @Test
+    void apply_dedupesIdenticalEvidenceTextAcrossDifferentEvents() {
+        SilhouettePatch firstPatch = patchWith(conceptOp("mode_formative_media", "formative media imprints",
+                "self_expression",
+                "secret-agent adventure fantasy",
+                "context",
+                "Where in the World Is Carmen Sandiego? Treasures of Knowledge, Johnny Quest, and Tintin gave the travel fantasy a secret-agent adventure flavor",
+                "formative_imprint",
+                0.72,
+                0.70));
+        SilhouetteState first = SilhouetteModeMerger.apply(
+                SilhouetteState.empty(58L),
+                firstPatch,
+                1.0,
+                "private_prompt",
+                "instance",
+                "private.formative.imprints",
+                "event_a",
+                "answer",
+                System.currentTimeMillis());
+
+        SilhouettePatch secondPatch = patchWith(conceptOp("mode_formative_media", "formative media imprints",
+                "self_expression",
+                "secret-agent adventure fantasy",
+                "context",
+                "Where in the World Is Carmen Sandiego? Treasures of Knowledge, Johnny Quest, and Tintin gave the travel fantasy a secret-agent adventure flavor",
+                "formative_imprint",
+                0.72,
+                0.70));
+        SilhouetteState merged = SilhouetteModeMerger.apply(
+                first,
+                secondPatch,
+                1.0,
+                "private_prompt",
+                "instance",
+                "private.formative.imprints",
+                "event_b",
+                "answer",
+                System.currentTimeMillis());
+
+        SilhouetteMode mode = merged.modes.get(0);
+        assertEquals(1, mode.selfExpression.size());
+        assertEquals(1, mode.evidence.size());
+        assertTrue(mode.evidence.get(0).value.contains("secret-agent adventure flavor"));
+        assertTrue(mode.evidence.get(0).derivedConceptIds.contains(mode.selfExpression.get(0).id));
+    }
+
     private static SilhouettePatch patchWith(SilhouettePatch.Op op) {
         SilhouettePatch patch = new SilhouettePatch();
         patch.ops.add(op);

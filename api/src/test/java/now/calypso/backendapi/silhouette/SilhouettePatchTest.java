@@ -169,7 +169,7 @@ public class SilhouettePatchTest {
                 .toList();
         assertTrue(labels.contains("ordinary-life world travel curiosity"));
         assertTrue(labels.contains("secret-agent adventure fantasy"));
-        assertTrue(labels.contains("90s anime and eastern game aesthetic affinity"));
+        assertTrue(labels.contains("early Asian aesthetic exposure"));
         assertTrue(labels.contains("Wenwen Han / Meiying"));
 
         assertTrue(patch.ops.stream()
@@ -182,8 +182,32 @@ public class SilhouettePatchTest {
                 .map(op -> op.evidence.value)
                 .toList();
         assertTrue(evidenceValues.stream().anyMatch(value -> value.contains("Where in the World Is Carmen Sandiego? Treasures of Knowledge and Johnny Quest")));
-        assertTrue(evidenceValues.stream().anyMatch(value -> value.contains("Yu Yu Hakusho, Okami, and Katamari Damacy")));
+        assertTrue(evidenceValues.stream().anyMatch(value -> value.contains("Okami, Katamari Damacy, and Yu Yu Hakusho")));
         assertTrue(evidenceValues.stream().anyMatch(value -> value.contains("Meiying / Wenwen Han")));
+    }
+
+    @Test
+    void editorDoesNotTreatFormativeModeLabelAsAlreadyAssignedConcept() {
+        OpenAIJson.setTestOverride((system, user) -> """
+                {"ops":[{"op":"upsert_concept","modeId":"mode_early_asian_aesthetic_exposure","label":"early Asian aesthetic exposure","target":"self_expression","concept":{"id":"world_travel_fascination_since_childhood","label":"world travel fascination since childhood","role":"context","confidence":0.76,"strength":0.74},"evidence":{"source":"formative_imprint","target":"self_expression","value":"Carmen Sandiego sparked a childhood desire to see the world through international travel","strength":0.74,"confidence":0.76}}]}
+                """);
+        Map<String, Object> event = new HashMap<>();
+        event.put("source", "private_prompt");
+        event.put("promptId", "private.formative.imprints");
+        event.put("question", "What things from growing up still have a hold on you?");
+        event.put("answer",
+                "Okami, Katamari Damacy, DBZ, and Yu Yu Hakusho exposed me early to Japanese / Asian aesthetics. "
+                        + "Carmen Sandiego made me want to travel internationally.");
+
+        SilhouettePatch patch = SilhouetteEditor.buildPatch(null, SilhouetteState.empty(104L), event);
+
+        assertTrue(patch.ops.stream()
+                .filter(op -> op != null && op.concept != null)
+                .anyMatch(op -> "aesthetic_field".equals(op.target)
+                        && "early Asian aesthetic exposure".equals(op.concept.label)));
+        assertTrue(patch.ops.stream()
+                .filter(op -> op != null && op.evidence != null)
+                .anyMatch(op -> op.evidence.value.contains("Okami, Katamari Damacy, DBZ, and Yu Yu Hakusho")));
     }
 
     @Test

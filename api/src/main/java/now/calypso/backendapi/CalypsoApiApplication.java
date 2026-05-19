@@ -1,6 +1,7 @@
 package now.calypso.backendapi;
 
 import now.calypso.backend.*;
+import now.calypso.backend.data.ActivePrivatePrompt;
 import now.calypso.backend.data.Importance;
 import now.calypso.backend.data.LocationFilter;
 import now.calypso.backend.data.LocationScope;
@@ -12,8 +13,10 @@ import now.calypso.backend.data.TagPreference;
 import now.calypso.backend.modules.*;
 import now.calypso.backend.serialization.CalypsoSerialization;
 import now.calypso.backendapi.llm.OpenAIJson;
+import now.calypso.backendapi.pojos.GetPrivatePromptChatTurn;
 import now.calypso.backendapi.pojos.PostAccount;
 import now.calypso.backendapi.pojos.PostFilters;
+import now.calypso.backendapi.prompts.PromptLibrary;
 
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
@@ -101,6 +104,12 @@ public class CalypsoApiApplication {
     private static final int IPC_SEED_TIMEOUT_SECONDS = 12;
     private static final long IPC_SEED_ACCOUNT_LOOKUP_TIMEOUT_MS = 12_000L;
     private static final int IPC_SEED_POST_RETRIES = 3;
+    private static final String JACOB_SEED_PHONE = "7046890319";
+    private static final String JACOB_FORMATIVE_PROMPT_ID = "private.formative.imprints";
+    private static final List<String> JACOB_FORMATIVE_MESSAGES = List.of(
+            "I'd say like okami and katamari damacy.  also like this game called where in the world is carmen sandiego, treasures of knowledge.  also johnny quest, and then also like dbz and vintage anime like yu yu hakusho.  then like bugdom and nanosaur and those old computer games.",
+            "i'd say like for okami and katamari and the animes it was just an exposure to japanese / asian aesthetics early which i guess influenced me later.  also like the carmen sandiego game made me as a kid think international travel was easy and like happened all the time, so i like knew when i was a kid i wanted to do that just to see the world.  also like i wanted to be a secret agent bc of that too, also bc of johnny quest.  lowkey also tintin in there too.  also lowkey the karate kid with jaden smith too made me really want to go to china and it also made me attracted to the female lead in that movie bc when i was a kid i had a crush on her and as an adult i think she's like totaly my type lol at least physically.",
+            "also yeah lady gaga i think in the avenue of music esp bc of the karate kid movie that was pretty formative");
 
     public static void main(String[] args) throws NoSuchAlgorithmException, IOException, NoSuchProviderException {
         if (args.length > 1) {
@@ -233,6 +242,8 @@ public class CalypsoApiApplication {
                 }
             }
 
+            seedJacobFormativeScenario(manager);
+
             System.out.println("Seeded " + accountIds.size() + "/" + SEED_NAMES.length
                     + " IPC users with filters and prompts.");
             if (!failures.isEmpty()) {
@@ -252,6 +263,11 @@ public class CalypsoApiApplication {
     }
 
     private static long ensureSeedAccount(CalypsoApiManager manager, String name, String phone, int idx) throws Exception {
+        return ensureSeedAccount(manager, name, phone, idx, "1998-01-01");
+    }
+
+    private static long ensureSeedAccount(CalypsoApiManager manager, String name, String phone, int idx, String birthday)
+            throws Exception {
         Long existing = waitForAccountId(manager, phone, IPC_SEED_ACCOUNT_LOOKUP_TIMEOUT_MS);
         if (existing != null && existing.longValue() >= 0L) {
             return existing.longValue();
@@ -262,7 +278,7 @@ public class CalypsoApiApplication {
         account.locale = "en-US";
         account.agreement = true;
         account.verification_token = "ipc-seed-token-" + idx;
-        account.birthday = "1998-01-01";
+        account.birthday = birthday == null || birthday.isBlank() ? "1998-01-01" : birthday;
         manager.postAccount(account).get(IPC_SEED_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         Long created = waitForAccountId(manager, phone, IPC_SEED_ACCOUNT_LOOKUP_TIMEOUT_MS);
         if (created == null || created.longValue() < 0L) {
@@ -303,6 +319,62 @@ public class CalypsoApiApplication {
             throw lastError;
         }
         throw new IllegalStateException("Failed to post seed answer for prompt " + promptId);
+    }
+
+    private static void seedJacobFormativeScenario(CalypsoApiManager manager) {
+        try {
+            long accountId = ensureSeedAccount(manager, "Jacob", JACOB_SEED_PHONE, 704689031, "1999-03-24");
+            manager.postFilters(jacobSeedFilters(), accountId).get(IPC_SEED_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            manager.postPublicPromptSelection(accountId, List.of("prompt.talk.hours"))
+                    .get(IPC_SEED_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            postSeedPromptAnswer(manager, accountId, "prompt.talk.hours", "Jojo's bizarre adventure");
+
+            ActivePrivatePrompt active = ensureJacobFormativePrompt(manager, accountId);
+            if (active == null || active.getAssignment() == null) {
+                throw new IllegalStateException("Unable to surface Jacob formative private prompt.");
+            }
+            String instanceId = active.getAssignment().getInstanceId();
+            String question = PromptLibrary.getById(JACOB_FORMATIVE_PROMPT_ID).getText();
+            ArrayList<String> conversation = new ArrayList<>();
+            for (String userMessage : JACOB_FORMATIVE_MESSAGES) {
+                GetPrivatePromptChatTurn turn = manager.postPrivatePromptChatTurn(
+                        accountId,
+                        instanceId,
+                        question,
+                        userMessage,
+                        conversation).get(IPC_SEED_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                conversation.add("User: " + userMessage);
+                if (turn != null && turn.agentMessage != null && !turn.agentMessage.isBlank()) {
+                    conversation.add("Agent: " + turn.agentMessage.trim());
+                }
+            }
+            manager.postPrivatePromptAnswer(accountId, instanceId, String.join("\n", JACOB_FORMATIVE_MESSAGES), conversation)
+                    .get(IPC_SEED_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            System.out.println("Seeded Jacob formative test account " + JACOB_SEED_PHONE + ".");
+        } catch (Exception e) {
+            String reason = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            System.err.println("Jacob formative seed scenario failed: " + reason);
+        }
+    }
+
+    private static ActivePrivatePrompt ensureJacobFormativePrompt(CalypsoApiManager manager, long accountId)
+            throws Exception {
+        ActivePrivatePrompt active = manager.ensureActivePrivatePrompt(accountId)
+                .get(IPC_SEED_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        for (int i = 0; i < 8; i++) {
+            String promptId = active == null || active.getAssignment() == null
+                    ? null
+                    : active.getAssignment().getPromptId();
+            if (JACOB_FORMATIVE_PROMPT_ID.equals(promptId)) {
+                return active;
+            }
+            active = manager.debugSummonNextPrivatePrompt(accountId)
+                    .get(IPC_SEED_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        }
+        String promptId = active == null || active.getAssignment() == null
+                ? null
+                : active.getAssignment().getPromptId();
+        return JACOB_FORMATIVE_PROMPT_ID.equals(promptId) ? active : null;
     }
 
     private static void sleepQuietly(long millis) throws InterruptedException {
@@ -354,6 +426,44 @@ public class CalypsoApiApplication {
         pref.setImportance(Importance.PREFERENCE);
         lifestyle.setPreferences(List.of(pref));
         filters.lifestyle = lifestyle;
+
+        return filters;
+    }
+
+    private static PostFilters jacobSeedFilters() {
+        PostFilters filters = new PostFilters();
+
+        ModeFilter relationshipMode = new ModeFilter();
+        relationshipMode.setSelf("exploratory");
+        filters.relationshipMode = relationshipMode;
+
+        OneToManyFilter genderFilter = new OneToManyFilter();
+        genderFilter.setSelf("man");
+        genderFilter.setSeeking(List.of("woman"));
+        filters.gender = genderFilter;
+
+        RangeFilter age = new RangeFilter();
+        age.setSelf(27);
+        age.setMin(18);
+        age.setMax(40);
+        filters.age = age;
+
+        LocationFilter location = new LocationFilter();
+        location.setLat(35.2271);
+        location.setLon(-80.8431);
+        location.setRadiusKm(30000.0);
+        location.setScope(LocationScope.WORLDWIDE);
+        filters.location = location;
+
+        OneToManyFilter politics = new OneToManyFilter();
+        politics.setSelf("left");
+        politics.setImportance(Importance.NOT_IMPORTANT);
+        filters.politics = politics;
+
+        OneToManyFilter religion = new OneToManyFilter();
+        religion.setSelf("agnostic");
+        religion.setImportance(Importance.NOT_IMPORTANT);
+        filters.religion = religion;
 
         return filters;
     }

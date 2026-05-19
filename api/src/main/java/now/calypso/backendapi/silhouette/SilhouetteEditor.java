@@ -71,6 +71,9 @@ public final class SilhouetteEditor {
               Keep both layers: exact titles/places/scenes as source=formative_imprint evidence, and a separate specific
               concept for the matching-relevant affinity those references imply. Treat childhood role fantasies as
               evidence for the imprint or adventure orientation unless current adult identity is explicit.
+              If media made a child think something was easy/common, do not encode the mistaken belief as the
+              durable concept. Encode the lasting orientation it points to, such as world travel fascination since childhood
+              or ordinary-life travel curiosity.
               If the event only names references and gives no feeling/why, keep evidence only; do not create generic
               concepts like "nostalgic formative games".
             - aesthetic_field: visual style, music/scene atmosphere, sensory texture, taste-world, and vibe.
@@ -103,9 +106,9 @@ public final class SilhouetteEditor {
             - For formative_imprints, mode labels should describe the imprint cluster, not the prompt category or a list of titles. Use labels like "formative media imprints", "playful worldly formative imprint", or "adventure travel imprint"; never use "formative media nostalgia".
             - For formative_imprints, if one answer contains distinct threads, decompose them into distinct concepts/evidence pairs instead of collapsing them into one broad concept. Example thread types: visual/aesthetic taste, travel/world curiosity, adventure fantasy, early internet/game-world texture.
             - For formative_imprints, preserve every distinct "this made me want/notice/imagine" clause as an imprint concept when the answer gives one. Do not let a list of exact game/media titles consume the interpretation.
-            - For formative_imprints, concept labels should name the user's lasting orientation, not just the reference. Good labels include "ordinary-life world travel curiosity", "secret-agent adventure fantasy", or "playful surreal eastern aesthetic affinity" when supported by the answer.
+            - For formative_imprints, concept labels should name the user's lasting orientation, not just the reference or the child's mistaken model of the world. Good labels include "world travel fascination since childhood", "ordinary-life world travel curiosity", "secret-agent adventure fantasy", or "playful surreal eastern aesthetic affinity" when supported by the answer.
             - For formative_imprints, evidence.value should briefly connect the reference to the imprint (for example, "Carmen Sandiego made international travel feel exciting, ordinary, and livable"), not only name the title, unless the answer is reference-only.
-            - For formative_imprints, never use lossy prompt-echo labels such as "nostalgic formative media and worldview shaping", "formative media and aesthetic imprint", or "asian aesthetic influence from formative games". Split those into the actual imprints named by the answer.
+            - For formative_imprints, never use lossy prompt-echo labels such as "nostalgic formative media and worldview shaping", "formative media and aesthetic imprint", "asian aesthetic influence from formative games", "childhood sense of easy international travel", or "childhood sense that international travel is easy and common". Split those into the actual imprints named by the answer.
             - For formative attraction/crush references, do not frame one childhood media crush as the user's whole adult
               type or current fixation. Use real_world_comps for the exact person/reference and phrase evidence as
               a non-exclusive adult physical-type cue. If the reference is The Karate Kid (2010)'s female lead,
@@ -113,7 +116,6 @@ public final class SilhouetteEditor {
             - Do not turn a bare formative artist/movie-era mention into a silhouette concept unless the user gives a
               lasting taste, identity, attraction, or worldview imprint. Keep references like Lady Gaga as signals unless
               the answer explains what they changed.
-            - Shared exact formative references are light positive match seeds. Adjacent taste-world or worldview overlap is a stronger positive. Lack of overlap is neutral.
             - When an answer explicitly names political movements, ideological positions, or specific intellectual domains, derive that orientation directly as the concept label (e.g., "progressive political identity", "leftist alignment", "cosmological curiosity", "startup founder identity") rather than abstracting to general traits like "curiosity", "intellectual interest", or "openness".
             - Use source=fictional_comp for fictional/character comparisons.
             - Use source=visual_aesthetic for visual aesthetics.
@@ -162,12 +164,12 @@ public final class SilhouetteEditor {
         }
         if (parsed != null && !parsed.isEmpty()) {
             maybeAugmentFictionalCompEvidence(parsed, promptId, question, answer);
-            maybeAugmentFormativeImprintsFromAnswer(parsed, promptId, answer);
+            augmentFormativeImprintsFromAnswer(parsed, promptId, answer);
             return parsed;
         }
         SilhouettePatch fallback = heuristicFallbackPatch(source, promptId, question, answer);
         maybeAugmentFictionalCompEvidence(fallback, promptId, question, answer);
-        maybeAugmentFormativeImprintsFromAnswer(fallback, promptId, answer);
+        augmentFormativeImprintsFromAnswer(fallback, promptId, answer);
         return fallback;
     }
 
@@ -412,12 +414,12 @@ public final class SilhouetteEditor {
         }
     }
 
-    private static void maybeAugmentFormativeImprintsFromAnswer(
+    public static SilhouettePatch augmentFormativeImprintsFromAnswer(
             SilhouettePatch patch,
             String promptId,
             String answer) {
         if (patch == null || answer == null || answer.isBlank() || !isFormativePrompt(promptId)) {
-            return;
+            return patch == null ? SilhouettePatch.empty() : patch;
         }
         String lower = answer.toLowerCase(Locale.ROOT);
         boolean hasCarmen = containsAny(lower, "carmen sandiego", "treasures of knowledge", "where in the world");
@@ -442,12 +444,12 @@ public final class SilhouetteEditor {
                     "everyday",
                     "local life",
                     "lived culture");
-            String label = ordinary ? "ordinary-life world travel curiosity" : "world travel curiosity";
+            String label = ordinary ? "ordinary-life world travel curiosity" : "world travel fascination since childhood";
             String reference = joinedReferences(formativeCarmenReference(lower),
                     hasJohnnyQuest ? "Johnny Quest" : null);
             String value = ordinary
-                    ? reference + " made international travel feel exciting and close to ordinary life"
-                    : reference + " made international travel feel exciting and reachable";
+                    ? reference + " sparked a childhood desire to see the world and ordinary life in other countries"
+                    : reference + " sparked a childhood desire to see the world through international travel";
             addFormativeConceptIfMissing(patch, "self_expression", label, value, 0.76, 0.74);
         }
 
@@ -471,23 +473,21 @@ public final class SilhouetteEditor {
             boolean eastern = containsAny(lower, "asian", "eastern", "japanese", "okami", "katamari",
                     "anime", "yuyu", "yu yu", "hakusho", "yu-yu");
             String label;
-            if (hasAnime && eastern && hasOkamiKatamari) {
-                label = "90s anime and eastern game aesthetic affinity";
-            } else if (playfulSurreal && eastern) {
+            if (playfulSurreal && eastern) {
                 label = "playful surreal eastern aesthetic affinity";
+            } else if (eastern && (hasAnime || hasOkamiKatamari)) {
+                label = "early Asian aesthetic exposure";
             } else if (eastern) {
                 label = "eastern aesthetic affinity";
             } else {
                 label = "playful surreal aesthetic affinity";
             }
-            String reference = hasAnime && hasOkamiKatamari
-                    ? "Yu Yu Hakusho, Okami, and Katamari Damacy"
-                    : hasAnime ? "90s anime" : "Okami and Katamari Damacy";
+            String reference = formativeAestheticReference(lower, hasAnime, hasOkamiKatamari);
             addFormativeConceptIfMissing(
                     patch,
                     "aesthetic_field",
                     label,
-                    reference + " shaped later aesthetic preferences",
+                    reference + " exposed the user early to Japanese/Asian aesthetics, influencing later tastes",
                     0.78,
                     0.74);
         }
@@ -518,6 +518,7 @@ public final class SilhouetteEditor {
                     0.74,
                     0.70);
         }
+        return patch;
     }
 
     private static boolean isFormativePrompt(String promptId) {
@@ -550,6 +551,29 @@ public final class SilhouetteEditor {
             return "Where in the World Is Carmen Sandiego?";
         }
         return "Carmen Sandiego";
+    }
+
+    private static String formativeAestheticReference(String lowerAnswer, boolean hasAnime, boolean hasOkamiKatamari) {
+        ArrayList<String> refs = new ArrayList<>();
+        if (containsAny(lowerAnswer, "okami")) {
+            refs.add("Okami");
+        }
+        if (containsAny(lowerAnswer, "katamari")) {
+            refs.add("Katamari Damacy");
+        }
+        if (containsAny(lowerAnswer, "dbz", "dragon ball", "dragonball")) {
+            refs.add("DBZ");
+        }
+        if (containsAny(lowerAnswer, "yuyu", "yu yu", "hakusho", "yu-yu")) {
+            refs.add("Yu Yu Hakusho");
+        }
+        if (refs.isEmpty() && hasAnime) {
+            refs.add("vintage anime");
+        }
+        if (refs.isEmpty() && hasOkamiKatamari) {
+            refs.add("Okami and Katamari Damacy");
+        }
+        return joinedReferences(refs.toArray(String[]::new));
     }
 
     private static String joinedReferences(String... refs) {
@@ -610,9 +634,6 @@ public final class SilhouetteEditor {
                 continue;
             }
             if (op.concept != null && key.equals(SilhouetteModelUtils.normalizeKey(op.concept.label))) {
-                return true;
-            }
-            if (key.equals(SilhouetteModelUtils.normalizeKey(op.label))) {
                 return true;
             }
         }

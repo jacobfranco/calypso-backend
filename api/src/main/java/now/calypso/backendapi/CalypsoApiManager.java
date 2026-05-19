@@ -36,6 +36,7 @@ import now.calypso.backendapi.silhouette.SilhouetteConcept;
 import now.calypso.backendapi.silhouette.SilhouetteDigest;
 import now.calypso.backendapi.silhouette.SilhouetteEvidence;
 import now.calypso.backendapi.silhouette.SilhouetteModeMerger;
+import now.calypso.backendapi.silhouette.SilhouetteModeDigest;
 import now.calypso.backendapi.silhouette.SilhouettePatch;
 import now.calypso.backendapi.silhouette.SilhouetteState;
 import now.calypso.backend.*;
@@ -62,6 +63,7 @@ public class CalypsoApiManager {
     private final ConcurrentHashMap<Long, CompletableFuture<Void>> matchRefillRequestByAccount = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Long> lastMatchRefillRequestAtByAccount = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CompletableFuture<Void>> facecardRerankByDeckKey = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Deque<Map<String, Object>>> adminRerankEventsByViewer = new ConcurrentHashMap<>();
 
     // Modules
     public static final String CORE_MODULE_NAME = Core.class.getName();
@@ -136,7 +138,7 @@ public class CalypsoApiManager {
     private static final long PRIVATE_PROMPT_SKIP_COOLDOWN_MS = 24L * 60 * 60 * 1000;
     private static final long PRIVATE_PROMPT_DEFAULT_SNOOZE_MS = 12L * 60 * 60 * 1000;
     private static final int PRIVATE_PROMPT_DAILY_SPAWN_HOUR = 20;
-    private static final int PRIVATE_PROMPT_BODY_LIMIT = 1200;
+    private static final int PRIVATE_PROMPT_BODY_LIMIT = 2000;
     private static final long MATCHMAKING_FOLLOWUP_COOLDOWN_MS = 24L * 60 * 60 * 1000;
     private static final int MATCHMAKING_FOLLOWUP_DEFAULT_LIMIT = 20;
     private static final String MATCHMAKING_FOLLOWUP_PROMPT_ID = "private.matchmaking.followup";
@@ -189,6 +191,7 @@ public class CalypsoApiManager {
     // At count=1 → ~0.20; count=5 → ~0.56; count=10 → ~0.71; count=20+ → ~0.83+.
     private static final double VALENCE_COUNT_CEILING_SOFTNESS = 4.0;
     private static final String SIGNAL_HIERARCHY_DERIVED_SOURCE = "signal_hierarchy_derived";
+    private static final int ADMIN_RERANK_EVENT_LIMIT_PER_VIEWER = 200;
     private static final Set<String> FORMATIVE_ALLOWED_DERIVED_PARENT_SIGNALS = Set.of(
             "video_games",
             "anime",
@@ -209,7 +212,7 @@ public class CalypsoApiManager {
     private static final int SILHOUETTE_EVENT_CONTEXT_CHARS = 1800;
     private static final int SILHOUETTE_EVENT_CONVERSATION_LINES = 16;
     private static final int SILHOUETTE_EVENT_CONVERSATION_LINE_CHARS = 240;
-    private static final int SILHOUETTE_DELTA_ANSWER_CHARS = 1200;
+    private static final int SILHOUETTE_DELTA_ANSWER_CHARS = 1600;
     private static final int SILHOUETTE_DELTA_TAIL_CHARS = 520;
     private static final Set<String> SILHOUETTE_GENERIC_META_SUBSTRINGS = Set.of(
             "focuses on lifestyle",
@@ -4808,12 +4811,32 @@ public class CalypsoApiManager {
                                 if (derivedExpansion) {
                                     effectiveWeight *= SIGNAL_HIERARCHY_DERIVED_VALENCE_SCALE;
                                 }
+                                String effectiveSource = derivedExpansion ? SIGNAL_HIERARCHY_DERIVED_SOURCE
+                                        : normalizedSource;
+                                String effectiveSourceId = derivedExpansion
+                                        ? (hierarchySourceId != null ? hierarchySourceId : null)
+                                        : normalizedSourceId;
                                 String key = recordKey(expandedToken, intent);
                                 boolean seenInCurrentWriteForKey = !seenInCurrentWrite.add(key);
                                 SignalRecord record = map.get(key);
                                 int priorCount = record == null
                                         ? 0
                                         : (record.isSetCount() ? Math.max(1, record.getCount()) : 1);
+                                boolean promotionParentReplay = record != null
+                                        && derivedExpansion
+                                        && normalizedSource.contains("signal_concept_promotion")
+                                        && isAllowedFormativeDerivedParent(expandedToken);
+                                if (promotionParentReplay) {
+                                    continue;
+                                }
+                                boolean sameSourceReplay = record != null
+                                        && effectiveSourceId != null
+                                        && record.isSetSourceId()
+                                        && effectiveSourceId.equals(record.getSourceId());
+                                if (sameSourceReplay) {
+                                    continue;
+                                }
+                                boolean countsAsIndependentSource = record == null || !seenInCurrentWriteForKey;
                                 double scaledIncoming = clampSigned(baseValence * effectiveWeight);
                                 scaledIncoming = clampSigned(
                                         scaledIncoming
@@ -4835,7 +4858,9 @@ public class CalypsoApiManager {
                                     record.setFirstSeen(now);
                                     nextCount = 1;
                                 } else {
-                                    nextCount = record.isSetCount() ? record.getCount() + 1 : 1;
+                                    nextCount = countsAsIndependentSource
+                                            ? (record.isSetCount() ? record.getCount() + 1 : 1)
+                                            : priorCount;
                                     if (!record.isSetFirstSeen())
                                         record.setFirstSeen(now);
                                     if (record.getToken() == null || record.getToken().isBlank()) {
@@ -4843,6 +4868,9 @@ public class CalypsoApiManager {
                                     }
                                 }
                                 record.setCount(nextCount);
+                                int valenceCeilingCount = countsAsIndependentSource
+                                        ? nextCount
+                                        : Math.max(nextCount, priorCount + 1);
                                 record.setToken(expandedToken);
                                 record.setCanonicalToken(expandedToken);
                                 String storedRawToken;
@@ -4852,21 +4880,6 @@ public class CalypsoApiManager {
                                     storedRawToken = rawToken;
                                 } else {
                                     storedRawToken = expandedToken;
-                                }
-                                String effectiveSource = derivedExpansion ? SIGNAL_HIERARCHY_DERIVED_SOURCE
-                                        : normalizedSource;
-                                String effectiveSourceId = derivedExpansion
-                                        ? (hierarchySourceId != null ? hierarchySourceId : null)
-                                        : normalizedSourceId;
-                                // Idempotency: if this derived/parent signal was already written
-                                // from the same hierarchy source (e.g. two child promotions from
-                                // the same answer), skip to avoid double-counting the parent.
-                                if (derivedExpansion
-                                        && effectiveSourceId != null
-                                        && record != null
-                                        && record.isSetSourceId()
-                                        && effectiveSourceId.equals(record.getSourceId())) {
-                                    continue;
                                 }
                                 boolean preserveExistingCoreAttribution = derivedExpansion
                                         && priorCount > 0
@@ -4898,7 +4911,7 @@ public class CalypsoApiManager {
                                 if (priorCount > 0 && record.isSetValence()) {
                                     double previousValence = clampSigned(record.getValence());
                                     double blended = blendStoredValence(previousValence, scaledIncoming, priorCount);
-                                    record.setValence(applyValenceCountCeiling(blended, nextCount));
+                                    record.setValence(applyValenceCountCeiling(blended, valenceCeilingCount));
                                 } else {
                                     // First observation: store the source-dampened value directly.
                                     // The ceiling applies only on subsequent blends to govern growth rate.
@@ -5280,7 +5293,7 @@ public class CalypsoApiManager {
                 break;
             }
         }
-        return out;
+        return SilhouetteEditor.augmentFormativeImprintsFromAnswer(out, promptId, answer);
     }
 
     private static String[] silhouetteModeRef(SilhouettePatch patch) {
@@ -5891,7 +5904,7 @@ public class CalypsoApiManager {
                 double softenedMagnitude = Math.max(incomingMagnitude, prevMagnitude - soften);
                 return clampSigned(prevSign * softenedMagnitude);
             }
-            double lift = (1.0 - prevMagnitude) * incomingMagnitude * (0.22 + (0.18 * countBoost));
+            double lift = (1.0 - prevMagnitude) * incomingMagnitude * (0.34 + (0.26 * countBoost));
             double reinforcedMagnitude = Math.min(1.0, prevMagnitude + lift);
             return clampSigned(prevSign * reinforcedMagnitude);
         }
@@ -6350,7 +6363,58 @@ public class CalypsoApiManager {
 
     private static String silhouetteContext(Map<String, Object> silhouetteMap) {
         SilhouetteState state = SilhouetteState.fromMap(silhouetteMap, mapLong(silhouetteMap, "accountId", 0L));
-        return state.digest(2400);
+        SilhouetteDigest digest = SilhouetteDigest.fromState(state);
+        StringBuilder buf = new StringBuilder();
+        String summary = state.summaryCache == null ? null : clampShort(state.summaryCache.silhouette, 700);
+        if (summary != null && !summary.isBlank()) {
+            buf.append("summary: ").append(summary).append('\n');
+        }
+        buf.append("maturity=").append(SilhouetteState.normalizeMaturity(state.maturity)).append('\n');
+        if (digest.topModes != null) {
+            for (SilhouetteModeDigest mode : digest.topModes) {
+                if (mode == null) {
+                    continue;
+                }
+                String label = mode.label == null || mode.label.isBlank() ? mode.id : mode.label;
+                buf.append("mode: ").append(label == null ? "mode" : label)
+                        .append(" [").append(mode.status == null ? "emerging" : mode.status).append("]")
+                        .append(" w=").append(String.format(Locale.ROOT, "%.2f", clamp01(mode.weight)))
+                        .append(" c=").append(String.format(Locale.ROOT, "%.2f", clamp01(mode.confidence)))
+                        .append('\n');
+                appendSilhouetteContextList(buf, "self", mode.self, 5);
+                appendSilhouetteContextList(buf, "seeking", mode.seeking, 4);
+                appendSilhouetteContextList(buf, "spark", mode.sparkTriggers, 5);
+                appendSilhouetteContextList(buf, "comps", mode.realWorldComps, 4);
+                appendSilhouetteContextList(buf, "sustain", mode.sustainabilityNeeds, 4);
+                appendSilhouetteContextList(buf, "aesthetic", mode.aestheticField, 4);
+                appendSilhouetteContextList(buf, "anti", mode.antiPatterns, 3);
+                appendSilhouetteContextList(buf, "tensions", mode.tensions, 3);
+                appendSilhouetteContextList(buf, "evidence", mode.evidenceSummary, 6);
+            }
+        }
+        appendSilhouetteContextList(buf, "questions", digest.openQuestions, 4);
+        String out = clampShort(buf.toString(), 2400);
+        return out == null ? "" : out;
+    }
+
+    private static void appendSilhouetteContextList(StringBuilder buf, String label, List<String> values, int limit) {
+        if (buf == null || label == null || values == null || values.isEmpty()) {
+            return;
+        }
+        ArrayList<String> kept = new ArrayList<>();
+        for (String value : values) {
+            String text = clampShort(value, 220);
+            if (text == null || text.isBlank()) {
+                continue;
+            }
+            kept.add(text);
+            if (kept.size() >= Math.max(1, limit)) {
+                break;
+            }
+        }
+        if (!kept.isEmpty()) {
+            buf.append(label).append(": ").append(String.join("; ", kept)).append('\n');
+        }
     }
 
     private static String silhouetteMaturity(Map<String, Object> silhouetteMap) {
@@ -6525,6 +6589,16 @@ public class CalypsoApiManager {
                 debug.put("scoreAfterTier3", finalScore);
                 GetMatch rerankedMatch = new GetMatch(candidate.account, finalScore, candidate.computedAt, debug);
                 rerankedMatch.sharedSignals = candidate.sharedSignals;
+                recordAdminRerankEvent(
+                        viewerId,
+                        surface,
+                        candidate,
+                        rerankedMatch,
+                        decision,
+                        stage2Norm,
+                        compatibility,
+                        confidence,
+                        appliedWeight);
                 reranked.add(rerankedMatch);
             }
 
@@ -6541,6 +6615,76 @@ public class CalypsoApiManager {
                     LOG.warn("Failed to apply tier3 rerank for account {}", viewerId, ex);
                     return limitedStage2;
                 });
+    }
+
+    private void recordAdminRerankEvent(
+            long viewerId,
+            String surface,
+            GetMatch before,
+            GetMatch after,
+            MatchReranker.Decision decision,
+            double stage2Norm,
+            double compatibility,
+            double confidence,
+            double appliedWeight) {
+        if (before == null || after == null || after.account == null || decision == null) {
+            return;
+        }
+        double beforeScore = before.score;
+        double afterScore = after.score;
+        double netChange = afterScore - beforeScore;
+        LinkedHashMap<String, Object> event = new LinkedHashMap<>();
+        event.put("createdAt", System.currentTimeMillis());
+        event.put("surface", surface == null || surface.isBlank() ? "unknown" : surface.trim());
+        event.put("viewerId", CalypsoHelpers.serializeAccountId(viewerId));
+        event.put("candidateId", after.account.id);
+        event.put("candidateName", after.account.name);
+        event.put("scoreBefore", beforeScore);
+        event.put("scoreAfter", afterScore);
+        event.put("netChange", netChange);
+        event.put("percentChange", Math.abs(beforeScore) <= 1.0e-9 ? null : (netChange / Math.abs(beforeScore)) * 100.0);
+        event.put("tier2Normalized", stage2Norm);
+        event.put("tier3Compatibility", compatibility);
+        event.put("tier3Confidence", confidence);
+        event.put("tier3AppliedWeight", appliedWeight);
+        event.put("recommendedUse", decision.recommendedUse);
+        event.put("fitSummaryInternal", clampShort(decision.fitSummaryInternal, 260));
+        event.put("whyItWorks", clampAdminStringList(decision.whyItWorks, 4, 160));
+        event.put("risks", clampAdminStringList(decision.risks, 4, 160));
+        event.put("missingInfo", clampAdminStringList(decision.missingInfo, 5, 160));
+        event.put("conversationSeeds", clampAdminStringList(decision.conversationSeeds, 4, 160));
+        if (decision.bestModePair != null) {
+            LinkedHashMap<String, Object> bestModePair = new LinkedHashMap<>();
+            bestModePair.put("viewerModeId", decision.bestModePair.viewerModeId);
+            bestModePair.put("candidateModeId", decision.bestModePair.candidateModeId);
+            event.put("bestModePair", bestModePair);
+        }
+
+        Deque<Map<String, Object>> events = adminRerankEventsByViewer.computeIfAbsent(
+                viewerId,
+                ignored -> new ConcurrentLinkedDeque<>());
+        events.addFirst(event);
+        while (events.size() > ADMIN_RERANK_EVENT_LIMIT_PER_VIEWER) {
+            events.pollLast();
+        }
+    }
+
+    private static List<String> clampAdminStringList(List<String> raw, int maxItems, int maxChars) {
+        if (raw == null || raw.isEmpty()) {
+            return List.of();
+        }
+        ArrayList<String> out = new ArrayList<>();
+        for (String value : raw) {
+            String text = clampShort(value, maxChars);
+            if (text == null) {
+                continue;
+            }
+            out.add(text);
+            if (out.size() >= Math.max(1, maxItems)) {
+                break;
+            }
+        }
+        return out;
     }
 
     private CompletableFuture<List<GetMatch>> recordServedExposure(long viewerId, List<GetMatch> served) {
@@ -7369,6 +7513,30 @@ public class CalypsoApiManager {
             fallback.put("pair", null);
             return fallback;
         });
+    }
+
+    public CompletableFuture<Map<String, Object>> getAdminRerankEvents(long requesterId, long viewerId, int limit) {
+        int clamped = Math.max(1, Math.min(ADMIN_RERANK_EVENT_LIMIT_PER_VIEWER, limit));
+        Deque<Map<String, Object>> events = adminRerankEventsByViewer.get(viewerId);
+        ArrayList<Map<String, Object>> rows = new ArrayList<>();
+        if (events != null) {
+            int count = 0;
+            for (Map<String, Object> event : events) {
+                if (event == null) {
+                    continue;
+                }
+                rows.add(new LinkedHashMap<>(event));
+                count++;
+                if (count >= clamped) {
+                    break;
+                }
+            }
+        }
+        LinkedHashMap<String, Object> out = new LinkedHashMap<>();
+        out.put("generatedAt", System.currentTimeMillis());
+        out.put("viewerId", CalypsoHelpers.serializeAccountId(viewerId));
+        out.put("events", rows);
+        return CompletableFuture.completedFuture(out);
     }
 
     private static final class ParsedSignalToken {

@@ -620,6 +620,19 @@ public class CalypsoApiController {
         return Mono.fromFuture(manager.getAdminPairScoreDebug(accountId, accountId, targetId, limit));
     }
 
+    @GetMapping("/api/accounts/{id}/admin/rerank-events")
+    public Mono<Map<String, Object>> getAdminRerankEvents(
+            @PathVariable("id") String idStr,
+            @RequestParam(value = "limit", required = false, defaultValue = "50") int limit,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getAdminRerankEvents(accountId, accountId, limit));
+    }
+
     @GetMapping("/api/accounts/{id}/admin/signal-concepts")
     public Mono<GetSignalConceptRegistry> getSignalConceptRegistry(
             @PathVariable("id") String idStr,

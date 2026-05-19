@@ -73,6 +73,10 @@ public final class PrivatePromptUnderstanding {
               If one answer gives multiple imprints, emit separate concept/evidence pairs for each: aesthetic taste,
               travel/world curiosity, role fantasy, social longing, worldview, or specific sensory texture should not
               be collapsed into one umbrella nostalgia concept.
+              If a child thought something was "easy" or "common" because of media, do not store that mistaken
+              childhood belief as the durable concept. Store the lasting adult-facing orientation it produced, such
+              as "world travel fascination since childhood", "ordinary-life world travel curiosity", or
+              "international everyday-life curiosity".
               For each formative concept, evidence.value should connect the reference to the imprint, not only name
               the title. Example: "Carmen Sandiego made international travel feel exciting, ordinary, and livable."
               If a childhood media answer mentions attraction to a real performer/person, use target=real_world_comps
@@ -82,9 +86,10 @@ public final class PrivatePromptUnderstanding {
               the lasting taste, identity, attraction, or worldview imprint. Keep references like Lady Gaga as signals
               unless the answer explains what they changed.
               Bad formative labels: "nostalgic formative media and worldview shaping",
-              "formative media and aesthetic imprint", "asian aesthetic influence from formative games". These are
-              lossy prompt echoes. Split them into the actual imprints the answer gives, such as
-              "playful surreal eastern aesthetic affinity", "ordinary-life world travel curiosity",
+              "formative media and aesthetic imprint", "asian aesthetic influence from formative games",
+              "childhood sense of easy international travel", "childhood sense that international travel is easy and common". These are
+              lossy prompt echoes or causal notes. Split them into the actual imprints the answer gives, such as
+              "playful surreal eastern aesthetic affinity", "world travel fascination since childhood", "ordinary-life world travel curiosity",
               "secret-agent adventure fantasy", or "early 2000s game-world texture" when supported.
             - aesthetic_field: visual, musical, sensory, style-world, and vibe patterns.
             - real_world_comps: exact real people, celebrities, public figures, or actors the user names as attraction

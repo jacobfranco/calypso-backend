@@ -1687,10 +1687,30 @@ class CalypsoApiIntegrationTest {
             SignalRecord videoGames = findRecord(after, "video_games", SignalIntent.SELF);
             assertNotNull(videoGames,
                     "Unresolved formative game-title candidates should still create the useful video_games parent.");
+            assertEquals(1, videoGames.getCount(),
+                    "Multiple title examples inside one private answer should count as one independent source.");
             assertTrue(videoGames.getValence() >= 0.24,
                     "Repeated exact game support should make the parent more than a one-off weak hint.");
             assertNull(findRecord(after, "gaming", SignalIntent.SELF),
                     "Formative drift parent hints should not fan out into every broad hierarchy parent.");
+
+            String canonicalOne = "nanosaur_promoted_" + UUID.randomUUID().toString().replace("-", "");
+            String canonicalTwo = "bugdom_promoted_" + UUID.randomUUID().toString().replace("-", "");
+            assertTrue(mgr.promoteSignalConceptWithDebug(rawGameOne, canonicalOne, "media", List.of("video_games"))
+                    .get(10, TimeUnit.SECONDS).changed);
+            assertTrue(mgr.promoteSignalConceptWithDebug(rawGameTwo, canonicalTwo, "media", List.of("video_games"))
+                    .get(10, TimeUnit.SECONDS).changed);
+            waitFor(() -> {
+                Signals promoted = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+                return findRecord(promoted, canonicalOne, SignalIntent.SELF) != null
+                        && findRecord(promoted, canonicalTwo, SignalIntent.SELF) != null;
+            }, 5000, "Promotion replay should backfill exact promoted titles.");
+
+            Signals promoted = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord promotedVideoGames = findRecord(promoted, "video_games", SignalIntent.SELF);
+            assertNotNull(promotedVideoGames);
+            assertEquals(1, promotedVideoGames.getCount(),
+                    "Promoting several exact game titles from the same answer should not double-count the video_games parent.");
         }
     }
 
@@ -1728,10 +1748,48 @@ class CalypsoApiIntegrationTest {
             SignalRecord anime = findRecord(after, "anime", SignalIntent.SELF);
             assertNotNull(anime,
                     "Specific unresolved anime titles should create the anime parent before candidate promotion.");
+            assertEquals(1, anime.getCount(),
+                    "Multiple specific anime references in one private answer should count as one independent source.");
             assertTrue(anime.getValence() >= 0.24,
                     "Multiple specific anime references should reinforce anime above a sparse first-hit score.");
             assertNull(findRecord(after, rawAnimeOne, SignalIntent.SELF),
                     "Unresolved specific titles should remain drift candidates until promotion.");
+        }
+    }
+
+    @Test
+    void extractAndAppendSignalsFromPrompt_repeatedIndependentSourcesLiftValence() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 95437L;
+
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[{\"token\":\"anime\",\"intent\":\"self\",\"valence\":0.56}]}");
+            try {
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "prompt.talk.hours",
+                        PromptLibrary.getById("prompt.talk.hours").getText(),
+                        "I could talk about Jojo's Bizarre Adventure for hours.",
+                        "public_prompt",
+                        "source-public-anime").get(5, TimeUnit.SECONDS);
+                mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "private.formative.imprints",
+                        PromptLibrary.getById("private.formative.imprints").getText(),
+                        "DBZ and Yu Yu Hakusho shaped my Japanese and Asian aesthetic taste later.",
+                        "private_prompt",
+                        "source-private-anime").get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals after = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord anime = findRecord(after, "anime", SignalIntent.SELF);
+            assertNotNull(anime);
+            assertEquals(2, anime.getCount(),
+                    "Public and private prompt observations should count as two independent sources.");
+            assertTrue(anime.getValence() >= 0.25,
+                    "A repeated signal across independent sources should lift above sparse one-off strength.");
         }
     }
 
@@ -2632,6 +2690,17 @@ class CalypsoApiIntegrationTest {
             }
             assertTrue(appliedCount >= 1, "Expected tier3 rerank metadata on at least one facecard.");
             assertTrue(adjustedCount >= 1, "Expected tier3 rerank to change at least one facecard score.");
+            Map<String, Object> audit = mgr.getAdminRerankEvents(viewerId, viewerId, 10).get(5, TimeUnit.SECONDS);
+            assertNotNull(audit);
+            assertTrue(audit.get("events") instanceof List<?>);
+            List<?> events = (List<?>) audit.get("events");
+            assertFalse(events.isEmpty(), "Expected admin rerank audit events after tier3 application.");
+            assertTrue(events.get(0) instanceof Map<?, ?>);
+            Map<?, ?> firstEvent = (Map<?, ?>) events.get(0);
+            assertTrue(firstEvent.containsKey("scoreBefore"));
+            assertTrue(firstEvent.containsKey("scoreAfter"));
+            assertTrue(firstEvent.containsKey("netChange"));
+            assertTrue(firstEvent.containsKey("fitSummaryInternal"));
             assertEquals(1, rerankCalls.get(), "Daily facecard deck should queue at most one rerank for the deck.");
         }
     }

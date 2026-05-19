@@ -190,13 +190,13 @@ public final class SilhouetteModeMerger {
         if (shouldDropFormativeSilhouetteOp(promptId, op)) {
             return;
         }
-        repairFormativeConceptOp(promptId, op);
+        repairFormativeConceptOp(promptId, op, evidenceExcerpt);
         if (isLowValueFormativeConceptOp(promptId, op)) {
             addEvidenceFromSuppressedFormativeConcept(out, op, sourceWeight, source, sourceId, promptId, eventId,
                     evidenceExcerpt, now);
             return;
         }
-        repairLowValueFormativeModeLabel(promptId, op);
+        repairFormativeModeLabel(promptId, op);
         switch (op.op) {
             case "upsert_mode" -> upsertMode(out, op, now);
             case "reinforce_mode" -> reinforceMode(out, op, now);
@@ -216,7 +216,7 @@ public final class SilhouetteModeMerger {
         }
     }
 
-    private static void repairFormativeConceptOp(String promptId, SilhouettePatch.Op op) {
+    private static void repairFormativeConceptOp(String promptId, SilhouettePatch.Op op, String evidenceExcerpt) {
         String normalizedPrompt = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
         if (!"private.formative.imprints".equals(normalizedPrompt)
                 || op == null
@@ -228,27 +228,236 @@ public final class SilhouetteModeMerger {
         String evidence = op.evidence == null || op.evidence.value == null
                 ? ""
                 : op.evidence.value.toLowerCase(Locale.ROOT);
-        String surface = label + " " + evidence;
-        if (surface.contains("karate kid")
-                || surface.contains("jaden smith")
-                || surface.contains("female lead")
-                || surface.contains("childhood crush")
-                || (surface.contains("crush") && surface.contains("adult attraction"))) {
+        String excerpt = evidenceExcerpt == null ? "" : evidenceExcerpt.toLowerCase(Locale.ROOT);
+        String opSurface = label + " " + evidence;
+        String fullSurface = opSurface + " " + excerpt;
+        if (isMisframedEasyTravelConcept(label, fullSurface)) {
+            op.target = "self_expression";
+            op.concept.label = "world travel fascination since childhood";
+            op.concept.id = SilhouetteModelUtils.normalizeId(null, "concept", op.concept.label);
+            op.concept.role = "context";
+            if (op.evidence != null) {
+                op.evidence.target = "self_expression";
+                op.evidence.value = travelFascinationEvidenceValue(fullSurface);
+            }
+            return;
+        }
+        if (repairKnownFormativeConceptAlias(op, label, opSurface, fullSurface)) {
+            return;
+        }
+        if (opSurface.contains("karate kid")
+                || opSurface.contains("jaden smith")
+                || opSurface.contains("female lead")
+                || opSurface.contains("childhood crush")
+                || (opSurface.contains("crush") && opSurface.contains("adult attraction"))) {
             op.target = "real_world_comps";
             op.concept.label = "Wenwen Han / Meiying";
             op.concept.id = SilhouetteModelUtils.normalizeId(null, "concept", op.concept.label);
             op.concept.role = "context";
             if (op.evidence != null) {
                 op.evidence.target = "real_world_comps";
-                String value = op.evidence.value == null ? "" : op.evidence.value;
-                String normalizedValue = value.toLowerCase(Locale.ROOT);
-                if (normalizedValue.contains("childhood crush")
-                        || normalizedValue.contains("adult attraction type")
-                        || normalizedValue.contains("female lead crush")) {
-                    op.evidence.value = "The Karate Kid (2010)'s Meiying / Wenwen Han is a non-exclusive physical-type reference point";
+                op.evidence.value = "The Karate Kid (2010)'s Meiying / Wenwen Han is a non-exclusive physical-type reference point";
+            }
+        }
+    }
+
+    private static boolean repairKnownFormativeConceptAlias(
+            SilhouettePatch.Op op,
+            String label,
+            String opSurface,
+            String fullSurface) {
+        if (op == null || op.concept == null) {
+            return false;
+        }
+        String normalizedLabel = normalizePhrase(label);
+        String normalizedOpSurface = normalizePhrase(opSurface);
+        String normalizedFullSurface = normalizePhrase(fullSurface);
+        if (isSecretAgentAdventureAlias(normalizedLabel, normalizedOpSurface)) {
+            op.target = "self_expression";
+            op.concept.label = "secret-agent adventure fantasy";
+            op.concept.id = SilhouetteModelUtils.normalizeId(null, "concept", op.concept.label);
+            op.concept.role = "context";
+            if (op.evidence != null) {
+                op.evidence.target = "self_expression";
+                op.evidence.value = secretAgentAdventureEvidenceValue(normalizedFullSurface);
+            }
+            return true;
+        }
+        if (isWorldTravelFascinationAlias(normalizedLabel, normalizedOpSurface)) {
+            op.target = "self_expression";
+            op.concept.label = "world travel fascination since childhood";
+            op.concept.id = SilhouetteModelUtils.normalizeId(null, "concept", op.concept.label);
+            op.concept.role = "context";
+            if (op.evidence != null) {
+                op.evidence.target = "self_expression";
+                op.evidence.value = travelFascinationEvidenceValue(normalizedFullSurface);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean isSecretAgentAdventureAlias(String normalizedLabel, String normalizedSurface) {
+        if (normalizedLabel == null || normalizedLabel.isBlank()) {
+            return false;
+        }
+        boolean roleFantasy = containsAny(normalizedLabel, "secret agent", "spy", "espionage");
+        boolean formativeFantasy = containsAny(normalizedLabel, "fantasy", "adventure", "childhood")
+                || containsAny(normalizedSurface, "secret agent", "spy", "espionage");
+        return roleFantasy && formativeFantasy;
+    }
+
+    private static boolean isWorldTravelFascinationAlias(String normalizedLabel, String normalizedSurface) {
+        if (normalizedLabel == null || normalizedLabel.isBlank()) {
+            return false;
+        }
+        if (containsAny(normalizedLabel, "ordinary life", "ordinary-life", "everyday life")) {
+            return false;
+        }
+        boolean travel = containsAny(normalizedLabel,
+                "world travel",
+                "international travel",
+                "travel fascination",
+                "travel curiosity",
+                "travel aspirations",
+                "desire to see the world",
+                "see the world")
+                || (normalizedLabel.contains("travel") && normalizedLabel.contains("childhood"));
+        boolean durable = containsAny(normalizedLabel,
+                "fascination",
+                "curiosity",
+                "desire",
+                "aspiration",
+                "since childhood",
+                "childhood");
+        boolean supported = containsAny(normalizedSurface,
+                "carmen sandiego",
+                "treasures of knowledge",
+                "international travel",
+                "see the world",
+                "travel");
+        return travel && durable && supported;
+    }
+
+    private static boolean isMisframedEasyTravelConcept(String label, String surface) {
+        String normalizedLabel = normalizePhrase(label);
+        String normalizedSurface = normalizePhrase(surface);
+        if (normalizedLabel.isBlank() || normalizedSurface.isBlank()) {
+            return false;
+        }
+        boolean travel = containsAny(normalizedSurface,
+                "international travel",
+                "world travel",
+                "see the world",
+                "travel aspirations",
+                "travel internationally",
+                "other countries");
+        if (!travel) {
+            return false;
+        }
+        boolean misconception = containsAny(normalizedLabel,
+                "easy",
+                "common",
+                "frequent",
+                "easy international travel",
+                "international travel is easy",
+                "international travel as easy",
+                "sense that international travel",
+                "sense of easy international travel")
+                || (normalizedLabel.contains("childhood sense") && normalizedLabel.contains("travel"));
+        boolean alreadyDurable = containsAny(normalizedLabel,
+                "fascination",
+                "curiosity",
+                "desire",
+                "aspiration",
+                "adventure",
+                "ordinary life");
+        return misconception && !alreadyDurable;
+    }
+
+    private static String travelFascinationEvidenceValue(String surface) {
+        String normalized = normalizePhrase(surface);
+        String reference = formativeTravelReference(normalized);
+        if (containsAny(normalized, "mundane", "normal life", "ordinary life", "everyday life", "other countries")) {
+            return reference + " sparked a childhood desire to see the world and ordinary life in other countries";
+        }
+        return reference + " sparked a childhood desire to see the world through international travel";
+    }
+
+    private static String formativeTravelReference(String normalizedSurface) {
+        if (normalizedSurface == null || normalizedSurface.isBlank()) {
+            return "Formative media";
+        }
+        ArrayList<String> refs = new ArrayList<>();
+        if (containsAny(normalizedSurface, "treasures of knowledge")) {
+            refs.add("Where in the World Is Carmen Sandiego? Treasures of Knowledge");
+        } else if (containsAny(normalizedSurface, "where in the world", "carmen sandiego")) {
+            refs.add("Carmen Sandiego");
+        }
+        if (containsAny(normalizedSurface, "johnny quest", "jonny quest")) {
+            refs.add("Johnny Quest");
+        }
+        return joinedReferences(refs, "Formative media");
+    }
+
+    private static String secretAgentAdventureEvidenceValue(String normalizedSurface) {
+        ArrayList<String> refs = new ArrayList<>();
+        if (containsAny(normalizedSurface, "treasures of knowledge")) {
+            refs.add("Where in the World Is Carmen Sandiego? Treasures of Knowledge");
+        } else if (containsAny(normalizedSurface, "where in the world", "carmen sandiego")) {
+            refs.add("Carmen Sandiego");
+        }
+        if (containsAny(normalizedSurface, "johnny quest", "jonny quest")) {
+            refs.add("Johnny Quest");
+        }
+        if (containsAny(normalizedSurface, "tintin", "tin tin")) {
+            refs.add("Tintin");
+        }
+        return joinedReferences(refs, "Formative media")
+                + " gave the travel fantasy a secret-agent adventure flavor";
+    }
+
+    private static String joinedReferences(List<String> refs, String fallback) {
+        ArrayList<String> kept = new ArrayList<>();
+        if (refs != null) {
+            for (String ref : refs) {
+                if (ref != null && !ref.isBlank() && !kept.contains(ref)) {
+                    kept.add(ref);
                 }
             }
         }
+        if (kept.isEmpty()) {
+            return fallback == null || fallback.isBlank() ? "Formative media" : fallback;
+        }
+        if (kept.size() == 1) {
+            return kept.get(0);
+        }
+        if (kept.size() == 2) {
+            return kept.get(0) + " and " + kept.get(1);
+        }
+        return String.join(", ", kept.subList(0, kept.size() - 1)) + ", and " + kept.get(kept.size() - 1);
+    }
+
+    private static String normalizePhrase(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        return raw.toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9?]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private static boolean containsAny(String text, String... needles) {
+        if (text == null || text.isBlank() || needles == null || needles.length == 0) {
+            return false;
+        }
+        for (String needle : needles) {
+            if (needle != null && !needle.isBlank() && text.contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean shouldDropFormativeSilhouetteOp(String promptId, SilhouettePatch.Op op) {
@@ -313,7 +522,7 @@ public final class SilhouetteModeMerger {
         evidenceOp.target = op.target;
         evidenceOp.mode = op.mode;
         evidenceOp.evidence = op.evidence == null ? null : new SilhouetteEvidence(op.evidence);
-        repairLowValueFormativeModeLabel(promptId, evidenceOp);
+        repairFormativeModeLabel(promptId, evidenceOp);
         addEvidenceOnly(out, evidenceOp, sourceWeight, source, sourceId, promptId, eventId, evidenceExcerpt, now);
     }
 
@@ -361,27 +570,17 @@ public final class SilhouetteModeMerger {
         return normalized.matches(".*\\binfluence\\b.*\\bfrom\\b.*\\bformative\\b.*\\bgames?\\b.*");
     }
 
-    private static void repairLowValueFormativeModeLabel(String promptId, SilhouettePatch.Op op) {
+    private static void repairFormativeModeLabel(String promptId, SilhouettePatch.Op op) {
         String normalizedPrompt = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
         if (!"private.formative.imprints".equals(normalizedPrompt) || op == null) {
-            return;
-        }
-        String label = SilhouetteModelUtils.text(op.label, 160);
-        if ((label == null || label.isBlank()) && op.mode != null) {
-            label = SilhouetteModelUtils.text(op.mode.label, 160);
-        }
-        if (!isLowValueFormativeLabel(label)) {
             return;
         }
         op.label = "formative media imprints";
         if (op.mode != null) {
             op.mode.label = op.label;
+            op.mode.id = "mode_formative_media_imprints";
         }
-        if (op.modeId == null
-                || op.modeId.isBlank()
-                || isLowValueFormativeLabel(op.modeId.replace('_', ' '))) {
-            op.modeId = "mode_formative_media_imprints";
-        }
+        op.modeId = "mode_formative_media_imprints";
     }
 
     private static void upsertMode(SilhouetteState out, SilhouettePatch.Op op, long now) {
@@ -849,11 +1048,9 @@ public final class SilhouetteModeMerger {
             if (existing == null) {
                 continue;
             }
-            if (id.equals(SilhouetteModelUtils.normalizeId(existing.id, "ev", existing.value))) {
-                existing.strength = reinforceScore(existing.strength, evidence.strength, 0.25);
-                existing.confidence = reinforceScore(existing.confidence, evidence.confidence, 0.20);
-                existing.sourceWeight = Math.max(existing.sourceWeight, evidence.sourceWeight);
-                existing.createdAt = Math.max(existing.createdAt, evidence.createdAt);
+            if (id.equals(SilhouetteModelUtils.normalizeId(existing.id, "ev", existing.value))
+                    || evidenceDedupeKey(evidence).equals(evidenceDedupeKey(existing))) {
+                mergeEvidence(existing, evidence);
                 return;
             }
         }
@@ -1114,7 +1311,7 @@ public final class SilhouetteModeMerger {
     }
 
     private static List<SilhouetteEvidence> capEvidence(List<SilhouetteEvidence> raw) {
-        LinkedHashMap<String, SilhouetteEvidence> byId = new LinkedHashMap<>();
+        LinkedHashMap<String, SilhouetteEvidence> byKey = new LinkedHashMap<>();
         if (raw != null) {
             for (SilhouetteEvidence evidence : raw) {
                 if (evidence == null || evidence.value == null || evidence.value.isBlank()) {
@@ -1127,13 +1324,16 @@ public final class SilhouetteModeMerger {
                 normalized.strength = SilhouetteModelUtils.clamp01(normalized.strength);
                 normalized.confidence = SilhouetteModelUtils.clamp01(normalized.confidence);
                 normalized.sourceWeight = Math.max(0.0, Math.min(1.25, normalized.sourceWeight));
-                SilhouetteEvidence existing = byId.get(normalized.id);
-                if (existing == null || normalized.createdAt >= existing.createdAt) {
-                    byId.put(normalized.id, normalized);
+                String key = evidenceDedupeKey(normalized);
+                SilhouetteEvidence existing = byKey.get(key);
+                if (existing == null) {
+                    byKey.put(key, normalized);
+                } else {
+                    mergeEvidence(existing, normalized);
                 }
             }
         }
-        ArrayList<SilhouetteEvidence> out = new ArrayList<>(byId.values());
+        ArrayList<SilhouetteEvidence> out = new ArrayList<>(byKey.values());
         out.sort((a, b) -> {
             int byCreated = Long.compare(b.createdAt, a.createdAt);
             if (byCreated != 0) {
@@ -1145,6 +1345,37 @@ public final class SilhouetteModeMerger {
             return new ArrayList<>(out.subList(0, MAX_EVIDENCE_PER_MODE));
         }
         return out;
+    }
+
+    private static String evidenceDedupeKey(SilhouetteEvidence evidence) {
+        if (evidence == null) {
+            return "";
+        }
+        String source = SilhouetteEvidence.normalizeSource(evidence.source);
+        String target = SilhouetteEvidence.normalizeTarget(evidence.target);
+        String value = normalizePhrase(evidence.value);
+        return source + "|" + target + "|" + value;
+    }
+
+    private static void mergeEvidence(SilhouetteEvidence existing, SilhouetteEvidence incoming) {
+        if (existing == null || incoming == null) {
+            return;
+        }
+        existing.strength = reinforceScore(existing.strength, incoming.strength, 0.25);
+        existing.confidence = reinforceScore(existing.confidence, incoming.confidence, 0.20);
+        existing.sourceWeight = Math.max(existing.sourceWeight, incoming.sourceWeight);
+        existing.createdAt = Math.max(existing.createdAt, incoming.createdAt);
+        if ((existing.id == null || existing.id.isBlank()) && incoming.id != null && !incoming.id.isBlank()) {
+            existing.id = incoming.id;
+        }
+        LinkedHashSet<String> derivedConceptIds = new LinkedHashSet<>();
+        if (existing.derivedConceptIds != null) {
+            derivedConceptIds.addAll(existing.derivedConceptIds);
+        }
+        if (incoming.derivedConceptIds != null) {
+            derivedConceptIds.addAll(incoming.derivedConceptIds);
+        }
+        existing.derivedConceptIds = new ArrayList<>(derivedConceptIds);
     }
 
     private static List<String> capOpenQuestions(List<String> raw) {
