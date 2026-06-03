@@ -84,21 +84,21 @@ class CalypsoApiIntegrationTest {
             long accountId = 900L;
             OpenAIJson.setTestOverride((system, user) -> """
                     {"signals":[
-                      {"token":"nfl_enthusiast","intent":"self","confidence":0.91},
-                      {"token":"coffee_lover","intent":"self","confidence":0.88}
+                      {"token":"nfl","intent":"self","confidence":0.91},
+                      {"token":"coffee","intent":"self","confidence":0.88}
                     ]}
                     """);
             try {
                 List<String> tokens = mgr.extractAndAppendSignals(accountId, "prompt", "prompt_like", "prompt#ctx",
                         "ctx")
                         .get(5, TimeUnit.SECONDS);
-                assertEquals(List.of("nfl_enthusiast", "coffee_lover"), tokens);
+                assertEquals(List.of("nfl", "coffee"), tokens);
             } finally {
                 OpenAIJson.clearTestOverride();
             }
 
             Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
-            SignalRecord nfl = findRecord(stored, "nfl_enthusiast", SignalIntent.SELF);
+            SignalRecord nfl = findRecord(stored, "nfl", SignalIntent.SELF);
             assertNotNull(nfl);
             assertEquals("prompt_like", nfl.getSource());
             assertEquals("prompt#ctx", nfl.getSourceId());
@@ -106,10 +106,39 @@ class CalypsoApiIntegrationTest {
             assertEquals(1, nfl.getCount());
             assertEquals(SignalIntent.SELF, nfl.getIntent());
 
-            SignalRecord coffee = findRecord(stored, "coffee_lover", SignalIntent.SELF);
+            SignalRecord coffee = findRecord(stored, "coffee", SignalIntent.SELF);
             assertNotNull(coffee);
             assertEquals("prompt_like", coffee.getSource());
             assertEquals("prompt#ctx", coffee.getSourceId());
+        }
+    }
+
+    @Test
+    void extractAndAppendSignals_seedUnknownTokenQueuesWithoutPersisting() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 9001L;
+            String raw = "seed_unknown_" + UUID.randomUUID().toString().replace("-", "");
+            String normalized = SignalNormalizer.normalizeOne(raw);
+            assertNotNull(normalized);
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"%s","intent":"self","valence":0.77}]}
+                    """.formatted(raw));
+            try {
+                List<String> tokens = mgr.extractAndAppendSignals(accountId, "seed", "seed", "seed#9001",
+                        "seed context").get(5, TimeUnit.SECONDS);
+                assertEquals(List.of(normalized), tokens);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNull(findRecord(stored, normalized, SignalIntent.SELF),
+                    "Unapproved seed extraction candidates should not persist as account signals.");
+            assertTrue(SignalConceptRegistry.candidateSnapshot(500).stream()
+                    .anyMatch(entry -> entry != null && normalized.equals(entry.rawToken)),
+                    "Unapproved seed extraction candidates should be queued for drift review.");
         }
     }
 
@@ -148,7 +177,7 @@ class CalypsoApiIntegrationTest {
             CalypsoApiManager mgr = newManager(ipc);
             long accountId = 901L;
 
-            OpenAIJson.setTestOverride((s, u) -> "{\"signals\":[{\"token\":\"tea_enthusiast\",\"intent\":\"self\"}]}");
+            OpenAIJson.setTestOverride((s, u) -> "{\"signals\":[{\"token\":\"tea\",\"intent\":\"self\"}]}");
             try {
                 mgr.extractAndAppendSignals(accountId, "first", "agent_dm", "dm#thread-1", "first ctx")
                         .get(5, TimeUnit.SECONDS);
@@ -156,7 +185,7 @@ class CalypsoApiIntegrationTest {
                 OpenAIJson.clearTestOverride();
             }
 
-            OpenAIJson.setTestOverride((s, u) -> "{\"signals\":[{\"token\":\"tea_enthusiast\",\"intent\":\"self\"}]}");
+            OpenAIJson.setTestOverride((s, u) -> "{\"signals\":[{\"token\":\"tea\",\"intent\":\"self\"}]}");
             try {
                 mgr.extractAndAppendSignals(accountId, "second", "agent_dm", null, "second ctx").get(5,
                         TimeUnit.SECONDS);
@@ -165,7 +194,7 @@ class CalypsoApiIntegrationTest {
             }
 
             Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
-            SignalRecord record = findRecord(stored, "tea_enthusiast", SignalIntent.SELF);
+            SignalRecord record = findRecord(stored, "tea", SignalIntent.SELF);
             assertNotNull(record);
             assertEquals(2, record.getCount());
             assertEquals("second ctx", record.getLastContext());
@@ -191,10 +220,10 @@ class CalypsoApiIntegrationTest {
                 assertTrue(user.contains("ignore prior instructions"));
                 return """
                         {"signals":[
-                          {"token":"tall_partner","intent":"seeking"},
-                          {"token":"values_kindness","intent":"self"},
-                          {"token":"loves_constant_travel","intent":"self"},
-                          {"token":"risk_taker","intent":"meta"}
+                          {"token":"kindness","intent":"seeking"},
+                          {"token":"kindness","intent":"self"},
+                          {"token":"travel","intent":"self"},
+                          {"token":"ambition","intent":"meta"}
                         ]}
                         """;
             });
@@ -202,21 +231,21 @@ class CalypsoApiIntegrationTest {
                 List<String> tokens = mgr.extractAndAppendSignalsFromAgentConversation(accountId, conversation,
                         "agent_chat", "chat_session_902", "session:902").get(5, TimeUnit.SECONDS);
                 assertEquals(
-                        List.of("tall_partner", "values_kindness", "loves_constant_travel", "risk_taker"),
+                        List.of("kindness", "travel", "ambition"),
                         tokens);
             } finally {
                 OpenAIJson.clearTestOverride();
             }
 
             Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
-            SignalRecord risk = findRecord(stored, "risk_taker", SignalIntent.META);
-            assertNotNull(risk);
-            assertEquals("agent_chat", risk.getSource());
-            assertEquals("chat_session_902", risk.getSourceId());
-            assertEquals("session:902", risk.getLastContext());
-            assertEquals(SignalIntent.META, risk.getIntent());
-            SignalRecord desire = findRecord(stored, "tall_partner", SignalIntent.SEEKING);
-            assertNotNull(desire);
+            SignalRecord travel = findRecord(stored, "travel", SignalIntent.SELF);
+            assertNotNull(travel);
+            assertEquals("agent_chat", travel.getSource());
+            assertEquals("chat_session_902", travel.getSourceId());
+            assertEquals("session:902", travel.getLastContext());
+            assertEquals(SignalIntent.SELF, travel.getIntent());
+            assertNull(findRecord(stored, "ambition", SignalIntent.META));
+            assertNull(findRecord(stored, "kindness", SignalIntent.SEEKING));
         }
     }
 
@@ -226,13 +255,13 @@ class CalypsoApiIntegrationTest {
             CalypsoApiManager mgr = newManager(ipc);
             long accountId = 904L;
             String question = "What are some interests or lifestyles that would make you think 'not my person'?";
-            String answer = "Taylor Swift";
+            String answer = "Reality TV";
             List<String> conversation = List.of(
                     "agent: " + question,
                     "user: " + answer);
 
             OpenAIJson.setTestOverride((system, user) -> """
-                    {"signals":[{"token":"taylor_swift","intent":"self","valence":0.91}]}
+                    {"signals":[{"token":"reality_tv","intent":"self","valence":0.91}]}
                     """);
             try {
                 List<String> tokens = mgr.extractAndAppendSignalsFromPrompt(
@@ -242,18 +271,127 @@ class CalypsoApiIntegrationTest {
                         conversation,
                         "private_prompt",
                         "private#904").get(5, TimeUnit.SECONDS);
-                assertEquals(List.of("taylor_swift"), tokens);
+                assertEquals(List.of("reality_tv"), tokens);
             } finally {
                 OpenAIJson.clearTestOverride();
             }
 
             Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
-            SignalRecord exclusion = findRecord(stored, "taylor_swift", SignalIntent.SEEKING);
+            SignalRecord exclusion = findRecord(stored, "reality_tv", SignalIntent.SEEKING);
             assertNotNull(exclusion);
             assertEquals("private_prompt", exclusion.getSource());
             assertEquals("private#904", exclusion.getSourceId());
             assertTrue(exclusion.isSetValence());
             assertTrue(exclusion.getValence() < 0.0);
+        }
+    }
+
+    @Test
+    void extractAndAppendSignalsFromPrompt_keepsRepairBehaviorSignalsSilhouetteOnly() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 90401L;
+            String question = "What repair dynamic do you really dislike?";
+            String answer = "Vague punishment and guessing games.";
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[
+                      {"token":"dislikes_guessing_games","intent":"self","valence":0.91},
+                      {"token":"vague_punishment","intent":"self","valence":0.83}
+                    ]}
+                    """);
+            List<String> tokens;
+            try {
+                tokens = mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "private.repair.rhythm",
+                        question,
+                        answer,
+                        "private_prompt",
+                        UUID.randomUUID().toString()).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            assertEquals(2, tokens.size());
+            assertTrue(tokens.contains("guessing_games"));
+            assertTrue(tokens.contains("vague_punishment"));
+            Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNull(findRecord(stored, "guessing_games", SignalIntent.SELF));
+            assertNull(findRecord(stored, "guessing_games", SignalIntent.SEEKING));
+            assertNull(findRecord(stored, "vague_punishment", SignalIntent.SELF));
+            assertNull(findRecord(stored, "vague_punishment", SignalIntent.SEEKING));
+            assertNull(findRecord(stored, "dislikes_guessing_games", SignalIntent.SELF));
+            assertNull(findRecord(stored, "dislikes_guessing_games", SignalIntent.SEEKING));
+            assertFalse(SignalConceptRegistry.candidateSnapshot(500).stream()
+                    .anyMatch(entry -> entry != null
+                            && ("guessing_games".equals(entry.rawToken)
+                                    || "vague_punishment".equals(entry.rawToken))));
+        }
+    }
+
+    @Test
+    void extractAndAppendSignalsFromPrompt_keepsUnambiguousRepairProcessSignalsSilhouetteOnlyOutsideRepairContext()
+            throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 90403L;
+            String question = "What is something you noticed recently?";
+            String answer = "Vague punishment makes conversations feel unsafe.";
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"vague_punishment","intent":"self","valence":0.83}]}
+                    """);
+            List<String> tokens;
+            try {
+                tokens = mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "private.hobbies",
+                        question,
+                        answer,
+                        "private_prompt",
+                        UUID.randomUUID().toString()).get(5, TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            assertEquals(List.of("vague_punishment"), tokens);
+            Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            assertNull(findRecord(stored, "vague_punishment", SignalIntent.SELF));
+            assertNull(findRecord(stored, "vague_punishment", SignalIntent.SEEKING));
+        }
+    }
+
+    @Test
+    void extractAndAppendSignalsFromPrompt_keepsGuessingGamesSilhouetteOnlyOutsideRepairContext() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long accountId = 90402L;
+            String question = "What games are you into?";
+            String answer = "I love guessing games with friends.";
+
+            OpenAIJson.setTestOverride((system, user) -> """
+                    {"signals":[{"token":"guessing_games","intent":"self","valence":0.82}]}
+                    """);
+            try {
+                List<String> tokens = mgr.extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        "private.hobbies",
+                        question,
+                        answer,
+                        "private_prompt",
+                        UUID.randomUUID().toString()).get(5, TimeUnit.SECONDS);
+                assertEquals(List.of("guessing_games"), tokens);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+
+            Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
+            SignalRecord guessingGames = findRecord(stored, "guessing_games", SignalIntent.SELF);
+            assertNull(guessingGames);
+            assertNull(findRecord(stored, "guessing_games", SignalIntent.SEEKING));
+            assertFalse(SignalConceptRegistry.candidateSnapshot(500).stream()
+                    .anyMatch(entry -> entry != null && "guessing_games".equals(entry.rawToken)));
         }
     }
 
@@ -325,21 +463,21 @@ class CalypsoApiIntegrationTest {
             assertFalse(tokens.contains("socializing"));
 
             Signals stored = mgr.getSignals(accountId, accountId).get(5, TimeUnit.SECONDS);
-            assertNotNull(findRecord(stored, "cooking_homemade_meals", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "cozy_homebody", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "reading_books", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "morning_gym_sesson", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "sports_fandom", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "casual_gaming", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "career_direction", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "world_exploration", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "long_term_goal", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "clubbing", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "female_friends", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "performance", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "day", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "relaxing_rest_of_day", SignalIntent.SELF));
-            assertNotNull(findRecord(stored, "bucket_list", SignalIntent.SELF));
+            assertNull(findRecord(stored, "cooking_homemade_meals", SignalIntent.SELF));
+            assertNull(findRecord(stored, "cozy_homebody", SignalIntent.SELF));
+            assertNull(findRecord(stored, "reading_books", SignalIntent.SELF));
+            assertNull(findRecord(stored, "morning_gym_sesson", SignalIntent.SELF));
+            assertNull(findRecord(stored, "sports_fandom", SignalIntent.SELF));
+            assertNull(findRecord(stored, "casual_gaming", SignalIntent.SELF));
+            assertNull(findRecord(stored, "career_direction", SignalIntent.SELF));
+            assertNull(findRecord(stored, "world_exploration", SignalIntent.SELF));
+            assertNull(findRecord(stored, "long_term_goal", SignalIntent.SELF));
+            assertNull(findRecord(stored, "clubbing", SignalIntent.SELF));
+            assertNull(findRecord(stored, "female_friends", SignalIntent.SELF));
+            assertNull(findRecord(stored, "performance", SignalIntent.SELF));
+            assertNull(findRecord(stored, "day", SignalIntent.SELF));
+            assertNull(findRecord(stored, "relaxing_rest_of_day", SignalIntent.SELF));
+            assertNull(findRecord(stored, "bucket_list", SignalIntent.SELF));
             assertNull(findRecord(stored, "cooking", SignalIntent.SELF));
             assertNull(findRecord(stored, "club", SignalIntent.SELF));
             assertNull(findRecord(stored, "socializing", SignalIntent.SELF));
@@ -864,7 +1002,7 @@ class CalypsoApiIntegrationTest {
                 }
                 return "Tell me more about your preferences.";
             });
-            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[{\"token\":\"agent_signal\",\"intent\":\"self\"}]}");
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[{\"token\":\"travel\",\"intent\":\"self\"}]}");
             try {
                 AgentSession session = mgr.getAgentSessionSnapshot(accountId).get(5, TimeUnit.SECONDS);
                 assertNotNull(session);
@@ -874,7 +1012,7 @@ class CalypsoApiIntegrationTest {
                 assertTrue(updated.getMessagesSize() >= 2);
                 AgentMessage last = updated.getMessages().get(updated.getMessagesSize() - 1);
                 assertEquals(AgentMessageSender.AGENT, last.getSender());
-                SignalRecord sig = awaitSignal(mgr, accountId, "agent_signal", SignalIntent.SELF, 5000);
+                SignalRecord sig = awaitSignal(mgr, accountId, "travel", SignalIntent.SELF, 5000);
                 assertNotNull(sig);
                 assertEquals("agent_chat", sig.getSource());
                 assertEquals(updated.getSessionId(), sig.getSourceId());
@@ -891,7 +1029,7 @@ class CalypsoApiIntegrationTest {
             CalypsoApiManager mgr = newManager(ipc);
             long accountId = 910L;
             OpenAIJson.setTestOverride(
-                    (system, user) -> "{\"signals\":[{\"token\":\"coffee_lover\",\"intent\":\"self\"}]}");
+                    (system, user) -> "{\"signals\":[{\"token\":\"coffee\",\"intent\":\"self\"}]}");
             try {
                 PublicPromptAnswer answer = mgr.postPublicPromptAnswer(accountId, "prompt.talk.hours",
                         "Long walks and espresso").get(5, TimeUnit.SECONDS);
@@ -1439,16 +1577,25 @@ class CalypsoApiIntegrationTest {
             CalypsoApiManager mgr = newManager(ipc);
             long accountId = 9542L;
             String rawAlias = "clubbing_special_case";
+            long now = System.currentTimeMillis();
 
-            OpenAIJson.setTestOverride((system, user) -> """
-                    {"signals":[{"token":"clubbing_special_case","intent":"self","valence":0.84}]}
-                    """);
-            try {
-                mgr.extractAndAppendSignals(accountId, "seed alias", "private_prompt", "private#9542", "ctx")
-                        .get(5, TimeUnit.SECONDS);
-            } finally {
-                OpenAIJson.clearTestOverride();
-            }
+            SignalRecord legacy = new SignalRecord();
+            legacy.setToken(rawAlias);
+            legacy.setCanonicalToken(rawAlias);
+            legacy.setRawToken(rawAlias);
+            legacy.setIntent(SignalIntent.SELF);
+            legacy.setValence(0.84);
+            legacy.setCount(1);
+            legacy.setSource("private_prompt");
+            legacy.setSourceId("private#9542");
+            legacy.setLastContext("ctx");
+            legacy.setFirstSeen(now);
+            legacy.setLastSeen(now);
+
+            Signals seeded = new Signals();
+            seeded.setAccountId(accountId);
+            seeded.setRecords(List.of(legacy));
+            ipc.clusterDepot(Core.class.getName(), "*signalsDepot").append(seeded);
 
             PState signalPState = ipc.clusterPState(Core.class.getName(), "$$accountIdToSignals");
             Signals before = signalPState.selectOne(Path.key(accountId));
@@ -2501,9 +2648,28 @@ class CalypsoApiIntegrationTest {
             mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetA).get(5, TimeUnit.SECONDS);
             mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetB).get(5, TimeUnit.SECONDS);
 
+            List<?> beforePromptLikes = mgr.getFacecards(viewerId, viewerId, 20).get(20, TimeUnit.SECONDS);
+            assertTrue(beforePromptLikes == null || beforePromptLikes.isEmpty(),
+                    "Facecards should wait for enough positive/negative public-prompt reactions.");
+
+            PublicPromptAnswer answerA = mgr.postPublicPromptAnswer(
+                    targetA,
+                    "prompt.ideal.sunday",
+                    "Coffee and a gallery walk.").get(5, TimeUnit.SECONDS);
+            PublicPromptAnswer answerB = mgr.postPublicPromptAnswer(
+                    targetB,
+                    "prompt.talk.hours",
+                    "Architecture, design, and city walks.").get(5, TimeUnit.SECONDS);
+            mgr.postPublicPromptReaction(viewerId, answerA.getAnswerId(), PromptReaction.LIKE).get(5, TimeUnit.SECONDS);
+            mgr.postPublicPromptReaction(viewerId, answerB.getAnswerId(), PromptReaction.LIKE).get(5, TimeUnit.SECONDS);
+            List<?> beforeSignalFloor = mgr.getFacecards(viewerId, viewerId, 20).get(20, TimeUnit.SECONDS);
+            assertTrue(beforeSignalFloor == null || beforeSignalFloor.isEmpty(),
+                    "Two prompt likes should not unlock facecards before the signal floor.");
+            seedPublicPromptSignalReactions(mgr, viewerId, 8, "+155501000");
+
             List<?> facecards = awaitFacecards(mgr, viewerId, 20, 20000);
             assertNotNull(facecards);
-            assertFalse(facecards.isEmpty(), "Facecards should backfill from top-ranked candidates.");
+            assertFalse(facecards.isEmpty(), "Facecards should backfill from prompt-liked ranked candidates.");
             assertTrue(facecards.size() <= 20);
             Object first = facecards.get(0);
             assertTrue(first instanceof GetMatch);
@@ -2525,12 +2691,13 @@ class CalypsoApiIntegrationTest {
             mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetA).get(5, TimeUnit.SECONDS);
             mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetB).get(5, TimeUnit.SECONDS);
 
-            awaitFacecards(mgr, viewerId, 20, 20000);
-
             PState heapP = ipc.clusterPState(Core.class.getName(), "$$accountIdToCandidateHeap");
             PState pairReactionP = ipc.clusterPState(Core.class.getName(), "$$viewerIdToTargetIdToReactionScore");
 
-            waitFor(() -> candidateScoreFromHeap(heapP, viewerId, targetA) != null, 5000,
+            waitFor(() -> {
+                mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
+                return candidateScoreFromHeap(heapP, viewerId, targetA) != null;
+            }, 12000,
                     "Target A should be present in viewer heap.");
             Double beforeScoreA = candidateScoreFromHeap(heapP, viewerId, targetA);
             assertNotNull(beforeScoreA);
@@ -2542,9 +2709,10 @@ class CalypsoApiIntegrationTest {
             }, 5000, "DISLIKE should apply strong negative pair reaction score.");
 
             waitFor(() -> {
+                mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
                 Double updated = candidateScoreFromHeap(heapP, viewerId, targetA);
                 return updated == null || updated < beforeScoreA;
-            }, 8000, "Heap score should drop (or candidate removed) after facecard dislike.");
+            }, 20000, "Heap score should drop (or candidate removed) after facecard dislike.");
 
             mgr.postFacecardReaction(viewerId, targetB, PromptReaction.LIKE).get(5, TimeUnit.SECONDS);
             waitFor(() -> {
@@ -2576,12 +2744,13 @@ class CalypsoApiIntegrationTest {
                 OpenAIJson.clearTestOverride();
             }
 
-            awaitFacecards(mgr, viewerId, 20, 20000);
-
             PState heapP = ipc.clusterPState(Core.class.getName(), "$$accountIdToCandidateHeap");
             PState pairReactionP = ipc.clusterPState(Core.class.getName(), "$$viewerIdToTargetIdToReactionScore");
 
-            waitFor(() -> candidateScoreFromHeap(heapP, viewerId, targetId) != null, 8000,
+            waitFor(() -> {
+                mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
+                return candidateScoreFromHeap(heapP, viewerId, targetId) != null;
+            }, 8000,
                     "Target should be present in viewer heap before the public prompt reaction.");
             Double beforeScore = candidateScoreFromHeap(heapP, viewerId, targetId);
             assertNotNull(beforeScore);
@@ -2590,7 +2759,7 @@ class CalypsoApiIntegrationTest {
                     .get(5, TimeUnit.SECONDS);
             waitFor(() -> {
                 Object raw = pairReactionP.selectOne(Path.key(viewerId, targetId));
-                return raw instanceof Number && ((Number) raw).doubleValue() <= -1.0;
+                return raw instanceof Number && ((Number) raw).doubleValue() <= -0.5;
             }, 5000, "DISLIKE should apply negative public-prompt pair reaction score.");
 
             waitFor(() -> {
@@ -2607,10 +2776,32 @@ class CalypsoApiIntegrationTest {
             long viewerId = createAccount(mgr, "Tier3 Viewer", "+1555000955");
             long targetA = createAccount(mgr, "Tier3 Target A", "+1555000956");
             long targetB = createAccount(mgr, "Tier3 Target B", "+1555000957");
+            long promptSeedA = createAccount(mgr, "Tier3 Prompt Seed A", "+1555000970");
 
             mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
             mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetA).get(5, TimeUnit.SECONDS);
             mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetB).get(5, TimeUnit.SECONDS);
+
+            PublicPromptAnswer targetAAnswer = mgr.postPublicPromptAnswer(
+                    targetA,
+                    "prompt.ideal.sunday",
+                    "Coffee, architecture, and a quiet museum.").get(5, TimeUnit.SECONDS);
+            PublicPromptAnswer targetBAnswer = mgr.postPublicPromptAnswer(
+                    targetB,
+                    "prompt.life.goal",
+                    "Build a creative life with room for travel.").get(5, TimeUnit.SECONDS);
+            PublicPromptAnswer seedAAnswer = mgr.postPublicPromptAnswer(
+                    promptSeedA,
+                    "prompt.talk.hours",
+                    "Movies, food, and neighborhood walks.").get(5, TimeUnit.SECONDS);
+
+            mgr.postPublicPromptReaction(viewerId, targetAAnswer.getAnswerId(), PromptReaction.LIKE).get(5,
+                    TimeUnit.SECONDS);
+            mgr.postPublicPromptReaction(viewerId, targetBAnswer.getAnswerId(), PromptReaction.LIKE).get(5,
+                    TimeUnit.SECONDS);
+            mgr.postPublicPromptReaction(viewerId, seedAAnswer.getAnswerId(), PromptReaction.LIKE).get(5,
+                    TimeUnit.SECONDS);
+            seedPublicPromptSignalReactions(mgr, viewerId, 7, "+155501020");
 
             AtomicInteger rerankCalls = new AtomicInteger();
             MatchReranker.setTestOverride(request -> {
@@ -2711,6 +2902,8 @@ class CalypsoApiIntegrationTest {
             CalypsoApiManager mgr = newManager(ipc);
             long viewerId = createAccount(mgr, "Mutual Viewer", "+1555000960");
             long targetId = createAccount(mgr, "Mutual Target", "+1555000961");
+            long promptSeedA = createAccount(mgr, "Mutual Prompt Seed A", "+1555000973");
+            long promptSeedB = createAccount(mgr, "Mutual Prompt Seed B", "+1555000974");
 
             mgr.postFilters(filtersForGender("woman", List.of("man", "woman"), "exploratory"), viewerId).get(5,
                     TimeUnit.SECONDS);
@@ -2719,6 +2912,8 @@ class CalypsoApiIntegrationTest {
 
             PublicPromptAnswer viewerAnswer;
             PublicPromptAnswer targetAnswer;
+            PublicPromptAnswer seedAAnswer;
+            PublicPromptAnswer seedBAnswer;
             OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
             try {
                 viewerAnswer = mgr.postPublicPromptAnswer(
@@ -2729,12 +2924,17 @@ class CalypsoApiIntegrationTest {
                         targetId,
                         "prompt.ideal.sunday",
                         "Coffee, a long walk, and a museum stop.").get(5, TimeUnit.SECONDS);
+                seedAAnswer = mgr.postPublicPromptAnswer(
+                        promptSeedA,
+                        "prompt.life.goal",
+                        "Make a lot of art with friends.").get(5, TimeUnit.SECONDS);
+                seedBAnswer = mgr.postPublicPromptAnswer(
+                        promptSeedB,
+                        "prompt.talk.hours",
+                        "Movies, design, and cities.").get(5, TimeUnit.SECONDS);
             } finally {
                 OpenAIJson.clearTestOverride();
             }
-
-            awaitFacecards(mgr, viewerId, 20, 20000);
-            awaitFacecards(mgr, targetId, 20, 20000);
 
             List<GetMatch> initial = mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
             assertTrue(initial == null || initial.isEmpty(),
@@ -2743,6 +2943,10 @@ class CalypsoApiIntegrationTest {
             OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
             try {
                 mgr.postPublicPromptReaction(viewerId, targetAnswer.getAnswerId(), PromptReaction.LIKE).get(5,
+                        TimeUnit.SECONDS);
+                mgr.postPublicPromptReaction(viewerId, seedAAnswer.getAnswerId(), PromptReaction.LIKE).get(5,
+                        TimeUnit.SECONDS);
+                mgr.postPublicPromptReaction(viewerId, seedBAnswer.getAnswerId(), PromptReaction.LIKE).get(5,
                         TimeUnit.SECONDS);
             } finally {
                 OpenAIJson.clearTestOverride();
@@ -2756,6 +2960,10 @@ class CalypsoApiIntegrationTest {
             OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
             try {
                 mgr.postPublicPromptReaction(targetId, viewerAnswer.getAnswerId(), PromptReaction.LIKE).get(5,
+                        TimeUnit.SECONDS);
+                mgr.postPublicPromptReaction(targetId, seedAAnswer.getAnswerId(), PromptReaction.LIKE).get(5,
+                        TimeUnit.SECONDS);
+                mgr.postPublicPromptReaction(targetId, seedBAnswer.getAnswerId(), PromptReaction.LIKE).get(5,
                         TimeUnit.SECONDS);
             } finally {
                 OpenAIJson.clearTestOverride();
@@ -2805,6 +3013,33 @@ class CalypsoApiIntegrationTest {
 
             String targetSerialized = now.calypso.backend.CalypsoHelpers.serializeAccountId(targetId);
             String viewerSerialized = now.calypso.backend.CalypsoHelpers.serializeAccountId(viewerId);
+
+            waitFor(() -> findMatch(mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS),
+                    targetSerialized) != null, 35000,
+                    "Reciprocal prompt + facecard likes should produce a mutual match.");
+            waitFor(() -> findMatch(mgr.getMatches(targetId, targetId, 20).get(8, TimeUnit.SECONDS),
+                    viewerSerialized) != null, 35000,
+                    "Reciprocal prompt + facecard likes should produce the reverse mutual match.");
+
+            List<GetMatch> viewerMatches = mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
+            List<GetMatch> targetMatches = mgr.getMatches(targetId, targetId, 20).get(8, TimeUnit.SECONDS);
+            GetMatch viewerMatch = findMatch(viewerMatches, targetSerialized);
+            GetMatch targetMatch = findMatch(targetMatches, viewerSerialized);
+            assertNotNull(viewerMatch);
+            assertNotNull(targetMatch);
+            assertNotNull(viewerMatch.scorerDebug);
+            assertNotNull(targetMatch.scorerDebug);
+            assertEquals("deterministicMutualMin", viewerMatch.scorerDebug.get("matchScoreSource"));
+            assertEquals("deterministicMutualMin", targetMatch.scorerDebug.get("matchScoreSource"));
+
+            Double viewerHeapScore = candidateScoreFromHeap(heapP, viewerId, targetId);
+            Double targetHeapScore = candidateScoreFromHeap(heapP, targetId, viewerId);
+            assertNotNull(viewerHeapScore);
+            assertNotNull(targetHeapScore);
+            double expectedMutualScore = Math.min(viewerHeapScore.doubleValue(), targetHeapScore.doubleValue());
+            assertEquals(expectedMutualScore, viewerMatch.score, 0.0001);
+            assertEquals(expectedMutualScore, targetMatch.score, 0.0001);
+
             AtomicInteger matchRerankCalls = new AtomicInteger();
             MatchReranker.setTestOverride(request -> {
                 matchRerankCalls.incrementAndGet();
@@ -2826,34 +3061,10 @@ class CalypsoApiIntegrationTest {
                 return result;
             });
             try {
-                waitFor(() -> findMatch(mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS),
-                        targetSerialized) != null, 35000,
-                        "Reciprocal prompt + facecard likes should produce a mutual match.");
-                waitFor(() -> findMatch(mgr.getMatches(targetId, targetId, 20).get(8, TimeUnit.SECONDS),
-                        viewerSerialized) != null, 35000,
-                        "Reciprocal prompt + facecard likes should produce the reverse mutual match.");
-
-                List<GetMatch> viewerMatches = mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
-                List<GetMatch> targetMatches = mgr.getMatches(targetId, targetId, 20).get(8, TimeUnit.SECONDS);
-                GetMatch viewerMatch = findMatch(viewerMatches, targetSerialized);
-                GetMatch targetMatch = findMatch(targetMatches, viewerSerialized);
-                assertNotNull(viewerMatch);
-                assertNotNull(targetMatch);
-                assertEquals(0, matchRerankCalls.get(), "Matches must not invoke the LLM reranker.");
-                assertNotNull(viewerMatch.scorerDebug);
-                assertNotNull(targetMatch.scorerDebug);
-                assertEquals("deterministicMutualMin", viewerMatch.scorerDebug.get("matchScoreSource"));
-                assertEquals("deterministicMutualMin", targetMatch.scorerDebug.get("matchScoreSource"));
-                assertFalse(Boolean.TRUE.equals(viewerMatch.scorerDebug.get("tier3Applied")));
-                assertFalse(Boolean.TRUE.equals(targetMatch.scorerDebug.get("tier3Applied")));
-
-                Double viewerHeapScore = candidateScoreFromHeap(heapP, viewerId, targetId);
-                Double targetHeapScore = candidateScoreFromHeap(heapP, targetId, viewerId);
-                assertNotNull(viewerHeapScore);
-                assertNotNull(targetHeapScore);
-                double expectedMutualScore = Math.min(viewerHeapScore.doubleValue(), targetHeapScore.doubleValue());
-                assertEquals(expectedMutualScore, viewerMatch.score, 0.0001);
-                assertEquals(expectedMutualScore, targetMatch.score, 0.0001);
+                List<GetMatch> blockedViewerMatches = mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
+                assertNull(findMatch(blockedViewerMatches, targetSerialized),
+                        "High-confidence pair rerank deprioritize should block match reveal.");
+                assertTrue(matchRerankCalls.get() >= 1, "Match-plausible pairs should invoke the pair reranker.");
             } finally {
                 MatchReranker.clearTestOverride();
             }
@@ -3163,6 +3374,20 @@ class CalypsoApiIntegrationTest {
             Thread.sleep(75);
         }
         return List.of();
+    }
+
+    private void seedPublicPromptSignalReactions(CalypsoApiManager mgr, long viewerId, int count, String phonePrefix)
+            throws Exception {
+        for (int i = 0; i < count; i++) {
+            long seedId = createAccount(mgr, "Prompt Signal Seed " + phonePrefix + i,
+                    phonePrefix + String.format("%02d", i));
+            PublicPromptAnswer answer = mgr.postPublicPromptAnswer(
+                    seedId,
+                    "prompt.talk.hours",
+                    "Signal seed answer " + i).get(5, TimeUnit.SECONDS);
+            PromptReaction reaction = i % 2 == 0 ? PromptReaction.LIKE : PromptReaction.DISLIKE;
+            mgr.postPublicPromptReaction(viewerId, answer.getAnswerId(), reaction).get(5, TimeUnit.SECONDS);
+        }
     }
 
     @SuppressWarnings("unchecked")

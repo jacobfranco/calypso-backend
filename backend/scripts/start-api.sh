@@ -28,6 +28,12 @@ if [[ -z "${OPENAI_API_KEY:-}" ]]; then
   exit 1
 fi
 
+if [[ "$PROFILE" == "dev" && -z "${CALYPSO_SMS_FALLBACK:-}" ]]; then
+  export CALYPSO_SMS_FALLBACK=true
+fi
+
+echo "📲  CALYPSO_SMS_FALLBACK=${CALYPSO_SMS_FALLBACK:-unset}"
+
 # ── Rama temp-dir housekeeping ───────────────────────────────────────────────
 RAMA_TEMP="/tmp/rama_temp"
 mkdir -p "$RAMA_TEMP"
@@ -51,4 +57,3 @@ SPRING_PROFILES_ACTIVE="$PROFILE" \
        -XX:HeapDumpPath=$RAMA_TEMP \
        -Djava.io.tmpdir=$RAMA_TEMP \
        -XX:+HeapDumpOnOutOfMemoryError"
-

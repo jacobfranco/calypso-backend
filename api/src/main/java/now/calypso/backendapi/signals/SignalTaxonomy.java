@@ -119,6 +119,19 @@ public final class SignalTaxonomy {
         overrides.put("ambition", VALUES);
 
         // Social style
+        overrides.put("guessing_games", SOCIAL_STYLE);
+        overrides.put("mind_games", SOCIAL_STYLE);
+        overrides.put("vague_punishment", SOCIAL_STYLE);
+        overrides.put("passive_aggression", SOCIAL_STYLE);
+        overrides.put("pretending_nothing_happened", SOCIAL_STYLE);
+        overrides.put("silent_treatment", SOCIAL_STYLE);
+        overrides.put("stonewalling", SOCIAL_STYLE);
+        overrides.put("emotional_withholding", SOCIAL_STYLE);
+        overrides.put("conflict_avoidance", SOCIAL_STYLE);
+        overrides.put("mixed_signals", SOCIAL_STYLE);
+        overrides.put("testing_behavior", SOCIAL_STYLE);
+        overrides.put("indirect_communication", SOCIAL_STYLE);
+        overrides.put("indirect_punishment", SOCIAL_STYLE);
         overrides.put("socializing", SOCIAL_STYLE);
         overrides.put("networking", SOCIAL_STYLE);
         overrides.put("public_speaking", SOCIAL_STYLE);
@@ -153,9 +166,16 @@ public final class SignalTaxonomy {
         }
 
         if (containsAny(normalized,
-                "anime", "manga", "tv", "film", "movie", "cinema", "music", "podcast", "book", "novel",
+                "anime", "manga", "tv", "film", "movie", "cinema", "music", "media", "podcast", "book", "novel",
                 "genre", "concert", "stream", "kpop", "jpop", "hip_hop", "jazz", "metal", "edm")) {
             return MEDIA;
+        }
+
+        if (containsAny(normalized,
+                "guessing_game", "mind_game", "passive_aggress", "silent_treatment", "stonewall", "withholding",
+                "punish", "conflict_avoid", "indirect_communication", "indirect_punishment", "mixed_signal",
+                "testing_behavior", "pretending_nothing", "nothing_happened", "decode_conflict", "repair_avoid")) {
+            return SOCIAL_STYLE;
         }
 
         if (containsAny(normalized,
@@ -174,12 +194,15 @@ public final class SignalTaxonomy {
 
         if (containsAny(normalized,
                 "honesty", "loyalty", "empathy", "respect", "kindness", "intelligence", "creativity", "discipline",
-                "consistency", "commitment", "ambition", "trust", "integrity")) {
+                "consistency", "commitment", "ambition", "trust", "integrity", "reciprocity", "emotional",
+                "trajectory", "intellectual", "values", "character", "reliab", "growth", "independent",
+                "headstrong", "equal")) {
             return VALUES;
         }
 
         if (containsAny(normalized,
-                "social", "network", "community", "public_speaking", "greek_life", "extro", "intro")) {
+                "social", "network", "community", "public_speaking", "greek_life", "extro", "intro", "flirty",
+                "playful")) {
             return SOCIAL_STYLE;
         }
 

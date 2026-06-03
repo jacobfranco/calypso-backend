@@ -64,6 +64,13 @@ class SignalNormalizerTest {
     }
 
     @Test
+    void normalizeOne_rewritesSentimentPrefixesToNegativeNeutralConcepts() {
+        assertEquals("anti_guessing_games", SignalNormalizer.normalizeOne("dislikes_guessing_games"));
+        assertEquals("anti_guessing_games", SignalNormalizer.normalizeOne("dislike_of_guessing_games"));
+        assertEquals("anti_guessing_games", SignalNormalizer.normalizeOne("doesn't like guessing games"));
+    }
+
+    @Test
     void normalizeOne_prefersMappedRhsWhenTokenContainsArrowNotation() {
         assertEquals("club", SignalNormalizer.normalizeOne("clubbing -> club"));
         assertEquals("travel", SignalNormalizer.normalizeOne("traveling => travel"));

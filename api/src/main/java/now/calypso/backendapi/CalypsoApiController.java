@@ -2,6 +2,7 @@ package now.calypso.backendapi;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.Period;
 
@@ -29,6 +30,7 @@ public class CalypsoApiController {
     private static final java.util.regex.Pattern PHONE_PATTERN = java.util.regex.Pattern
             .compile("^\\+[1-9][0-9]{7,14}$");
     private static final int MIN_AGE_YEARS = 18;
+    private static final Duration SIGNALS_READ_TIMEOUT = Duration.ofSeconds(4);
 
     public static CalypsoApiManager manager;
 
@@ -344,8 +346,9 @@ public class CalypsoApiController {
         }
         Mono<Boolean> existingAccount = resolveAccountIdByPhoneVariants(phoneNumber)
                 .map(id -> true)
-                .onErrorReturn(false)
-                .defaultIfEmpty(false);
+                .defaultIfEmpty(false)
+                .timeout(Duration.ofSeconds(2))
+                .onErrorReturn(false);
         return Mono.fromFuture(manager.requestPhoneCode(phoneNumber))
                 .zipWith(existingAccount)
                 .map(result -> {
@@ -569,10 +572,15 @@ public class CalypsoApiController {
         }
 
         return Mono.fromFuture(manager.getSignals(accountId, accountId))
+                .timeout(SIGNALS_READ_TIMEOUT)
                 .map(thrift -> thrift == null
                         ? new GetSignals(accountId, List.of())
                         : new GetSignals(thrift))
-                .defaultIfEmpty(new GetSignals(accountId, List.of()));
+                .defaultIfEmpty(new GetSignals(accountId, List.of()))
+                .onErrorResume(ex -> {
+                    LOG.warn("Failed to load signals for account {}", accountId, ex);
+                    return Mono.just(new GetSignals(accountId, List.of()));
+                });
     }
 
     @GetMapping("/api/accounts/{id}/admin/silhouette")

@@ -59,7 +59,9 @@ public final class ExtractedSignal {
         }
         SignalIntent intent = intentMaybe == null ? SignalIntent.SELF : intentMaybe;
         Double valence = clampSigned(valenceMaybe);
-        if (valence == null) {
+        if (inferredValence != null && inferredValence < 0.0 && valence != null && valence >= 0.0) {
+            valence = valence > 0.0 ? -valence : inferredValence;
+        } else if (valence == null) {
             valence = inferredValence == null ? 1.0 : inferredValence;
         }
         return new ExtractedSignal(normalized, intent, valence);

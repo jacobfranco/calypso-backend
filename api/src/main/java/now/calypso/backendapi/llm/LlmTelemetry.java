@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.function.Supplier;
 
 import com.openai.models.ChatModel;
 import com.openai.models.responses.Response;
@@ -24,6 +25,8 @@ public final class LlmTelemetry {
     private static final Object RECENT_LOCK = new Object();
     private static final ArrayDeque<Map<String, Object>> RECENT = new ArrayDeque<>();
     private static final ConcurrentHashMap<String, Aggregate> AGGREGATES = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Aggregate> CONTEXT_AGGREGATES = new ConcurrentHashMap<>();
+    private static final ThreadLocal<Context> CURRENT_CONTEXT = new ThreadLocal<>();
 
     private LlmTelemetry() {
     }
@@ -36,6 +39,18 @@ public final class LlmTelemetry {
             Response response,
             long latencyMs,
             Long maxOutputTokens) {
+        recordResponse(stage, surface, promptId, model, response, latencyMs, maxOutputTokens, null);
+    }
+
+    public static void recordResponse(
+            String stage,
+            String surface,
+            String promptId,
+            ChatModel model,
+            Response response,
+            long latencyMs,
+            Long maxOutputTokens,
+            Long promptChars) {
         ResponseUsage usage = null;
         if (response != null) {
             Optional<ResponseUsage> usageMaybe = response.usage();
@@ -52,7 +67,8 @@ public final class LlmTelemetry {
                 usage == null ? null : usage.outputTokens(),
                 usage == null ? null : usage.totalTokens(),
                 maxOutputTokens,
-                null);
+                null,
+                promptChars);
     }
 
     public static void recordStructuredResponse(
@@ -63,6 +79,18 @@ public final class LlmTelemetry {
             StructuredResponse<?> response,
             long latencyMs,
             Long maxOutputTokens) {
+        recordStructuredResponse(stage, surface, promptId, model, response, latencyMs, maxOutputTokens, null);
+    }
+
+    public static void recordStructuredResponse(
+            String stage,
+            String surface,
+            String promptId,
+            ChatModel model,
+            StructuredResponse<?> response,
+            long latencyMs,
+            Long maxOutputTokens,
+            Long promptChars) {
         ResponseUsage usage = null;
         if (response != null) {
             Optional<ResponseUsage> usageMaybe = response.usage();
@@ -79,7 +107,8 @@ public final class LlmTelemetry {
                 usage == null ? null : usage.outputTokens(),
                 usage == null ? null : usage.totalTokens(),
                 maxOutputTokens,
-                null);
+                null,
+                promptChars);
     }
 
     public static void recordFailure(
@@ -90,6 +119,18 @@ public final class LlmTelemetry {
             long latencyMs,
             Long maxOutputTokens,
             Throwable error) {
+        recordFailure(stage, surface, promptId, model, latencyMs, maxOutputTokens, error, null);
+    }
+
+    public static void recordFailure(
+            String stage,
+            String surface,
+            String promptId,
+            ChatModel model,
+            long latencyMs,
+            Long maxOutputTokens,
+            Throwable error,
+            Long promptChars) {
         record(
                 stage,
                 surface,
@@ -101,7 +142,39 @@ public final class LlmTelemetry {
                 null,
                 null,
                 maxOutputTokens,
-                errorKind(error));
+                errorKind(error),
+                promptChars);
+    }
+
+    public static Context context(
+            Long accountId,
+            Long targetAccountId,
+            String operation,
+            String sourceId,
+            Integer candidateCount) {
+        return new Context(accountId, targetAccountId, operation, sourceId, candidateCount);
+    }
+
+    public static <T> T withContext(Context context, Supplier<T> supplier) {
+        if (supplier == null) {
+            return null;
+        }
+        Context previous = CURRENT_CONTEXT.get();
+        Context merged = Context.merge(previous, context);
+        if (merged == null || merged.isEmpty()) {
+            CURRENT_CONTEXT.remove();
+        } else {
+            CURRENT_CONTEXT.set(merged);
+        }
+        try {
+            return supplier.get();
+        } finally {
+            if (previous == null || previous.isEmpty()) {
+                CURRENT_CONTEXT.remove();
+            } else {
+                CURRENT_CONTEXT.set(previous);
+            }
+        }
     }
 
     public static Map<String, Object> snapshot(int limit) {
@@ -154,6 +227,36 @@ public final class LlmTelemetry {
             byStage.add(row);
         }
         byStage.sort(Comparator.comparingLong(row -> -longField(row, "totalTokens")));
+        ArrayList<Map<String, Object>> byContext = new ArrayList<>();
+        for (Map.Entry<String, Aggregate> entry : CONTEXT_AGGREGATES.entrySet()) {
+            if (entry == null || entry.getValue() == null) {
+                continue;
+            }
+            Aggregate aggregate = entry.getValue();
+            long stageCalls = aggregate.calls.sum();
+            if (stageCalls <= 0L) {
+                continue;
+            }
+            LinkedHashMap<String, Object> row = new LinkedHashMap<>();
+            row.put("contextKey", entry.getKey());
+            row.put("stage", aggregate.stage);
+            row.put("surface", aggregate.surface);
+            row.put("operation", aggregate.operation == null ? "" : aggregate.operation);
+            if (aggregate.accountId != null && aggregate.accountId.longValue() >= 0L) {
+                row.put("accountId", aggregate.accountId.longValue());
+            }
+            row.put("calls", stageCalls);
+            row.put("successes", aggregate.successes.sum());
+            row.put("failures", aggregate.failures.sum());
+            row.put("avgLatencyMs", ((double) aggregate.latencyMs.sum() / (double) stageCalls));
+            row.put("inputTokens", aggregate.inputTokens.sum());
+            row.put("outputTokens", aggregate.outputTokens.sum());
+            row.put("totalTokens", aggregate.totalTokens.sum());
+            row.put("candidateCount", aggregate.candidateCount.sum());
+            row.put("promptChars", aggregate.promptChars.sum());
+            byContext.add(row);
+        }
+        byContext.sort(Comparator.comparingLong(row -> -longField(row, "totalTokens")));
         out.put("totals", Map.of(
                 "calls", calls,
                 "successes", successes,
@@ -163,6 +266,7 @@ public final class LlmTelemetry {
                 "outputTokens", outputTokens,
                 "totalTokens", totalTokens));
         out.put("byStage", byStage);
+        out.put("byContext", byContext);
 
         ArrayList<Map<String, Object>> events = new ArrayList<>();
         synchronized (RECENT_LOCK) {
@@ -193,7 +297,8 @@ public final class LlmTelemetry {
             Long outputTokens,
             Long totalTokens,
             Long maxOutputTokens,
-            String errorKind) {
+            String errorKind,
+            Long promptChars) {
         String normalizedStage = normalize(stage, "unknown_stage");
         String normalizedSurface = normalize(surface, "unknown_surface");
         String normalizedPromptId = sanitizePromptId(promptId);
@@ -205,24 +310,32 @@ public final class LlmTelemetry {
         if (total <= 0L && (in > 0L || out > 0L)) {
             total = in + out;
         }
+        Context context = CURRENT_CONTEXT.get();
+        long chars = sanitizeNonNegative(promptChars);
+        if (chars <= 0L && context != null && context.promptChars != null) {
+            chars = sanitizeNonNegative(context.promptChars);
+        }
+        String operation = context == null ? "" : normalize(context.operation, "");
+        String sourceId = context == null ? "" : sanitizePromptId(context.sourceId);
+        Long accountId = context == null ? null : context.accountId;
+        Long targetAccountId = context == null ? null : context.targetAccountId;
+        Integer candidateCountMaybe = context == null ? null : context.candidateCount;
+        long candidateCount = candidateCountMaybe == null || candidateCountMaybe.intValue() <= 0
+                ? 0L
+                : candidateCountMaybe.longValue();
 
         String stageKey = normalizedStage + "|" + normalizedSurface;
         Aggregate aggregate = AGGREGATES.computeIfAbsent(stageKey, ignored -> new Aggregate(normalizedStage, normalizedSurface));
-        aggregate.calls.increment();
-        if (success) {
-            aggregate.successes.increment();
-        } else {
-            aggregate.failures.increment();
-        }
-        aggregate.latencyMs.add(normalizedLatency);
-        if (in > 0L) {
-            aggregate.inputTokens.add(in);
-        }
-        if (out > 0L) {
-            aggregate.outputTokens.add(out);
-        }
-        if (total > 0L) {
-            aggregate.totalTokens.add(total);
+        addToAggregate(aggregate, success, normalizedLatency, in, out, total, candidateCount, chars);
+        if ((accountId != null && accountId.longValue() >= 0L) || !operation.isBlank()) {
+            String contextKey = (accountId == null ? "unknown_account" : String.valueOf(accountId.longValue()))
+                    + "|" + (operation.isBlank() ? normalizedStage : operation)
+                    + "|" + normalizedStage
+                    + "|" + normalizedSurface;
+            Aggregate contextAggregate = CONTEXT_AGGREGATES.computeIfAbsent(
+                    contextKey,
+                    ignored -> new Aggregate(normalizedStage, normalizedSurface, accountId, operation));
+            addToAggregate(contextAggregate, success, normalizedLatency, in, out, total, candidateCount, chars);
         }
 
         LinkedHashMap<String, Object> event = new LinkedHashMap<>();
@@ -236,6 +349,24 @@ public final class LlmTelemetry {
         event.put("inputTokens", in);
         event.put("outputTokens", out);
         event.put("totalTokens", total);
+        if (accountId != null && accountId.longValue() >= 0L) {
+            event.put("accountId", accountId.longValue());
+        }
+        if (targetAccountId != null && targetAccountId.longValue() >= 0L) {
+            event.put("targetAccountId", targetAccountId.longValue());
+        }
+        if (!operation.isBlank()) {
+            event.put("operation", operation);
+        }
+        if (!sourceId.isBlank()) {
+            event.put("sourceId", sourceId);
+        }
+        if (candidateCount > 0L) {
+            event.put("candidateCount", candidateCount);
+        }
+        if (chars > 0L) {
+            event.put("promptChars", chars);
+        }
         if (maxOutputTokens != null && maxOutputTokens.longValue() > 0L) {
             event.put("maxOutputTokens", maxOutputTokens.longValue());
         }
@@ -247,6 +378,42 @@ public final class LlmTelemetry {
             while (RECENT.size() > MAX_RECENT_EVENTS) {
                 RECENT.removeLast();
             }
+        }
+    }
+
+    private static void addToAggregate(
+            Aggregate aggregate,
+            boolean success,
+            long latencyMs,
+            long inputTokens,
+            long outputTokens,
+            long totalTokens,
+            long candidateCount,
+            long promptChars) {
+        if (aggregate == null) {
+            return;
+        }
+        aggregate.calls.increment();
+        if (success) {
+            aggregate.successes.increment();
+        } else {
+            aggregate.failures.increment();
+        }
+        aggregate.latencyMs.add(Math.max(0L, latencyMs));
+        if (inputTokens > 0L) {
+            aggregate.inputTokens.add(inputTokens);
+        }
+        if (outputTokens > 0L) {
+            aggregate.outputTokens.add(outputTokens);
+        }
+        if (totalTokens > 0L) {
+            aggregate.totalTokens.add(totalTokens);
+        }
+        if (candidateCount > 0L) {
+            aggregate.candidateCount.add(candidateCount);
+        }
+        if (promptChars > 0L) {
+            aggregate.promptChars.add(promptChars);
         }
     }
 
@@ -332,6 +499,8 @@ public final class LlmTelemetry {
     private static final class Aggregate {
         final String stage;
         final String surface;
+        final Long accountId;
+        final String operation;
         final LongAdder calls = new LongAdder();
         final LongAdder successes = new LongAdder();
         final LongAdder failures = new LongAdder();
@@ -339,10 +508,80 @@ public final class LlmTelemetry {
         final LongAdder inputTokens = new LongAdder();
         final LongAdder outputTokens = new LongAdder();
         final LongAdder totalTokens = new LongAdder();
+        final LongAdder candidateCount = new LongAdder();
+        final LongAdder promptChars = new LongAdder();
 
         Aggregate(String stage, String surface) {
+            this(stage, surface, null, null);
+        }
+
+        Aggregate(String stage, String surface, Long accountId, String operation) {
             this.stage = stage;
             this.surface = surface;
+            this.accountId = accountId;
+            this.operation = operation;
+        }
+    }
+
+    public static final class Context {
+        final Long accountId;
+        final Long targetAccountId;
+        final String operation;
+        final String sourceId;
+        final Integer candidateCount;
+        final Long promptChars;
+
+        Context(
+                Long accountId,
+                Long targetAccountId,
+                String operation,
+                String sourceId,
+                Integer candidateCount) {
+            this(accountId, targetAccountId, operation, sourceId, candidateCount, null);
+        }
+
+        Context(
+                Long accountId,
+                Long targetAccountId,
+                String operation,
+                String sourceId,
+                Integer candidateCount,
+                Long promptChars) {
+            this.accountId = accountId;
+            this.targetAccountId = targetAccountId;
+            this.operation = operation == null ? "" : operation.trim();
+            this.sourceId = sourceId == null ? "" : sourceId.trim();
+            this.candidateCount = candidateCount;
+            this.promptChars = promptChars;
+        }
+
+        boolean isEmpty() {
+            return (accountId == null || accountId.longValue() < 0L)
+                    && (targetAccountId == null || targetAccountId.longValue() < 0L)
+                    && operation.isBlank()
+                    && sourceId.isBlank()
+                    && (candidateCount == null || candidateCount.intValue() <= 0)
+                    && (promptChars == null || promptChars.longValue() <= 0L);
+        }
+
+        static Context merge(Context previous, Context next) {
+            if (previous == null || previous.isEmpty()) {
+                return next;
+            }
+            if (next == null || next.isEmpty()) {
+                return previous;
+            }
+            return new Context(
+                    next.accountId == null ? previous.accountId : next.accountId,
+                    next.targetAccountId == null ? previous.targetAccountId : next.targetAccountId,
+                    next.operation == null || next.operation.isBlank() ? previous.operation : next.operation,
+                    next.sourceId == null || next.sourceId.isBlank() ? previous.sourceId : next.sourceId,
+                    next.candidateCount == null || next.candidateCount.intValue() <= 0
+                            ? previous.candidateCount
+                            : next.candidateCount,
+                    next.promptChars == null || next.promptChars.longValue() <= 0L
+                            ? previous.promptChars
+                            : next.promptChars);
         }
     }
 }

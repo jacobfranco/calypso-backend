@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -37,6 +38,7 @@ import now.calypso.backendapi.silhouette.SilhouetteDigest;
 import now.calypso.backendapi.silhouette.SilhouetteEvidence;
 import now.calypso.backendapi.silhouette.SilhouetteModeMerger;
 import now.calypso.backendapi.silhouette.SilhouetteModeDigest;
+import now.calypso.backendapi.silhouette.SilhouetteMode;
 import now.calypso.backendapi.silhouette.SilhouettePatch;
 import now.calypso.backendapi.silhouette.SilhouetteState;
 import now.calypso.backend.*;
@@ -62,7 +64,12 @@ public class CalypsoApiManager {
     private final ConcurrentHashMap<Long, CompletableFuture<Void>> silhouetteSerialByAccount = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, CompletableFuture<Void>> matchRefillRequestByAccount = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Long> lastMatchRefillRequestAtByAccount = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, CompletableFuture<Void>> facecardRerankByDeckKey = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, CompletableFuture<List<GetMatch>>> facecardRerankByDeckKey = new ConcurrentHashMap<>();
+    private final Set<String> facecardPendingRerankRetryKeys = ConcurrentHashMap.newKeySet();
+    private final ConcurrentHashMap<String, Integer> facecardPendingRerankRetryAttemptsByDeckKey = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, PairRerankCacheEntry> pairRerankCacheByKey = new ConcurrentHashMap<>();
+    private final Set<String> pairPendingRerankRetryKeys = ConcurrentHashMap.newKeySet();
+    private final ConcurrentHashMap<String, Integer> pairPendingRerankRetryAttemptsByKey = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Deque<Map<String, Object>>> adminRerankEventsByViewer = new ConcurrentHashMap<>();
 
     // Modules
@@ -86,6 +93,7 @@ public class CalypsoApiManager {
     private final PState phoneToUser;
     private final PState authCodeToAccountId;
     private final PState accountIdToCandidateHeap;
+    private final PState viewerIdToTargetIdToReactionScore;
     private final PState viewerIdToTargetIdToFacecardReaction;
     private final PState viewerIdToTargetIdToPromptLikeSeen;
     private final PState viewerIdToReactionByAnswerId;
@@ -144,28 +152,60 @@ public class CalypsoApiManager {
     private static final String MATCHMAKING_FOLLOWUP_PROMPT_ID = "private.matchmaking.followup";
     private static final String MATCHMAKING_FOLLOWUP_PROMPT_PREFIX = MATCHMAKING_FOLLOWUP_PROMPT_ID + "|";
     private static final String FACECARD_REACTION_ANSWER_PREFIX = "facecard_target:";
-    private static final double MATCH_MIN_EXPLORATORY = 58.0;
-    private static final double MATCH_MIN_BALANCED = 64.0;
-    private static final double MATCH_MIN_FOCUSED = 72.0;
-    private static final double MATCH_AUTOPASS_EXPLORATORY = 66.0;
-    private static final double MATCH_AUTOPASS_BALANCED = 72.0;
-    private static final double MATCH_AUTOPASS_FOCUSED = 80.0;
-    private static final boolean FACECARD_RERANK_ENABLED = "true"
+    private static final double MATCH_MIN_EXPLORATORY = 62.0;
+    private static final double MATCH_MIN_BALANCED = 68.0;
+    private static final double MATCH_MIN_FOCUSED = 76.0;
+    private static final double MATCH_AUTOPASS_EXPLORATORY = 70.0;
+    private static final double MATCH_AUTOPASS_BALANCED = 76.0;
+    private static final double MATCH_AUTOPASS_FOCUSED = 84.0;
+    private static final boolean FACECARD_RERANK_ENABLED = !"false"
             .equalsIgnoreCase(System.getenv("CALYPSO_FACECARD_LLM_RERANK_ENABLED"));
+    private static final boolean MATCH_PAIR_RERANK_ENABLED = !"false"
+            .equalsIgnoreCase(System.getenv("CALYPSO_MATCH_LLM_RERANK_ENABLED"));
     private static final int MATCH_RERANK_POOL_MULTIPLIER = 3;
     private static final int MATCH_RERANK_POOL_MIN = 12;
     private static final int MATCH_RERANK_POOL_MAX = 40;
-    private static final int MATCH_RERANK_SIGNAL_LIMIT_VIEWER = 16;
-    private static final int MATCH_RERANK_SIGNAL_LIMIT_CANDIDATE = 12;
-    private static final double MATCH_RERANK_MAX_WEIGHT = 0.45;
+    private static final double FACECARD_RERANK_MAX_WEIGHT = 0.35;
+    private static final double MATCH_PAIR_RERANK_MAX_WEIGHT = 0.25;
     private static final double MATCH_RERANK_BLOCKER_CAP = 0.82;
     private static final double MATCH_RERANK_CONFIDENCE_MIN = 0.25;
+    private static final double MATCH_PAIR_RERANK_BLOCK_CONFIDENCE = 0.70;
+    private static final double MATCH_PAIR_RERANK_BLOCK_COMPATIBILITY = 0.45;
     private static final long MATCH_RERANK_TIMEOUT_MS = 4500L;
+    private static final long FACECARD_RERANK_BACKGROUND_TIMEOUT_MS = 15000L;
+    private static final long RERANK_SILHOUETTE_READ_TIMEOUT_MS = 5000L;
+    private static final int SILHOUETTE_PENDING_RERANK_MAX_RETRIES = 4;
+    private static final long SILHOUETTE_PENDING_RERANK_RETRY_DELAY_MS = 1500L;
+    private static final long SILHOUETTE_PENDING_RERANK_RETRY_MAX_DELAY_MS = 8000L;
+    private static final long MATCH_PAIR_RERANK_COOLDOWN_MS = 30L * 24 * 60 * 60 * 1000L;
+    private static final double MATCH_PAIR_RERANK_SCORE_INVALIDATION_DELTA = 8.0;
     private static final long MATCH_REFILL_REQUEST_COOLDOWN_MS = 1500L;
     private static final int FACECARD_DAILY_LIMIT = 20;
+    private static final int FACECARD_RERANK_CANDIDATE_POOL_LIMIT = 12;
+    private static final int FACECARD_MIN_PUBLIC_PROMPT_SIGNAL_REACTIONS = 10;
+    private static final int RERANK_MIN_SILHOUETTE_MODE_COUNT = 1;
+    private static final int RERANK_MIN_SILHOUETTE_CONCEPT_COUNT = 1;
+    private static final int RERANK_MIN_SILHOUETTE_EVIDENCE_COUNT = 1;
+    private static final int RERANK_MIN_PRIVATE_SILHOUETTE_EVIDENCE_COUNT = 1;
+    private static final int RERANK_MIN_SILHOUETTE_CONTEXT_CHARS = 160;
+    private static final double RERANK_MIN_SILHOUETTE_AVG_CONFIDENCE = 0.20;
+    private static final double RERANK_MIN_SILHOUETTE_MAX_CONFIDENCE = 0.30;
     private static final String FACECARD_DECK_STATUS_STAGE2 = "stage2";
+    private static final String FACECARD_DECK_STATUS_RERANK_PENDING = "rerank_pending";
+    private static final String FACECARD_DECK_STATUS_RERANK_ATTEMPTED = "rerank_attempted";
     private static final String FACECARD_DECK_STATUS_RERANKED = "reranked";
     private static final ZoneId FACECARD_DAY_ZONE = resolveFacecardDayZone();
+    private static final Executor MATCH_RERANK_EXECUTOR = Executors.newFixedThreadPool(2, runnable -> {
+        Thread thread = new Thread(runnable, "calypso-match-rerank-" + UUID.randomUUID());
+        thread.setDaemon(true);
+        return thread;
+    });
+    private static final ScheduledExecutorService SILHOUETTE_RERANK_RETRY_EXECUTOR = Executors
+            .newScheduledThreadPool(1, runnable -> {
+                Thread thread = new Thread(runnable, "calypso-silhouette-rerank-retry-" + UUID.randomUUID());
+                thread.setDaemon(true);
+                return thread;
+            });
     private static final double PUBLIC_REACTION_LIKE_VALENCE_FLOOR = 0.44;
     private static final double PUBLIC_REACTION_DISLIKE_VALENCE_FLOOR = 0.54;
     private static final double PUBLIC_REACTION_VALENCE_SCALE = 0.24;
@@ -192,11 +232,6 @@ public class CalypsoApiManager {
     private static final double VALENCE_COUNT_CEILING_SOFTNESS = 4.0;
     private static final String SIGNAL_HIERARCHY_DERIVED_SOURCE = "signal_hierarchy_derived";
     private static final int ADMIN_RERANK_EVENT_LIMIT_PER_VIEWER = 200;
-    private static final Set<String> FORMATIVE_ALLOWED_DERIVED_PARENT_SIGNALS = Set.of(
-            "video_games",
-            "anime",
-            "music",
-            "travel");
     private static final int DISAMBIGUATION_MAX_PER_ACCOUNT = 200;
     private static final boolean SILHOUETTE_WRITE_ENABLED = !"false"
             .equalsIgnoreCase(System.getenv("CALYPSO_SILHOUETTE_WRITE_ENABLED"));
@@ -214,35 +249,6 @@ public class CalypsoApiManager {
     private static final int SILHOUETTE_EVENT_CONVERSATION_LINE_CHARS = 240;
     private static final int SILHOUETTE_DELTA_ANSWER_CHARS = 1600;
     private static final int SILHOUETTE_DELTA_TAIL_CHARS = 520;
-    private static final Set<String> SILHOUETTE_GENERIC_META_SUBSTRINGS = Set.of(
-            "focuses on lifestyle",
-            "lifestyle and cultural markers",
-            "cultural markers",
-            "primary filters",
-            "relationship compatibility",
-            "filter for compatibility",
-            "activity-based community",
-            "social belonging",
-            "specific activity-based community");
-    private static final Set<String> SILHOUETTE_ABSTRACT_CUE_TERMS = Set.of(
-            "ambition",
-            "reciprocity",
-            "communication",
-            "emotional",
-            "discipline",
-            "consisten",
-            "trajectory",
-            "intellectual",
-            "values",
-            "character",
-            "reliab",
-            "integrity",
-            "growth",
-            "independent",
-            "headstrong",
-            "flirty",
-            "playful",
-            "equal");
     private static final Set<String> SILHOUETTE_SIGNAL_FIRST_PROMPT_IDS = Set.of(
             "private.hobbies",
             "private.communities.scene",
@@ -252,27 +258,6 @@ public class CalypsoApiManager {
             "private.most.myself",
             "private.popular.dislike",
             "private.not.my.person");
-    private static final Set<String> FORMATIVE_EVIDENCE_SKIP_TOKENS = Set.of(
-            "nostalgia",
-            "nostalgic",
-            "nostalgia_formative_games",
-            "nostalgic_formative_games",
-            "formative_games",
-            "formative_media",
-            "childhood",
-            "gaming",
-            "game",
-            "video_games",
-            "board_games",
-            "games",
-            "media",
-            "book",
-            "books",
-            "reading",
-            "website",
-            "websites",
-            "travel",
-            "adventure");
     private static final boolean PRIVATE_UNIFIED_UNDERSTANDING_ENABLED = !"false"
             .equalsIgnoreCase(System.getenv("CALYPSO_PRIVATE_UNIFIED_UNDERSTANDING_ENABLED"));
     private static final SecureRandom PHONE_CODE_RANDOM = new SecureRandom();
@@ -318,6 +303,8 @@ public class CalypsoApiManager {
         phoneToUser = cluster.clusterPState(CORE_MODULE_NAME, "$$phoneToUser");
         authCodeToAccountId = cluster.clusterPState(CORE_MODULE_NAME, "$$authCodeToAccountId");
         accountIdToCandidateHeap = cluster.clusterPState(CORE_MODULE_NAME, "$$accountIdToCandidateHeap");
+        viewerIdToTargetIdToReactionScore = cluster.clusterPState(CORE_MODULE_NAME,
+                "$$viewerIdToTargetIdToReactionScore");
         viewerIdToTargetIdToFacecardReaction = cluster.clusterPState(CORE_MODULE_NAME,
                 "$$viewerIdToTargetIdToFacecardReaction");
         viewerIdToTargetIdToPromptLikeSeen = cluster.clusterPState(CORE_MODULE_NAME,
@@ -562,18 +549,24 @@ public class CalypsoApiManager {
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(String.format("https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json", sid)))
+                .timeout(Duration.ofSeconds(5))
                 .header("Authorization", "Basic " + auth)
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .POST(HttpRequest.BodyPublishers.ofString(payload))
                 .build();
 
         return HTTP_CLIENT.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .thenAccept(response -> {
+                .orTimeout(6, TimeUnit.SECONDS)
+                .handle((response, err) -> {
+                    if (err != null) {
+                        throw new CompletionException(new IllegalStateException("SMS provider unavailable", err));
+                    }
                     int status = response.statusCode();
                     if (status < 200 || status >= 300) {
                         throw new CompletionException(new IllegalStateException(
                                 "Failed to send SMS: " + response.body()));
                     }
+                    return null;
                 });
     }
 
@@ -604,6 +597,18 @@ public class CalypsoApiManager {
                 });
     }
 
+    public CompletableFuture<Map<String, Object>> flushSilhouetteUpdatesForAccount(long accountId) {
+        if (accountId < 0L) {
+            return CompletableFuture.completedFuture(defaultSilhouetteMap(accountId));
+        }
+        return readSilhouetteSnapshotAfterDrain(accountId)
+                .thenApply(snapshot -> snapshot == null ? defaultSilhouetteMap(accountId) : snapshot)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to flush silhouette updates for account {}", accountId, ex);
+                    return defaultSilhouetteMap(accountId);
+                });
+    }
+
     public CompletableFuture<Map<String, Object>> getLlmTelemetry(long accountId, int limit) {
         if (accountId < 0L) {
             return CompletableFuture.completedFuture(Map.of(
@@ -628,6 +633,48 @@ public class CalypsoApiManager {
                     return sanitizeSilhouetteMap(snapshot, accountId);
                 })
                 .exceptionally(ex -> defaultSilhouetteMap(accountId));
+    }
+
+    private CompletableFuture<Map<String, Object>> readSilhouetteSnapshotAfterDrain(long accountId) {
+        if (!SILHOUETTE_WRITE_ENABLED || accountId < 0L) {
+            return readSilhouetteSnapshot(accountId);
+        }
+        return serializeSilhouetteOp(accountId, () -> drainSilhouetteUpdates(accountId))
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to drain silhouette before rerank for account {}", accountId, ex);
+                    return null;
+                })
+                .thenCompose(ignored -> readSilhouetteSnapshot(accountId));
+    }
+
+    private CompletableFuture<RerankSilhouetteSnapshot> readSilhouetteSnapshotForRerank(long accountId) {
+        if (!SILHOUETTE_WRITE_ENABLED || accountId < 0L) {
+            return CompletableFuture.completedFuture(
+                    RerankSilhouetteSnapshot.available(defaultSilhouetteMap(accountId)));
+        }
+        return serializeSilhouetteOp(accountId, () -> drainSilhouetteUpdates(accountId))
+                .handle((ignored, ex) -> ex)
+                .thenCompose(drainEx -> {
+                    if (drainEx != null) {
+                        LOG.warn("Failed to drain silhouette before rerank for account {}", accountId, drainEx);
+                        return CompletableFuture.completedFuture(
+                                RerankSilhouetteSnapshot.unavailable(accountId, "silhouette_drain_pending"));
+                    }
+                    return getSilhouetteFromAccountId.invokeAsync(accountId, accountId)
+                            .orTimeout(RERANK_SILHOUETTE_READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                            .handle((snapshot, readEx) -> {
+                                if (readEx != null) {
+                                    String reason = isTimeoutException(readEx)
+                                            ? "silhouette_read_timeout"
+                                            : "silhouette_read_unavailable";
+                                    return RerankSilhouetteSnapshot.unavailable(accountId, reason);
+                                }
+                                if (snapshot == null || snapshot.isEmpty()) {
+                                    return RerankSilhouetteSnapshot.available(defaultSilhouetteMap(accountId));
+                                }
+                                return RerankSilhouetteSnapshot.available(sanitizeSilhouetteMap(snapshot, accountId));
+                            });
+                });
     }
 
     private CompletableFuture<Void> initializeSilhouetteForAccount(long accountId) {
@@ -667,13 +714,7 @@ public class CalypsoApiManager {
             String contextMaybe,
             SilhouettePatch precomputedPatch,
             String semanticDelta) {
-        if (!SILHOUETTE_WRITE_ENABLED || accountId < 0L) {
-            return;
-        }
-        if (!shouldQueueSilhouetteEvent(source, promptId, answer)) {
-            return;
-        }
-        enqueueSilhouetteUpdate(
+        queueSilhouetteUpdate(
                 accountId,
                 source,
                 sourceId,
@@ -688,6 +729,35 @@ public class CalypsoApiManager {
                     LOG.warn("Failed to enqueue silhouette update for account {} ({})", accountId, source, ex);
                     return false;
                 });
+    }
+
+    private CompletableFuture<Boolean> queueSilhouetteUpdate(long accountId,
+            String source,
+            String sourceId,
+            String promptId,
+            String question,
+            String answer,
+            List<String> conversationLines,
+            String contextMaybe,
+            SilhouettePatch precomputedPatch,
+            String semanticDelta) {
+        if (!SILHOUETTE_WRITE_ENABLED || accountId < 0L) {
+            return CompletableFuture.completedFuture(false);
+        }
+        if (!shouldQueueSilhouetteEvent(source, promptId, answer)) {
+            return CompletableFuture.completedFuture(false);
+        }
+        return enqueueSilhouetteUpdate(
+                accountId,
+                source,
+                sourceId,
+                promptId,
+                question,
+                answer,
+                conversationLines,
+                contextMaybe,
+                precomputedPatch,
+                semanticDelta);
     }
 
     private CompletableFuture<Boolean> enqueueSilhouetteUpdate(long accountId,
@@ -782,16 +852,23 @@ public class CalypsoApiManager {
                     Map<String, Object> snapshot = snapshotFuture.join();
                     List<SignalRecord> signalRecords = signalsFuture.join();
                     SilhouetteState base = SilhouetteState.fromMap(snapshot, accountId);
-                    SilhouettePatch patch = precomputedSilhouettePatch(event);
-                    if (patch == null || patch.isEmpty()) {
-                        String signalSummary = buildSignalSummary(signalRecords);
-                        Map<String, Object> augmented = augmentEventWithSignalSummary(event, signalSummary);
-                        patch = SilhouetteEditor.buildPatch(openAI, base, augmented);
-                    }
                     String source = mapString(event, "source");
                     String sourceId = mapString(event, "sourceId");
                     String promptId = mapString(event, "promptId");
                     String answer = mapString(event, "answer");
+                    SilhouettePatch patch = precomputedSilhouettePatch(event);
+                    if (patch == null || patch.isEmpty()) {
+                        String signalSummary = buildSignalSummary(signalRecords);
+                        Map<String, Object> augmented = augmentEventWithSignalSummary(event, signalSummary);
+                        patch = LlmTelemetry.withContext(
+                                LlmTelemetry.context(
+                                        Long.valueOf(accountId),
+                                        null,
+                                        source == null || source.isBlank() ? "silhouette_update" : source + "_silhouette",
+                                        sourceId == null || sourceId.isBlank() ? eventId : sourceId,
+                                        null),
+                                () -> SilhouetteEditor.buildPatch(openAI, base, augmented));
+                    }
                     SilhouetteState merged = SilhouetteModeMerger.apply(
                             base,
                             patch,
@@ -857,15 +934,22 @@ public class CalypsoApiManager {
             Map<String, Object> mergedEvent = mergeSilhouetteEvents(accountId, eligible);
             String signalSummary = buildSignalSummary(signalRecords);
             Map<String, Object> augmentedMerged = augmentEventWithSignalSummary(mergedEvent, signalSummary);
-            SilhouettePatch patch = SilhouetteEditor.buildPatch(openAI, base, augmentedMerged);
-            if (patch == null || patch.isEmpty()) {
-                return ackSilhouetteEvents(accountId, eventIds(eligible)).thenApply(done -> false);
-            }
             String source = mapString(mergedEvent, "source");
             String sourceId = mapString(mergedEvent, "sourceId");
             String promptId = mapString(mergedEvent, "promptId");
             String answer = mapString(mergedEvent, "answer");
             String eventId = mapString(mergedEvent, "eventId");
+            SilhouettePatch patch = LlmTelemetry.withContext(
+                    LlmTelemetry.context(
+                            Long.valueOf(accountId),
+                            null,
+                            source == null || source.isBlank() ? "silhouette_update_merged" : source + "_silhouette_merged",
+                            sourceId == null || sourceId.isBlank() ? eventId : sourceId,
+                            Integer.valueOf(eligible.size())),
+                    () -> SilhouetteEditor.buildPatch(openAI, base, augmentedMerged));
+            if (patch == null || patch.isEmpty()) {
+                return ackSilhouetteEvents(accountId, eventIds(eligible)).thenApply(done -> false);
+            }
             SilhouetteState merged = SilhouetteModeMerger.apply(
                     base,
                     patch,
@@ -1131,6 +1215,18 @@ public class CalypsoApiManager {
 
     private static Map<String, Object> defaultSilhouetteMap(long accountId) {
         return SilhouetteState.empty(accountId).toMap();
+    }
+
+    private static boolean isTimeoutException(Throwable ex) {
+        Throwable current = ex;
+        while (current instanceof CompletionException || current instanceof ExecutionException) {
+            Throwable cause = current.getCause();
+            if (cause == null || cause == current) {
+                break;
+            }
+            current = cause;
+        }
+        return current instanceof TimeoutException;
     }
 
     private static String mapString(Map<String, Object> map, String key) {
@@ -2618,6 +2714,13 @@ public class CalypsoApiManager {
                 .thenApply(state -> state == null ? new HashMap<>() : new HashMap<>(state));
     }
 
+    public CompletableFuture<Map<String, Object>> getPrivatePromptSchedulerStateSnapshot(long accountId) {
+        if (accountId < 0L) {
+            return CompletableFuture.completedFuture(new HashMap<>());
+        }
+        return readPrivatePromptSchedulerState(accountId);
+    }
+
     private CompletableFuture<ActivePrivatePrompt> hydrateActivePrivatePrompt(PrivatePromptAssignment assignment) {
         if (assignment == null)
             return CompletableFuture.completedFuture(null);
@@ -2860,7 +2963,14 @@ public class CalypsoApiManager {
                             effectivePart,
                             normalizedConversation,
                             normalizedUserMessage);
-                    return CompletableFuture.supplyAsync(() -> PrivatePromptTurnResponder.generate(openAI, input))
+                    return CompletableFuture.supplyAsync(() -> LlmTelemetry.withContext(
+                            LlmTelemetry.context(
+                                    Long.valueOf(accountId),
+                                    null,
+                                    "private_prompt_chat",
+                                    instanceId,
+                                    null),
+                            () -> PrivatePromptTurnResponder.generate(openAI, input)))
                             .thenApply(result -> new GetPrivatePromptChatTurn(
                                     result == null ? null : result.agentMessage,
                                     result != null && result.needsMoreDetail));
@@ -2883,58 +2993,95 @@ public class CalypsoApiManager {
         }
         final String normalizedBody = bodyCandidate;
         return serializePrivatePromptOp(accountId, () -> requireMutablePrivatePromptAssignment(accountId, instanceId)
-                .thenCompose(current -> {
-                    long now = System.currentTimeMillis();
-                    PromptDefinition prompt = PromptLibrary.getById(current.getPromptId());
-                    if (prompt == null || prompt.getBank() != PromptBankKind.PRIVATE) {
-                        return CompletableFuture
-                                .failedFuture(new IllegalArgumentException("Unknown private prompt: " + current.getPromptId()));
-                    }
+                .thenCompose(current -> completePrivatePromptAnswer(accountId, current, normalizedBody,
+                        normalizedConversation)));
+    }
 
-                    PrivatePromptAnswer answer = new PrivatePromptAnswer();
-                    answer.setInstanceId(current.getInstanceId());
-                    answer.setAccountId(accountId);
-                    answer.setPromptId(current.getPromptId());
-                    answer.setBody(normalizedBody);
-                    answer.setAnsweredAt(now);
+    public CompletableFuture<ActivePrivatePrompt> seedPrivatePromptAnswerByPromptId(long accountId, String promptId,
+            String body, List<String> conversationLines) {
+        String normalizedPromptId = asTrimmedString(promptId);
+        if (normalizedPromptId == null || !PromptLibrary.isPrivatePromptId(normalizedPromptId)) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Unknown private prompt: " + promptId));
+        }
+        List<String> normalizedConversation = clampConversationLines(conversationLines, 40, 320);
+        String bodyCandidate = clampPrivatePromptBody(body);
+        if (bodyCandidate == null) {
+            bodyCandidate = bodyFromConversation(normalizedConversation);
+        }
+        if (bodyCandidate == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Answer body required."));
+        }
+        final String normalizedBody = bodyCandidate;
+        return serializePrivatePromptOp(accountId, () -> readPrivatePromptSchedulerState(accountId).thenCompose(state -> {
+            Set<String> answeredPromptIds = new LinkedHashSet<>(
+                    asStringList(state == null ? null : state.get("answeredPromptIds")));
+            if (answeredPromptIds.contains(normalizedPromptId)) {
+                return CompletableFuture.completedFuture(null);
+            }
+            String instanceId = seedPrivatePromptInstanceId(accountId, normalizedPromptId);
+            return getPrivatePromptAnswerByInstanceId.invokeAsync(instanceId).thenCompose(existingAnswer -> {
+                if (existingAnswer != null) {
+                    return CompletableFuture.completedFuture(null);
+                }
+                long now = System.currentTimeMillis();
+                PrivatePromptAssignment assignment = new PrivatePromptAssignment();
+                assignment.setInstanceId(instanceId);
+                assignment.setAccountId(accountId);
+                assignment.setPromptId(normalizedPromptId);
+                assignment.setScheduledAt(now);
+                assignment.setSurfacedAt(now);
+                assignment.setStatus(PrivatePromptStatus.ACTIVE);
+                return privatePromptAssignmentDepot.appendAsync(assignment)
+                        .thenCompose(ignored -> completePrivatePromptAnswer(accountId, assignment, normalizedBody,
+                                normalizedConversation));
+            });
+        }));
+    }
 
-                    CompletableFuture<PrivatePromptProcessingResult> processingFuture = PRIVATE_UNIFIED_UNDERSTANDING_ENABLED
-                            ? extractAndAppendFromUnifiedPrivateUnderstanding(
-                                    accountId,
+    private static String seedPrivatePromptInstanceId(long accountId, String promptId) {
+        String normalizedPromptId = promptId == null ? "unknown" : promptId.trim();
+        String safePrompt = normalizedPromptId.replaceAll("[^A-Za-z0-9]+", "_");
+        return "seed_private_" + accountId + "_" + safePrompt;
+    }
+
+    private CompletableFuture<ActivePrivatePrompt> completePrivatePromptAnswer(long accountId,
+            PrivatePromptAssignment current,
+            String normalizedBody,
+            List<String> normalizedConversation) {
+        long now = System.currentTimeMillis();
+        PromptDefinition prompt = PromptLibrary.getById(current.getPromptId());
+        if (prompt == null || prompt.getBank() != PromptBankKind.PRIVATE) {
+            return CompletableFuture
+                    .failedFuture(new IllegalArgumentException("Unknown private prompt: " + current.getPromptId()));
+        }
+
+        PrivatePromptAnswer answer = new PrivatePromptAnswer();
+        answer.setInstanceId(current.getInstanceId());
+        answer.setAccountId(accountId);
+        answer.setPromptId(current.getPromptId());
+        answer.setBody(normalizedBody);
+        answer.setAnsweredAt(now);
+
+        CompletableFuture<PrivatePromptProcessingResult> processingFuture = PRIVATE_UNIFIED_UNDERSTANDING_ENABLED
+                ? extractAndAppendFromUnifiedPrivateUnderstanding(
+                        accountId,
+                        current.getPromptId(),
+                        prompt.getText(),
+                        normalizedBody,
+                        normalizedConversation,
+                        "private_prompt",
+                        current.getInstanceId()).exceptionally(ex -> {
+                            LOG.warn("Unified private understanding failed for {}", current.getInstanceId(), ex);
+                            return PrivatePromptProcessingResult.empty(false, compactSilhouetteDelta(
                                     current.getPromptId(),
                                     prompt.getText(),
                                     normalizedBody,
-                                    normalizedConversation,
-                                    "private_prompt",
-                                    current.getInstanceId()).exceptionally(ex -> {
-                                        LOG.warn("Unified private understanding failed for {}", current.getInstanceId(), ex);
-                                        return PrivatePromptProcessingResult.empty(false, compactSilhouetteDelta(
-                                                current.getPromptId(),
-                                                prompt.getText(),
-                                                normalizedBody,
-                                                normalizedConversation));
-                                    }).thenCompose(result -> {
-                                        if (result != null && result.parsed) {
-                                            return CompletableFuture.completedFuture(result);
-                                        }
-                                        return extractAndAppendSignalsFromPrompt(
-                                                accountId,
-                                                current.getPromptId(),
-                                                prompt.getText(),
-                                                normalizedBody,
-                                                normalizedConversation,
-                                                "private_prompt",
-                                                current.getInstanceId()).thenApply(tokens -> new PrivatePromptProcessingResult(
-                                                        tokens,
-                                                        SilhouettePatch.empty(),
-                                                        false,
-                                                        compactSilhouetteDelta(
-                                                                current.getPromptId(),
-                                                                prompt.getText(),
-                                                                normalizedBody,
-                                                                normalizedConversation)));
-                                    })
-                            : extractAndAppendSignalsFromPrompt(
+                                    normalizedConversation));
+                        }).thenCompose(result -> {
+                            if (result != null && result.parsed) {
+                                return CompletableFuture.completedFuture(result);
+                            }
+                            return extractAndAppendSignalsFromPrompt(
                                     accountId,
                                     current.getPromptId(),
                                     prompt.getText(),
@@ -2949,63 +3096,85 @@ public class CalypsoApiManager {
                                                     current.getPromptId(),
                                                     prompt.getText(),
                                                     normalizedBody,
-                                                    normalizedConversation)))
-                                    .exceptionally(ex -> {
-                                        LOG.warn("Signal extraction failed for private prompt answer {}", current.getInstanceId(),
-                                                ex);
-                                        return PrivatePromptProcessingResult.empty(false, compactSilhouetteDelta(
-                                                current.getPromptId(),
-                                                prompt.getText(),
-                                                normalizedBody,
-                                                normalizedConversation));
-                                    });
-
-                    return processingFuture.thenCompose(processing -> {
-                        if (processing != null && processing.signalTokens != null && !processing.signalTokens.isEmpty()) {
-                            answer.setSignalTokens(processing.signalTokens);
-                        }
-                        PrivatePromptAssignment updated = new PrivatePromptAssignment(current);
-                        updated.setStatus(PrivatePromptStatus.ANSWERED);
-                        updated.setCompletedAt(now);
-                        if (updated.isSetSnoozeUntil()) {
-                            updated.unsetSnoozeUntil();
-                        }
-                        CompletableFuture<ActivePrivatePrompt> persisted = privatePromptAnswerDepot.appendAsync(answer)
-                                .thenCompose(v -> privatePromptAssignmentDepot.appendAsync(updated))
-                                .thenCompose(v -> hydrateActivePrivatePrompt(updated));
-                        return persisted.whenComplete((active, ex) -> {
-                            if (ex == null) {
-                                String context = normalizedConversation.isEmpty() ? normalizedBody
-                                        : String.join(" | ", normalizedConversation);
-                                if (processing != null && processing.parsed) {
-                                    if (processing.patch != null && !processing.patch.isEmpty()) {
-                                        queueSilhouetteUpdateAsync(
-                                                accountId,
-                                                "private_prompt",
-                                                current.getInstanceId(),
-                                                current.getPromptId(),
-                                                prompt.getText(),
-                                                normalizedBody,
-                                                normalizedConversation,
-                                                context,
-                                                processing.patch,
-                                                processing.delta);
-                                    }
-                                } else {
-                                    queueSilhouetteUpdateAsync(
-                                            accountId,
-                                            "private_prompt",
-                                            current.getInstanceId(),
-                                            current.getPromptId(),
-                                            prompt.getText(),
-                                            normalizedBody,
-                                            normalizedConversation,
-                                            context);
-                                }
-                            }
+                                                    normalizedConversation)));
+                        })
+                : extractAndAppendSignalsFromPrompt(
+                        accountId,
+                        current.getPromptId(),
+                        prompt.getText(),
+                        normalizedBody,
+                        normalizedConversation,
+                        "private_prompt",
+                        current.getInstanceId()).thenApply(tokens -> new PrivatePromptProcessingResult(
+                                tokens,
+                                SilhouettePatch.empty(),
+                                false,
+                                compactSilhouetteDelta(
+                                        current.getPromptId(),
+                                        prompt.getText(),
+                                        normalizedBody,
+                                        normalizedConversation)))
+                        .exceptionally(ex -> {
+                            LOG.warn("Signal extraction failed for private prompt answer {}", current.getInstanceId(),
+                                    ex);
+                            return PrivatePromptProcessingResult.empty(false, compactSilhouetteDelta(
+                                    current.getPromptId(),
+                                    prompt.getText(),
+                                    normalizedBody,
+                                    normalizedConversation));
                         });
-                    });
-                }));
+
+        return processingFuture.thenCompose(processing -> {
+            if (processing != null && processing.signalTokens != null && !processing.signalTokens.isEmpty()) {
+                answer.setSignalTokens(processing.signalTokens);
+            }
+            PrivatePromptAssignment updated = new PrivatePromptAssignment(current);
+            updated.setStatus(PrivatePromptStatus.ANSWERED);
+            updated.setCompletedAt(now);
+            if (updated.isSetSnoozeUntil()) {
+                updated.unsetSnoozeUntil();
+            }
+            CompletableFuture<ActivePrivatePrompt> persisted = privatePromptAnswerDepot.appendAsync(answer)
+                    .thenCompose(v -> privatePromptAssignmentDepot.appendAsync(updated))
+                    .thenCompose(v -> hydrateActivePrivatePrompt(updated));
+            return persisted.thenCompose(active -> {
+                String context = normalizedConversation.isEmpty() ? normalizedBody
+                        : String.join(" | ", normalizedConversation);
+                CompletableFuture<Boolean> queued;
+                if (processing != null && processing.parsed
+                        && processing.patch != null
+                        && !processing.patch.isEmpty()) {
+                    queued = queueSilhouetteUpdate(
+                            accountId,
+                            "private_prompt",
+                            current.getInstanceId(),
+                            current.getPromptId(),
+                            prompt.getText(),
+                            normalizedBody,
+                            normalizedConversation,
+                            context,
+                            processing.patch,
+                            processing.delta);
+                } else {
+                    queued = queueSilhouetteUpdate(
+                            accountId,
+                            "private_prompt",
+                            current.getInstanceId(),
+                            current.getPromptId(),
+                            prompt.getText(),
+                            normalizedBody,
+                            normalizedConversation,
+                            context,
+                            null,
+                            null);
+                }
+                return queued.exceptionally(ex -> {
+                    LOG.warn("Failed to enqueue silhouette update for account {} ({})",
+                            accountId, "private_prompt", ex);
+                    return false;
+                }).thenApply(ignored -> active);
+            });
+        });
     }
 
     public CompletableFuture<Boolean> postPrivatePromptSkip(long accountId, String instanceId) {
@@ -3235,6 +3404,7 @@ public class CalypsoApiManager {
         return serializeMatchmakingFollowupOp(accountId, () -> requireMutableMatchmakingFollowupAssignment(accountId,
                 instanceId).thenCompose(current -> {
                     Map<String, String> fields = parseMatchmakingFollowupPromptFields(current.getPromptId());
+                    long viewerId = parseLong(fields.get("viewer"), -1L);
                     Double missingValence = parseFollowupValence(fields.get("val"), fields.get("token"));
                     String baseQuestion = buildMatchmakingFollowupQuestion(fields.get("token"), missingValence);
                     String effectivePart = normalizedQuestionPart == null ? baseQuestion : normalizedQuestionPart;
@@ -3244,7 +3414,14 @@ public class CalypsoApiManager {
                             effectivePart,
                             normalizedConversation,
                             normalizedUserMessage);
-                    return CompletableFuture.supplyAsync(() -> PrivatePromptTurnResponder.generate(openAI, input))
+                    return CompletableFuture.supplyAsync(() -> LlmTelemetry.withContext(
+                            LlmTelemetry.context(
+                                    Long.valueOf(accountId),
+                                    viewerId < 0L ? null : Long.valueOf(viewerId),
+                                    "matchmaking_followup_chat",
+                                    instanceId,
+                                    null),
+                            () -> PrivatePromptTurnResponder.generate(openAI, input)))
                             .thenApply(result -> new GetPrivatePromptChatTurn(
                                     result == null ? null : result.agentMessage,
                                     result != null && result.needsMoreDetail));
@@ -3378,6 +3555,16 @@ public class CalypsoApiManager {
                                                 context,
                                                 processing.patch,
                                                 processing.delta);
+                                    } else {
+                                        queueSilhouetteUpdateAsync(
+                                                accountId,
+                                                "matchmaking_followup",
+                                                current.getInstanceId(),
+                                                MATCHMAKING_FOLLOWUP_PROMPT_ID,
+                                                question,
+                                                normalizedBody,
+                                                normalizedConversation,
+                                                context);
                                     }
                                 } else {
                                     queueSilhouetteUpdateAsync(
@@ -3697,34 +3884,6 @@ public class CalypsoApiManager {
         return source.trim();
     }
 
-    private static boolean requiresCanonicalMappingBeforePersist(String normalizedSource, String normalizedSourceId) {
-        if (normalizedSource == null || normalizedSource.isBlank()) {
-            return false;
-        }
-        if (normalizedSource.startsWith("public_prompt")) {
-            return true;
-        }
-        if (normalizedSource.startsWith("matchmaking_followup")) {
-            return true;
-        }
-        if (normalizedSource.startsWith("private_prompt")) {
-            return isUuidLike(normalizedSourceId);
-        }
-        return false;
-    }
-
-    private static boolean isUuidLike(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return false;
-        }
-        try {
-            UUID.fromString(raw.trim());
-            return true;
-        } catch (IllegalArgumentException ignored) {
-            return false;
-        }
-    }
-
     private static boolean shouldObserveUnresolvedCandidate(String normalizedSource, String context) {
         if (normalizedSource == null || normalizedSource.isBlank()) {
             return true;
@@ -4015,7 +4174,14 @@ public class CalypsoApiManager {
         String question = publicPromptReactionQuestion(prompt, reaction);
         List<String> conversation = publicPromptReactionConversation(promptId, prompt, reaction);
         String context = "reaction=" + reaction.name().toLowerCase(Locale.ROOT) + " | prompt=" + prompt;
-        return extractSignalsFromPrompt(promptId, question, answer, conversation).thenCompose(rawSignals -> {
+        return extractSignalsFromPromptWithTelemetry(
+                viewerId,
+                promptId,
+                question,
+                answer,
+                conversation,
+                "public_prompt_reaction",
+                sourceId).thenCompose(rawSignals -> {
             List<ExtractedSignal> normalized = normalizePublicPromptReactionSignals(rawSignals, reaction);
             if (normalized.isEmpty()) {
                 return CompletableFuture.completedFuture(List.of());
@@ -4705,7 +4871,6 @@ public class CalypsoApiManager {
                 clampContext(contextMaybe),
                 normalizedSource,
                 normalizedSourceId);
-        final boolean strictCanonicalSource = requiresCanonicalMappingBeforePersist(normalizedSource, normalizedSourceId);
         int promoted = SignalConceptRegistry.autoPromoteReadyCandidatesIfDue();
         if (promoted > 0) {
             LOG.info("Auto-promoted {} signal concept candidates", promoted);
@@ -4731,8 +4896,14 @@ public class CalypsoApiManager {
                             }
                             boolean unknownResolution = resolution != null
                                     && resolution.kind() == SignalConceptRegistry.ResolutionKind.UNKNOWN;
+                            if (shouldKeepSignalInSilhouetteOnly(canonicalToken, normalizedSource, context)) {
+                                continue;
+                            }
                             List<String> unresolvedParentHints = List.of();
                             if (unknownResolution) {
+                                if (shouldKeepSignalInSilhouetteOnly(rawToken, normalizedSource, context)) {
+                                    continue;
+                                }
                                 if (shouldObserveUnresolvedCandidate(normalizedSource, context)) {
                                     SignalConceptRegistry.observeUnresolved(
                                             rawToken,
@@ -4743,17 +4914,17 @@ public class CalypsoApiManager {
                                             baseValence);
                                 }
                                 unresolvedParentHints = unresolvedParentHintsForWrite(rawToken, context, normalizedSource);
-                                if (strictCanonicalSource && unresolvedParentHints.isEmpty()) {
+                                if (unresolvedParentHints.isEmpty()) {
                                     continue;
                                 }
                             }
-                            Map<String, Double> expanded = strictCanonicalSource && unknownResolution
+                            Map<String, Double> expanded = unknownResolution
                                     ? Map.of()
                                     : SignalConceptRegistry.expandedConceptWeights(
                                             canonicalToken,
                                             SIGNAL_HIERARCHY_MAX_DEPTH);
                             if ((expanded == null || expanded.isEmpty())
-                                    && !(strictCanonicalSource && unknownResolution)) {
+                                    && !unknownResolution) {
                                 expanded = Map.of(canonicalToken, 1.0);
                             }
                             LinkedHashMap<String, Double> expandedWithLexical = new LinkedHashMap<>();
@@ -4874,9 +5045,7 @@ public class CalypsoApiManager {
                                 record.setToken(expandedToken);
                                 record.setCanonicalToken(expandedToken);
                                 String storedRawToken;
-                                if (strictCanonicalSource) {
-                                    storedRawToken = expandedToken;
-                                } else if (expandedToken.equals(canonicalToken) || expandedToken.equals(rawToken)) {
+                                if (expandedToken.equals(canonicalToken) || expandedToken.equals(rawToken)) {
                                     storedRawToken = rawToken;
                                 } else {
                                     storedRawToken = expandedToken;
@@ -4944,9 +5113,39 @@ public class CalypsoApiManager {
         return CompletableFuture.supplyAsync(() -> SignalExtractor.extractFreeform(openAI, text));
     }
 
+    private CompletableFuture<List<ExtractedSignal>> extractSignalsFromTextWithTelemetry(
+            long accountId,
+            String text,
+            String operation,
+            String sourceId) {
+        return CompletableFuture.supplyAsync(() -> LlmTelemetry.withContext(
+                LlmTelemetry.context(
+                        accountId < 0L ? null : Long.valueOf(accountId),
+                        null,
+                        operation,
+                        sourceId,
+                        null),
+                () -> SignalExtractor.extractFreeform(openAI, text)));
+    }
+
     public CompletableFuture<List<ExtractedSignal>> extractSignalsFromAgentConversation(List<String> conversation) {
         return CompletableFuture.supplyAsync(
                 () -> SignalExtractor.extractFromAgentConversation(openAI, conversation, Set.of()));
+    }
+
+    private CompletableFuture<List<ExtractedSignal>> extractSignalsFromAgentConversationWithTelemetry(
+            long accountId,
+            List<String> conversation,
+            String operation,
+            String sourceId) {
+        return CompletableFuture.supplyAsync(() -> LlmTelemetry.withContext(
+                LlmTelemetry.context(
+                        accountId < 0L ? null : Long.valueOf(accountId),
+                        null,
+                        operation,
+                        sourceId,
+                        null),
+                () -> SignalExtractor.extractFromAgentConversation(openAI, conversation, Set.of())));
     }
 
     public CompletableFuture<List<ExtractedSignal>> extractSignalsFromPrompt(String question, String answer) {
@@ -4968,6 +5167,30 @@ public class CalypsoApiManager {
         return CompletableFuture.supplyAsync(
                 () -> SignalExtractor.extractFromPromptAnswer(openAI, promptId, question, answer, conversationLines,
                         Set.of()));
+    }
+
+    private CompletableFuture<List<ExtractedSignal>> extractSignalsFromPromptWithTelemetry(
+            long accountId,
+            String promptId,
+            String question,
+            String answer,
+            List<String> conversationLines,
+            String operation,
+            String sourceId) {
+        return CompletableFuture.supplyAsync(() -> LlmTelemetry.withContext(
+                LlmTelemetry.context(
+                        accountId < 0L ? null : Long.valueOf(accountId),
+                        null,
+                        operation,
+                        sourceId,
+                        null),
+                () -> SignalExtractor.extractFromPromptAnswer(
+                        openAI,
+                        promptId,
+                        question,
+                        answer,
+                        conversationLines,
+                        Set.of())));
     }
 
     private void observePromptDisambiguationCandidates(
@@ -5041,7 +5264,7 @@ public class CalypsoApiManager {
      */
     public CompletableFuture<List<String>> extractAndAppendSignals(long accountId, String text, String source,
             String sourceId, String contextMaybe) {
-        return extractSignalsFromText(text).thenCompose(signals -> {
+        return extractSignalsFromTextWithTelemetry(accountId, text, source, sourceId).thenCompose(signals -> {
             if (signals.isEmpty())
                 return CompletableFuture.completedFuture(List.of());
             List<String> tokens = tokens(signals);
@@ -5051,7 +5274,7 @@ public class CalypsoApiManager {
 
     public CompletableFuture<List<String>> extractAndAppendSignalsFromAgentConversation(long accountId,
             List<String> conversation, String source, String sourceId, String contextMaybe) {
-        return extractSignalsFromAgentConversation(conversation).thenCompose(signals -> {
+        return extractSignalsFromAgentConversationWithTelemetry(accountId, conversation, source, sourceId).thenCompose(signals -> {
             if (signals.isEmpty())
                 return CompletableFuture.completedFuture(List.of());
             List<String> tokens = tokens(signals);
@@ -5082,7 +5305,14 @@ public class CalypsoApiManager {
             context = appendContextField(context, "prompt_id", promptId.trim());
         }
         final String finalContext = context;
-        return extractSignalsFromPrompt(promptId, question, answer, normalizedConversation).thenCompose(signals -> {
+        return extractSignalsFromPromptWithTelemetry(
+                accountId,
+                promptId,
+                question,
+                answer,
+                normalizedConversation,
+                source,
+                sourceId).thenCompose(signals -> {
             observePromptDisambiguationCandidates(
                     accountId,
                     promptId,
@@ -5114,13 +5344,20 @@ public class CalypsoApiManager {
             context = appendContextField(context, "prompt_id", promptId.trim());
         }
         final String finalContext = context;
-        return CompletableFuture.supplyAsync(() -> PrivatePromptUnderstanding.generate(
-                openAI,
-                promptId,
-                question,
-                answer,
-                normalizedConversation,
-                Set.of())).thenCompose(understanding -> {
+        return CompletableFuture.supplyAsync(() -> LlmTelemetry.withContext(
+                LlmTelemetry.context(
+                        accountId < 0L ? null : Long.valueOf(accountId),
+                        null,
+                        source,
+                        sourceId,
+                        null),
+                () -> PrivatePromptUnderstanding.generate(
+                        openAI,
+                        promptId,
+                        question,
+                        answer,
+                        normalizedConversation,
+                        Set.of()))).thenCompose(understanding -> {
                     if (understanding == null || !understanding.parsed) {
                         return CompletableFuture.completedFuture(
                                 PrivatePromptProcessingResult.empty(false, compactSilhouetteDelta(promptId, question, answer,
@@ -5134,7 +5371,14 @@ public class CalypsoApiManager {
                             Set.of(),
                             rawSignals);
                     CompletableFuture<List<ExtractedSignal>> finalSignalsFuture = shouldBackstopUnifiedSignals(promptId, signals)
-                            ? extractSignalsFromPrompt(promptId, question, answer, normalizedConversation)
+                            ? extractSignalsFromPromptWithTelemetry(
+                                    accountId,
+                                    promptId,
+                                    question,
+                                    answer,
+                                    normalizedConversation,
+                                    source + "_backstop",
+                                    sourceId)
                                     .thenApply(backstop -> mergeExtractedSignals(signals, backstop))
                             : CompletableFuture.completedFuture(signals);
                     return finalSignalsFuture.thenCompose(finalSignals -> {
@@ -5327,7 +5571,7 @@ public class CalypsoApiManager {
             return false;
         }
         String token = SignalNormalizer.normalizeOne(signal.token());
-        if (token == null || token.isBlank() || FORMATIVE_EVIDENCE_SKIP_TOKENS.contains(token)) {
+        if (token == null || token.isBlank() || SignalExtractionPolicy.shouldSuppressFormativeEvidenceToken(token)) {
             return false;
         }
         return containsPhrase(normalizedAnswer, token.replace('_', ' '));
@@ -5381,6 +5625,17 @@ public class CalypsoApiManager {
                 }
                 continue;
             }
+            if (isRepairPrompt(promptId) && isRepairConceptOpTarget(op)) {
+                if (isRepairSustainabilityConceptOp(op)) {
+                    out.ops.add(rerouteConceptOpTarget(op, "sustainability_needs", "sustainability_pattern"));
+                    continue;
+                }
+                SilhouettePatch.Op anti = convertRepairBoundaryConceptToAntiPattern(op);
+                if (anti != null) {
+                    out.ops.add(anti);
+                }
+                continue;
+            }
             if (shouldSuppressSilhouetteOpAsConcreteEcho(op, concreteTokens)) {
                 continue;
             }
@@ -5390,6 +5645,16 @@ public class CalypsoApiManager {
             out.ops.add(op);
         }
         return out;
+    }
+
+    private static boolean isRepairPrompt(String promptId) {
+        if (promptId == null || promptId.isBlank()) {
+            return false;
+        }
+        String normalized = promptId.trim().toLowerCase(Locale.ROOT);
+        return "private.repair.rhythm".equals(normalized)
+                || normalized.contains("repair")
+                || normalized.contains("conflict");
     }
 
     private static boolean isSilhouetteDislikePrompt(String promptId) {
@@ -5410,6 +5675,143 @@ public class CalypsoApiManager {
         }
         String target = SilhouetteEvidence.normalizeTarget(op.target);
         return !"anti_patterns".equals(target) && !"tensions".equals(target);
+    }
+
+    private static boolean isRepairConceptOpTarget(SilhouettePatch.Op op) {
+        if (!isNonBoundaryConceptOp(op)) {
+            return false;
+        }
+        String target = SilhouetteEvidence.normalizeTarget(op.target);
+        return "self_expression".equals(target)
+                || "seeking_expression".equals(target)
+                || "spark_triggers".equals(target);
+    }
+
+    private static boolean isRepairSustainabilityConceptOp(SilhouettePatch.Op op) {
+        String text = repairOpSurfaceText(op);
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String lowered = text.toLowerCase(Locale.ROOT);
+        return containsAnySubstring(lowered,
+                "direct",
+                "calm",
+                "specific",
+                "specifics",
+                "honesty",
+                "follow-through",
+                "follow through",
+                "return point",
+                "talk about it",
+                "name what happened",
+                "repair",
+                "reassurance",
+                "plainly",
+                "communication");
+    }
+
+    private static String repairOpSurfaceText(SilhouettePatch.Op op) {
+        StringBuilder buf = new StringBuilder();
+        String surface = silhouetteOpSurfaceText(op);
+        if (surface != null && !surface.isBlank()) {
+            buf.append(surface);
+        }
+        if (op != null && op.evidence != null && op.evidence.value != null && !op.evidence.value.isBlank()) {
+            if (buf.length() > 0) {
+                buf.append(' ');
+            }
+            buf.append(op.evidence.value);
+        }
+        return buf.toString();
+    }
+
+    private static boolean containsAnySubstring(String text, String... needles) {
+        if (text == null || text.isBlank() || needles == null || needles.length == 0) {
+            return false;
+        }
+        for (String needle : needles) {
+            if (needle != null && !needle.isBlank() && text.contains(needle)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static SilhouettePatch.Op convertRepairBoundaryConceptToAntiPattern(SilhouettePatch.Op op) {
+        if (op == null) {
+            return null;
+        }
+        String conceptLabel = op.concept == null ? null : asTrimmedString(op.concept.label);
+        String evidenceValue = op.evidence == null ? null : asTrimmedString(op.evidence.value);
+        String label = conceptLabel != null ? conceptLabel : evidenceValue;
+        if (label == null || label.isBlank()) {
+            return null;
+        }
+        SilhouetteAntiPattern anti = new SilhouetteAntiPattern();
+        anti.label = label.length() > 120 ? label.substring(0, 120).trim() : label;
+        String normalizedLabel = SignalNormalizer.normalizeOne(anti.label);
+        anti.id = "anti_" + (normalizedLabel == null || normalizedLabel.isBlank() ? "repair_boundary" : normalizedLabel);
+        anti.scope = "relational";
+        anti.severity = "medium";
+        double confidence = 0.54;
+        if (op.concept != null) {
+            confidence = Math.max(confidence, Math.min(0.70, op.concept.confidence));
+        }
+        if (op.evidence != null) {
+            confidence = Math.max(confidence, Math.min(0.70, op.evidence.confidence));
+        }
+        anti.confidence = confidence;
+
+        SilhouetteEvidence evidence = op.evidence == null ? new SilhouetteEvidence() : new SilhouetteEvidence(op.evidence);
+        evidence.target = "anti_patterns";
+        evidence.source = "boundary_pattern";
+        if (evidence.value == null || evidence.value.isBlank()) {
+            evidence.value = anti.label;
+        }
+        if (evidence.confidence <= 0.0) {
+            evidence.confidence = confidence;
+        }
+        if (evidence.strength <= 0.0) {
+            evidence.strength = 0.62;
+        }
+        evidence.sourceWeight = Math.max(evidence.sourceWeight, SilhouetteEvidence.defaultSourceWeight(evidence.source));
+
+        return SilhouettePatch.Op.upsertAntiPattern(
+                op.modeId == null || op.modeId.isBlank() ? "mode_repair_boundaries" : op.modeId,
+                op.label == null || op.label.isBlank() ? "repair boundaries" : op.label,
+                anti,
+                evidence);
+    }
+
+    private static SilhouettePatch.Op rerouteConceptOpTarget(
+            SilhouettePatch.Op op,
+            String target,
+            String evidenceSource) {
+        SilhouettePatch.Op out = new SilhouettePatch.Op();
+        out.op = op.op;
+        out.modeId = op.modeId;
+        out.target = target;
+        out.label = op.label;
+        out.status = op.status;
+        out.weight = op.weight;
+        out.confidence = op.confidence;
+        out.strength = op.strength;
+        out.mode = op.mode == null ? null : new SilhouetteMode(op.mode);
+        out.concept = op.concept == null ? null : new SilhouetteConcept(op.concept);
+        out.antiPattern = op.antiPattern == null ? null : new SilhouetteAntiPattern(op.antiPattern);
+        out.tension = op.tension;
+        out.evidence = op.evidence == null ? null : new SilhouetteEvidence(op.evidence);
+        out.openQuestion = op.openQuestion;
+        if (out.evidence != null) {
+            out.evidence.target = target;
+            if (evidenceSource != null && !evidenceSource.isBlank()) {
+                out.evidence.source = evidenceSource;
+                out.evidence.sourceWeight = Math.max(
+                        out.evidence.sourceWeight,
+                        SilhouetteEvidence.defaultSourceWeight(evidenceSource));
+            }
+        }
+        return out;
     }
 
     private static SilhouettePatch.Op convertDislikeConceptToAntiPattern(SilhouettePatch.Op op) {
@@ -5478,11 +5880,8 @@ public class CalypsoApiManager {
         if (text == null || text.isBlank()) {
             return true;
         }
-        String lowered = text.toLowerCase(Locale.ROOT);
-        for (String cue : SILHOUETTE_ABSTRACT_CUE_TERMS) {
-            if (cue != null && !cue.isBlank() && lowered.contains(cue)) {
-                return false;
-            }
+        if (SignalExtractionPolicy.looksLikeSilhouetteAbstractConceptText(text)) {
+            return false;
         }
         if (concreteTokens == null || concreteTokens.isEmpty()) {
             return true;
@@ -5554,11 +5953,8 @@ public class CalypsoApiManager {
         if (matched.isEmpty()) {
             return false;
         }
-        String lowered = text.toLowerCase(Locale.ROOT);
-        for (String cue : SILHOUETTE_ABSTRACT_CUE_TERMS) {
-            if (cue != null && !cue.isBlank() && lowered.contains(cue)) {
-                return false;
-            }
+        if (SignalExtractionPolicy.looksLikeSilhouetteAbstractConceptText(text)) {
+            return false;
         }
         String residual = normalizedText;
         for (String token : matched) {
@@ -5589,16 +5985,7 @@ public class CalypsoApiManager {
         if (text == null || text.isBlank()) {
             return true;
         }
-        String lowered = text.toLowerCase(Locale.ROOT);
-        for (String generic : SILHOUETTE_GENERIC_META_SUBSTRINGS) {
-            if (generic != null && !generic.isBlank() && lowered.contains(generic)) {
-                return true;
-            }
-        }
-        return lowered.contains("focuses on")
-                && (lowered.contains("lifestyle")
-                        || lowered.contains("filters")
-                        || lowered.contains("compatibility"));
+        return SignalExtractionPolicy.isLowValueSilhouetteMetaObservation(text);
     }
 
     private static String silhouetteOpSurfaceText(SilhouettePatch.Op op) {
@@ -5829,9 +6216,29 @@ public class CalypsoApiManager {
         return false;
     }
 
-    private static boolean isAllowedFormativeDerivedParent(String token) {
+    private static boolean shouldKeepSignalInSilhouetteOnly(
+            String token,
+            String normalizedSource,
+            String context) {
         String normalized = SignalNormalizer.normalizeOne(token);
-        return normalized != null && FORMATIVE_ALLOWED_DERIVED_PARENT_SIGNALS.contains(normalized);
+        if (normalized == null || normalized.isBlank()) {
+            return false;
+        }
+        if (SignalExtractionPolicy.shouldKeepSignalTokenSilhouetteOnly(normalized)) {
+            return true;
+        }
+        String promptId = contextFieldValue(context, "prompt_id");
+        if (!isRepairPrompt(promptId)) {
+            return false;
+        }
+        String source = normalizedSource == null ? "" : normalizedSource.trim().toLowerCase(Locale.ROOT);
+        return source.contains("private_prompt")
+                || source.contains("signal_concept_promotion")
+                || source.contains("seed");
+    }
+
+    private static boolean isAllowedFormativeDerivedParent(String token) {
+        return SignalExtractionPolicy.isAllowedFormativeDerivedParent(token);
     }
 
     private static SourceValenceScaleProfile sourceValenceScaleProfile(String normalizedSource) {
@@ -6043,13 +6450,19 @@ public class CalypsoApiManager {
         }
         double score = candidate.getStage0Score();
         out.put("account", account);
+        out.put("scoreSource", "current_pair_score");
         out.put("score", score);
         out.put("computedAt", candidate.getComputedAt());
         out.put("deltaToMatchThreshold", score - matchThreshold);
         out.put("deltaToAutoPassThreshold", score - autoPassThreshold);
+        out.put("meetsMatchThreshold", score >= matchThreshold);
+        out.put("meetsAutoPassThreshold", score >= autoPassThreshold);
         Map<String, Object> debug = scorerDebugFromCandidate(candidate);
         if (debug != null && !debug.isEmpty()) {
             out.put("scorerDebug", debug);
+            out.put("noveltyScore", debug.get("noveltyScore"));
+            out.put("viewerReactionScore", debug.get("viewerReactionScore"));
+            out.put("targetReactionScore", debug.get("targetReactionScore"));
         }
         return out;
     }
@@ -6063,12 +6476,18 @@ public class CalypsoApiManager {
         }
         LinkedHashMap<String, Object> row = new LinkedHashMap<>();
         row.put("account", match.account);
+        row.put("scoreSource", "candidate_heap");
         row.put("score", match.score);
         row.put("computedAt", match.computedAt);
         row.put("deltaToMatchThreshold", match.score - matchThreshold);
         row.put("deltaToAutoPassThreshold", match.score - autoPassThreshold);
+        row.put("meetsMatchThreshold", match.score >= matchThreshold);
+        row.put("meetsAutoPassThreshold", match.score >= autoPassThreshold);
         if (match.scorerDebug != null && !match.scorerDebug.isEmpty()) {
             row.put("scorerDebug", match.scorerDebug);
+            row.put("noveltyScore", match.scorerDebug.get("noveltyScore"));
+            row.put("viewerReactionScore", match.scorerDebug.get("viewerReactionScore"));
+            row.put("targetReactionScore", match.scorerDebug.get("targetReactionScore"));
         }
         return row;
     }
@@ -6159,22 +6578,38 @@ public class CalypsoApiManager {
         return out;
     }
 
-    private static String intentLabel(SignalIntent intent) {
-        if (intent == null) {
-            return "self";
+    private static List<GetMatch> markTier3Pending(List<GetMatch> matches, String reason) {
+        if (matches == null || matches.isEmpty()) {
+            return List.of();
         }
-        switch (intent) {
-            case SELF:
-                return "self";
-            case SEEKING:
-                return "seeking";
-            case BOTH:
-                return "both";
-            case META:
-                return "meta";
-            default:
-                return "self";
+        ArrayList<GetMatch> out = new ArrayList<>(matches.size());
+        String safeReason = reason == null || reason.isBlank() ? "rerank_pending" : reason.trim();
+        for (GetMatch match : matches) {
+            if (match == null) {
+                continue;
+            }
+            Map<String, Object> debug = copyScorerDebug(match);
+            debug.put("tier3Pending", true);
+            debug.put("tier3PendingReason", safeReason);
+            GetMatch pending = new GetMatch(match.account, match.score, match.computedAt, debug);
+            pending.sharedSignals = match.sharedSignals;
+            out.add(pending);
         }
+        return out;
+    }
+
+    private static boolean hasTier3Pending(List<GetMatch> matches) {
+        if (matches == null || matches.isEmpty()) {
+            return false;
+        }
+        for (GetMatch match : matches) {
+            if (match != null
+                    && match.scorerDebug != null
+                    && Boolean.TRUE.equals(match.scorerDebug.get("tier3Pending"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static ParsedSignalToken parseSignalTokenAndValence(SignalRecord record) {
@@ -6192,35 +6627,32 @@ public class CalypsoApiManager {
         do {
             stripped = false;
             if (token.startsWith("anti_") && token.length() > "anti_".length()) {
-                if (!explicitValence) {
-                    valence = -1.0;
-                }
+                valence = negativeSignalPrefixValence(explicitValence, valence);
                 token = token.substring("anti_".length());
                 stripped = true;
             } else if (token.startsWith("not_") && token.length() > "not_".length()) {
-                if (!explicitValence) {
-                    valence = -1.0;
-                }
+                valence = negativeSignalPrefixValence(explicitValence, valence);
                 token = token.substring("not_".length());
                 stripped = true;
             } else if (token.startsWith("no_") && token.length() > "no_".length()) {
-                if (!explicitValence) {
-                    valence = -1.0;
-                }
+                valence = negativeSignalPrefixValence(explicitValence, valence);
                 token = token.substring("no_".length());
                 stripped = true;
             } else if (token.startsWith("avoid_") && token.length() > "avoid_".length()) {
-                if (!explicitValence) {
-                    valence = -1.0;
-                }
+                valence = negativeSignalPrefixValence(explicitValence, valence);
                 token = token.substring("avoid_".length());
                 stripped = true;
             } else if (token.startsWith("exclude_") && token.length() > "exclude_".length()) {
-                if (!explicitValence) {
-                    valence = -1.0;
-                }
+                valence = negativeSignalPrefixValence(explicitValence, valence);
                 token = token.substring("exclude_".length());
                 stripped = true;
+            } else {
+                String negativeRemainder = negativeSignalPrefixRemainder(token);
+                if (negativeRemainder != null) {
+                    valence = negativeSignalPrefixValence(explicitValence, valence);
+                    token = negativeRemainder;
+                    stripped = true;
+                }
             }
         } while (stripped);
 
@@ -6231,112 +6663,42 @@ public class CalypsoApiManager {
         return new ParsedSignalToken(token, clampSigned(valence));
     }
 
-    private static double signalStrength(SignalRecord record, double valenceMagnitude) {
-        if (record == null) {
-            return 0.0;
+    private static double negativeSignalPrefixValence(boolean explicitValence, double valence) {
+        if (!explicitValence || valence == 0.0) {
+            return -1.0;
         }
-        double count = record.isSetCount() ? Math.max(1.0, record.getCount()) : 1.0;
-        return Math.log1p(count)
-                * Math.max(0.0, valenceMagnitude);
+        return valence > 0.0 ? -valence : valence;
     }
 
-    private static List<MatchReranker.Signal> toRerankSignals(Signals signals, int limit) {
-        if (signals == null || !signals.isSetRecords() || signals.getRecords() == null || signals.getRecords().isEmpty()) {
-            return List.of();
+    private static String negativeSignalPrefixRemainder(String token) {
+        if (token == null || token.isBlank()) {
+            return null;
         }
-        HashMap<String, SignalFeature> merged = new HashMap<>();
-        for (SignalRecord record : signals.getRecords()) {
-            if (record == null) {
-                continue;
-            }
-            ParsedSignalToken parsed = parseSignalTokenAndValence(record);
-            if (parsed == null) {
-                continue;
-            }
-            double valenceMagnitude = Math.abs(parsed.valence);
-            if (valenceMagnitude <= 1e-6) {
-                continue;
-            }
-            SignalIntent intent = record.isSetIntent() ? record.getIntent() : SignalIntent.SELF;
-            String intentKey = intentLabel(intent);
-            double strength = signalStrength(record, valenceMagnitude);
-            if (strength <= 1e-6) {
-                continue;
-            }
-            String key = intentKey + "|" + parsed.token;
-            SignalFeature prev = merged.get(key);
-            if (prev == null) {
-                merged.put(key, new SignalFeature(parsed.token, intentKey, parsed.valence, strength));
-                continue;
-            }
-            double combinedWeight = prev.weight + strength;
-            double combinedValence = 0.0;
-            if (combinedWeight > 1e-6) {
-                combinedValence = ((prev.valence * prev.weight) + (parsed.valence * strength)) / combinedWeight;
-            }
-            prev.weight = combinedWeight;
-            prev.valence = clampSigned(combinedValence);
-        }
-
-        if (merged.isEmpty()) {
-            return List.of();
-        }
-        List<SignalFeature> ordered = new ArrayList<>(merged.values());
-        ordered.sort((a, b) -> {
-            int byWeight = Double.compare(b.weight, a.weight);
-            if (byWeight != 0) {
-                return byWeight;
-            }
-            return a.token.compareTo(b.token);
-        });
-        int top = Math.min(Math.max(1, limit), ordered.size());
-        double maxWeight = Math.max(ordered.get(0).weight, 1e-6);
-        ArrayList<MatchReranker.Signal> out = new ArrayList<>(top);
-        for (int i = 0; i < top; i++) {
-            SignalFeature feature = ordered.get(i);
-            MatchReranker.Signal signal = new MatchReranker.Signal();
-            signal.token = feature.token;
-            signal.intent = feature.intent;
-            signal.weight = clamp01(feature.weight / maxWeight);
-            signal.valence = clampSigned(feature.valence);
-            out.add(signal);
-        }
-        return out;
-    }
-
-    private static List<String> sharedSignalTokens(Signals a, Signals b, int limit) {
-        if (a == null || b == null || !a.isSetRecords() || !b.isSetRecords()
-                || a.getRecords() == null || b.getRecords() == null) {
-            return List.of();
-        }
-        LinkedHashSet<String> left = new LinkedHashSet<>();
-        for (SignalRecord record : a.getRecords()) {
-            SignalIntent intent = record.isSetIntent() ? record.getIntent() : SignalIntent.SELF;
-            if (intent != SignalIntent.SELF && intent != SignalIntent.BOTH) continue;
-            ParsedSignalToken parsed = parseSignalTokenAndValence(record);
-            if (parsed != null && parsed.token != null && !parsed.token.isBlank()) {
-                left.add(parsed.token);
+        String[] prefixes = {
+                "dislike_of_",
+                "dislikes_of_",
+                "dislike_",
+                "dislikes_",
+                "disliked_",
+                "disliking_",
+                "hate_",
+                "hates_",
+                "hated_",
+                "hating_",
+                "dont_like_",
+                "doesnt_like_",
+                "do_not_like_",
+                "does_not_like_",
+                "not_into_",
+                "cant_stand_",
+                "cannot_stand_"
+        };
+        for (String prefix : prefixes) {
+            if (prefix != null && token.startsWith(prefix) && token.length() > prefix.length()) {
+                return token.substring(prefix.length());
             }
         }
-        if (left.isEmpty()) {
-            return List.of();
-        }
-        LinkedHashSet<String> shared = new LinkedHashSet<>();
-        for (SignalRecord record : b.getRecords()) {
-            SignalIntent intent = record.isSetIntent() ? record.getIntent() : SignalIntent.SELF;
-            if (intent != SignalIntent.SELF && intent != SignalIntent.BOTH) continue;
-            ParsedSignalToken parsed = parseSignalTokenAndValence(record);
-            if (parsed == null || parsed.token == null || parsed.token.isBlank()) {
-                continue;
-            }
-            if (left.contains(parsed.token)) {
-                shared.add(parsed.token);
-            }
-            if (shared.size() >= limit) {
-                break;
-            }
-        }
-        return new ArrayList<>(shared);
+        return null;
     }
 
     private static String rankingGoalForMode(String mode) {
@@ -6356,6 +6718,54 @@ public class CalypsoApiManager {
         return false;
     }
 
+    private static boolean shouldApplyPairRerank() {
+        return MATCH_PAIR_RERANK_ENABLED || MatchReranker.hasTestOverride();
+    }
+
+    private static String pairRerankCacheKey(long viewerId, long targetId) {
+        long a = Math.min(viewerId, targetId);
+        long b = Math.max(viewerId, targetId);
+        return a + ":" + b;
+    }
+
+    private static long canonicalPairA(long viewerId, long targetId) {
+        return Math.min(viewerId, targetId);
+    }
+
+    private static long canonicalPairB(long viewerId, long targetId) {
+        return Math.max(viewerId, targetId);
+    }
+
+    private static String stableHash(Object raw) {
+        if (raw == null) {
+            return "0";
+        }
+        return Integer.toUnsignedString(String.valueOf(raw).hashCode(), 36);
+    }
+
+    private static boolean isPairRerankCacheUsable(
+            PairRerankCacheEntry entry,
+            long now,
+            double scoreAToB,
+            double scoreBToA,
+            String silhouetteHashA,
+            String silhouetteHashB) {
+        if (entry == null || entry.decision == null) {
+            return false;
+        }
+        if (now - entry.createdAt > MATCH_PAIR_RERANK_COOLDOWN_MS) {
+            return false;
+        }
+        if (Math.abs(entry.scoreAToB - scoreAToB) > MATCH_PAIR_RERANK_SCORE_INVALIDATION_DELTA) {
+            return false;
+        }
+        if (Math.abs(entry.scoreBToA - scoreBToA) > MATCH_PAIR_RERANK_SCORE_INVALIDATION_DELTA) {
+            return false;
+        }
+        return Objects.equals(entry.silhouetteHashA, silhouetteHashA)
+                && Objects.equals(entry.silhouetteHashB, silhouetteHashB);
+    }
+
     private static SilhouetteDigest silhouetteDigest(Map<String, Object> silhouetteMap) {
         SilhouetteState state = SilhouetteState.fromMap(silhouetteMap, mapLong(silhouetteMap, "accountId", 0L));
         return SilhouetteDigest.fromState(state);
@@ -6365,7 +6775,7 @@ public class CalypsoApiManager {
         SilhouetteState state = SilhouetteState.fromMap(silhouetteMap, mapLong(silhouetteMap, "accountId", 0L));
         SilhouetteDigest digest = SilhouetteDigest.fromState(state);
         StringBuilder buf = new StringBuilder();
-        String summary = state.summaryCache == null ? null : clampShort(state.summaryCache.silhouette, 700);
+        String summary = state.summaryCache == null ? null : clampShort(state.summaryCache.silhouette, 360);
         if (summary != null && !summary.isBlank()) {
             buf.append("summary: ").append(summary).append('\n');
         }
@@ -6381,19 +6791,19 @@ public class CalypsoApiManager {
                         .append(" w=").append(String.format(Locale.ROOT, "%.2f", clamp01(mode.weight)))
                         .append(" c=").append(String.format(Locale.ROOT, "%.2f", clamp01(mode.confidence)))
                         .append('\n');
-                appendSilhouetteContextList(buf, "self", mode.self, 5);
-                appendSilhouetteContextList(buf, "seeking", mode.seeking, 4);
-                appendSilhouetteContextList(buf, "spark", mode.sparkTriggers, 5);
-                appendSilhouetteContextList(buf, "comps", mode.realWorldComps, 4);
-                appendSilhouetteContextList(buf, "sustain", mode.sustainabilityNeeds, 4);
-                appendSilhouetteContextList(buf, "aesthetic", mode.aestheticField, 4);
-                appendSilhouetteContextList(buf, "anti", mode.antiPatterns, 3);
-                appendSilhouetteContextList(buf, "tensions", mode.tensions, 3);
-                appendSilhouetteContextList(buf, "evidence", mode.evidenceSummary, 6);
+                appendSilhouetteContextList(buf, "self", mode.self, 4);
+                appendSilhouetteContextList(buf, "seeking", mode.seeking, 3);
+                appendSilhouetteContextList(buf, "spark", mode.sparkTriggers, 4);
+                appendSilhouetteContextList(buf, "comps", mode.realWorldComps, 2);
+                appendSilhouetteContextList(buf, "sustain", mode.sustainabilityNeeds, 3);
+                appendSilhouetteContextList(buf, "aesthetic", mode.aestheticField, 3);
+                appendSilhouetteContextList(buf, "anti", mode.antiPatterns, 2);
+                appendSilhouetteContextList(buf, "tensions", mode.tensions, 2);
+                appendSilhouetteContextList(buf, "evidence", mode.evidenceSummary, 4);
             }
         }
-        appendSilhouetteContextList(buf, "questions", digest.openQuestions, 4);
-        String out = clampShort(buf.toString(), 2400);
+        appendSilhouetteContextList(buf, "questions", digest.openQuestions, 3);
+        String out = clampShort(buf.toString(), 1200);
         return out == null ? "" : out;
     }
 
@@ -6403,7 +6813,7 @@ public class CalypsoApiManager {
         }
         ArrayList<String> kept = new ArrayList<>();
         for (String value : values) {
-            String text = clampShort(value, 220);
+            String text = clampShort(value, 140);
             if (text == null || text.isBlank()) {
                 continue;
             }
@@ -6422,6 +6832,216 @@ public class CalypsoApiManager {
         return SilhouetteState.normalizeMaturity(maturity);
     }
 
+    private static int silhouetteModeCount(Map<String, Object> silhouetteMap) {
+        SilhouetteState state = SilhouetteState.fromMap(silhouetteMap, mapLong(silhouetteMap, "accountId", 0L));
+        if (state.modes == null || state.modes.isEmpty()) {
+            return 0;
+        }
+        int count = 0;
+        for (Object mode : state.modes) {
+            if (mode != null) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static SilhouetteReadiness silhouetteReadiness(Map<String, Object> silhouetteMap) {
+        SilhouetteState state = SilhouetteState.fromMap(silhouetteMap, mapLong(silhouetteMap, "accountId", 0L));
+        SilhouetteReadiness out = new SilhouetteReadiness();
+        out.maturity = SilhouetteState.normalizeMaturity(state.maturity);
+        String summary = state.summaryCache == null || state.summaryCache.silhouette == null
+                ? ""
+                : state.summaryCache.silhouette;
+        out.summaryCharCount = summary == null ? 0 : summary.trim().length();
+        String context = silhouetteContext(silhouetteMap);
+        out.contextCharCount = context == null ? 0 : context.trim().length();
+        if (state.modes == null || state.modes.isEmpty()) {
+            return out;
+        }
+        double confidenceSum = 0.0;
+        int confidenceCount = 0;
+        for (SilhouetteMode mode : state.modes) {
+            if (mode == null || "deprecated".equals(SilhouetteMode.normalizeStatus(mode.status))
+                    || "dormant".equals(SilhouetteMode.normalizeStatus(mode.status))) {
+                continue;
+            }
+            out.modeCount += 1;
+            double confidence = clamp01(mode.confidence);
+            confidenceSum += confidence;
+            confidenceCount += 1;
+            out.maxModeConfidence = Math.max(out.maxModeConfidence, confidence);
+            out.conceptCount += conceptCount(mode.selfExpression);
+            out.conceptCount += conceptCount(mode.seekingExpression);
+            out.conceptCount += conceptCount(mode.sparkTriggers);
+            out.conceptCount += conceptCount(mode.sustainabilityNeeds);
+            out.conceptCount += conceptCount(mode.aestheticField);
+            out.conceptCount += conceptCount(mode.realWorldComps);
+            out.conceptCount += mode.antiPatterns == null ? 0 : mode.antiPatterns.size();
+            out.conceptCount += mode.tensions == null ? 0 : mode.tensions.size();
+            if (mode.evidence != null) {
+                for (SilhouetteEvidence evidence : mode.evidence) {
+                    if (evidence == null || evidence.value == null || evidence.value.isBlank()) {
+                        continue;
+                    }
+                    out.evidenceCount += 1;
+                    String promptId = evidence.promptId == null ? "" : evidence.promptId.trim().toLowerCase(Locale.ROOT);
+                    String source = evidence.source == null ? "" : evidence.source.trim().toLowerCase(Locale.ROOT);
+                    if (promptId.startsWith("private.")
+                            || "private_prompt".equals(source)
+                            || "matchmaking_followup".equals(source)) {
+                        out.privateEvidenceCount += 1;
+                    }
+                }
+            }
+        }
+        out.avgModeConfidence = confidenceCount == 0 ? 0.0 : confidenceSum / confidenceCount;
+        boolean hasStructuredContent = out.conceptCount >= RERANK_MIN_SILHOUETTE_CONCEPT_COUNT
+                && out.evidenceCount >= RERANK_MIN_SILHOUETTE_EVIDENCE_COUNT;
+        boolean hasContextFallback = out.contextCharCount >= RERANK_MIN_SILHOUETTE_CONTEXT_CHARS
+                && out.privateEvidenceCount >= RERANK_MIN_PRIVATE_SILHOUETTE_EVIDENCE_COUNT;
+        out.ready = SILHOUETTE_RERANK_ENABLED
+                && out.modeCount >= RERANK_MIN_SILHOUETTE_MODE_COUNT
+                && out.privateEvidenceCount >= RERANK_MIN_PRIVATE_SILHOUETTE_EVIDENCE_COUNT
+                && (hasStructuredContent || hasContextFallback)
+                && out.avgModeConfidence >= RERANK_MIN_SILHOUETTE_AVG_CONFIDENCE
+                && out.maxModeConfidence >= RERANK_MIN_SILHOUETTE_MAX_CONFIDENCE
+                && !"empty".equals(out.maturity);
+        return out;
+    }
+
+    private static int conceptCount(List<SilhouetteConcept> concepts) {
+        if (concepts == null || concepts.isEmpty()) {
+            return 0;
+        }
+        int count = 0;
+        for (SilhouetteConcept concept : concepts) {
+            if (concept != null && concept.label != null && !concept.label.isBlank()) {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    private static boolean silhouetteRerankReady(Map<String, Object> silhouetteMap) {
+        return silhouetteReadiness(silhouetteMap).ready;
+    }
+
+    private static boolean silhouetteRerankReady(RerankSilhouetteSnapshot snapshot) {
+        return snapshot != null && snapshot.available && silhouetteRerankReady(snapshot.silhouette);
+    }
+
+    private static Map<String, Object> silhouetteRerankAuditDetails(
+            String prefix,
+            Map<String, Object> silhouetteMap) {
+        String safePrefix = prefix == null || prefix.isBlank() ? "silhouette" : prefix.trim();
+        SilhouetteReadiness readiness = silhouetteReadiness(silhouetteMap);
+        LinkedHashMap<String, Object> out = new LinkedHashMap<>();
+        out.put(safePrefix + "SilhouetteMaturity", readiness.maturity);
+        out.put(safePrefix + "SilhouetteModeCount", readiness.modeCount);
+        out.put(safePrefix + "SilhouetteConceptCount", readiness.conceptCount);
+        out.put(safePrefix + "SilhouetteEvidenceCount", readiness.evidenceCount);
+        out.put(safePrefix + "PrivateSilhouetteEvidenceCount", readiness.privateEvidenceCount);
+        out.put(safePrefix + "SilhouetteSummaryCharCount", readiness.summaryCharCount);
+        out.put(safePrefix + "SilhouetteContextCharCount", readiness.contextCharCount);
+        out.put(safePrefix + "SilhouetteAvgConfidence", readiness.avgModeConfidence);
+        out.put(safePrefix + "SilhouetteMaxConfidence", readiness.maxModeConfidence);
+        out.put(safePrefix + "SilhouetteReady", readiness.ready);
+        out.put("requiredSilhouetteModeCount", RERANK_MIN_SILHOUETTE_MODE_COUNT);
+        out.put("requiredSilhouetteConceptCount", RERANK_MIN_SILHOUETTE_CONCEPT_COUNT);
+        out.put("requiredSilhouetteEvidenceCount", RERANK_MIN_SILHOUETTE_EVIDENCE_COUNT);
+        out.put("requiredPrivateSilhouetteEvidenceCount", RERANK_MIN_PRIVATE_SILHOUETTE_EVIDENCE_COUNT);
+        out.put("requiredSilhouetteContextChars", RERANK_MIN_SILHOUETTE_CONTEXT_CHARS);
+        out.put("requiredSilhouetteAvgConfidence", RERANK_MIN_SILHOUETTE_AVG_CONFIDENCE);
+        out.put("requiredSilhouetteMaxConfidence", RERANK_MIN_SILHOUETTE_MAX_CONFIDENCE);
+        return out;
+    }
+
+    private static Map<String, Object> silhouetteRerankAuditDetails(
+            String prefix,
+            RerankSilhouetteSnapshot snapshot) {
+        Map<String, Object> silhouetteMap = snapshot == null ? null : snapshot.silhouette;
+        LinkedHashMap<String, Object> out = new LinkedHashMap<>(silhouetteRerankAuditDetails(prefix, silhouetteMap));
+        String safePrefix = prefix == null || prefix.isBlank() ? "silhouette" : prefix.trim();
+        boolean available = snapshot != null && snapshot.available;
+        out.put(safePrefix + "SilhouetteAvailable", available);
+        if (!available) {
+            out.put(safePrefix + "SilhouetteUnavailableReason",
+                    snapshot == null || snapshot.unavailableReason == null
+                            ? "silhouette_read_unavailable"
+                            : snapshot.unavailableReason);
+        }
+        return out;
+    }
+
+    private static String silhouettePendingReason(String role) {
+        String safeRole = role == null || role.isBlank() ? "silhouette" : role.trim();
+        return safeRole + "_silhouette_pending";
+    }
+
+    private static long silhouettePendingRetryDelayMs(int attempt) {
+        int safeAttempt = Math.max(1, attempt);
+        long multiplier = 1L << Math.min(8, safeAttempt - 1);
+        return Math.min(
+                SILHOUETTE_PENDING_RERANK_RETRY_MAX_DELAY_MS,
+                SILHOUETTE_PENDING_RERANK_RETRY_DELAY_MS * multiplier);
+    }
+
+    private static String pairPendingRerankRetryKey(long viewerId, long targetId) {
+        return viewerId + "->" + targetId;
+    }
+
+    private void clearPairPendingRerankRetry(long viewerId, long targetId) {
+        String key = pairPendingRerankRetryKey(viewerId, targetId);
+        pairPendingRerankRetryKeys.remove(key);
+        pairPendingRerankRetryAttemptsByKey.remove(key);
+    }
+
+    private boolean schedulePairRerankRetry(
+            long viewerId,
+            String viewerMode,
+            long targetId,
+            GetMatch deterministic,
+            double targetToViewerScore,
+            String reason) {
+        if (viewerId < 0L || targetId < 0L || deterministic == null || !shouldApplyPairRerank()) {
+            return false;
+        }
+        String key = pairPendingRerankRetryKey(viewerId, targetId);
+        if (!pairPendingRerankRetryKeys.add(key)) {
+            return false;
+        }
+        int attempt = pairPendingRerankRetryAttemptsByKey.merge(key, 1, Integer::sum);
+        if (attempt > SILHOUETTE_PENDING_RERANK_MAX_RETRIES) {
+            pairPendingRerankRetryKeys.remove(key);
+            LOG.info("Giving up pending-silhouette pair rerank retry for {} after {} attempts ({})",
+                    key, SILHOUETTE_PENDING_RERANK_MAX_RETRIES, reason);
+            return false;
+        }
+        long delayMs = silhouettePendingRetryDelayMs(attempt);
+        LOG.info("Scheduling pending-silhouette pair rerank retry for {} in {}ms (attempt {}, reason {})",
+                key, delayMs, attempt, reason);
+        SILHOUETTE_RERANK_RETRY_EXECUTOR.schedule(() -> {
+            pairPendingRerankRetryKeys.remove(key);
+            try {
+                applyPairRerankForMatch(viewerId, viewerMode, targetId, deterministic, targetToViewerScore)
+                        .whenComplete((match, ex) -> {
+                            if (ex != null) {
+                                LOG.warn("Pending-silhouette pair rerank retry failed for {}", key, ex);
+                                return;
+                            }
+                            if (!pairPendingRerankRetryKeys.contains(key)) {
+                                pairPendingRerankRetryAttemptsByKey.remove(key);
+                            }
+                        });
+            } catch (RuntimeException ex) {
+                pairPendingRerankRetryAttemptsByKey.remove(key);
+                LOG.warn("Pending-silhouette pair rerank retry failed for {}", key, ex);
+            }
+        }, delayMs, TimeUnit.MILLISECONDS);
+        return true;
+    }
+
     private CompletableFuture<Signals> readSignalsSnapshot(long requesterId, long accountId) {
         return getSignalsFromAccountId.invokeAsync(requesterId, accountId)
                 .thenApply(CalypsoApiManager::canonicalizeSignalSnapshot)
@@ -6429,10 +7049,66 @@ public class CalypsoApiManager {
                 .exceptionally(ex -> null);
     }
 
+    private CompletableFuture<Integer> publicPromptReactionCount(long accountId) {
+        return viewerIdToReactionByAnswerId.selectOneAsync(Path.key(accountId))
+                .thenApply(raw -> Integer.valueOf(countNonNeutralPromptReactions(raw)))
+                .completeOnTimeout(0, 2, TimeUnit.SECONDS)
+                .exceptionally(ex -> 0);
+    }
+
+    private static int countNonNeutralPromptReactions(Object raw) {
+        if (!(raw instanceof Map<?, ?> map) || map.isEmpty()) {
+            return 0;
+        }
+        int count = 0;
+        for (Object value : map.values()) {
+            if (value instanceof Number number && number.intValue() != 0) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private CompletableFuture<Set<Long>> readPromptLikedTargetIds(long viewerId) {
+        return viewerIdToTargetIdToPromptLikeSeen.selectOneAsync(Path.key(viewerId))
+                .thenApply(CalypsoApiManager::longKeySet)
+                .completeOnTimeout(Set.of(), 2, TimeUnit.SECONDS)
+                .exceptionally(ex -> Set.of());
+    }
+
+    private CompletableFuture<Set<Long>> readFacecardReactedTargetIds(long viewerId) {
+        return viewerIdToTargetIdToFacecardReaction.selectOneAsync(Path.key(viewerId))
+                .thenApply(CalypsoApiManager::longKeySet)
+                .completeOnTimeout(Set.of(), 2, TimeUnit.SECONDS)
+                .exceptionally(ex -> Set.of());
+    }
+
+    private static Set<Long> longKeySet(Object raw) {
+        if (!(raw instanceof Map<?, ?> map) || map.isEmpty()) {
+            return Set.of();
+        }
+        HashSet<Long> out = new HashSet<>();
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            Long key = entry == null ? null : asLong(entry.getKey());
+            if (key != null && key.longValue() >= 0L) {
+                out.add(key);
+            }
+        }
+        return out;
+    }
+
     private CompletableFuture<List<GetMatch>> applyTier3Rerank(long viewerId,
             List<GetMatch> stage2,
             int limit,
             String surface) {
+        return applyTier3Rerank(viewerId, stage2, limit, surface, MATCH_RERANK_TIMEOUT_MS);
+    }
+
+    private CompletableFuture<List<GetMatch>> applyTier3Rerank(long viewerId,
+            List<GetMatch> stage2,
+            int limit,
+            String surface,
+            long timeoutMs) {
         List<GetMatch> limitedStage2 = limitMatches(stage2, limit);
         if (!shouldApplyTier3Rerank(surface) || stage2 == null || stage2.isEmpty()) {
             return CompletableFuture.completedFuture(limitedStage2);
@@ -6442,49 +7118,71 @@ public class CalypsoApiManager {
                 .invokeAsync(viewerId, viewerId)
                 .completeOnTimeout(null, 2, TimeUnit.SECONDS)
                 .exceptionally(ex -> null);
-        CompletableFuture<Signals> viewerSignalsFuture = readSignalsSnapshot(viewerId, viewerId);
-        CompletableFuture<Map<String, Object>> viewerSilhouetteFuture = readSilhouetteSnapshot(viewerId);
-        HashMap<Long, CompletableFuture<Signals>> targetSignalFutures = new HashMap<>();
-        HashMap<Long, CompletableFuture<Map<String, Object>>> targetSilhouetteFutures = new HashMap<>();
+        CompletableFuture<RerankSilhouetteSnapshot> viewerSilhouetteFuture = readSilhouetteSnapshotForRerank(viewerId);
+        CompletableFuture<Integer> viewerPromptReactionCountFuture = publicPromptReactionCount(viewerId);
+        HashMap<Long, CompletableFuture<RerankSilhouetteSnapshot>> targetSilhouetteFutures = new HashMap<>();
         for (GetMatch candidate : stage2) {
             long targetId = parseTargetAccountId(candidate);
-            if (targetId < 0L || targetId == viewerId || targetSignalFutures.containsKey(targetId)) {
+            if (targetId < 0L || targetId == viewerId || targetSilhouetteFutures.containsKey(targetId)) {
                 continue;
             }
-            targetSignalFutures.put(targetId, readSignalsSnapshot(viewerId, targetId));
-            targetSilhouetteFutures.put(targetId, readSilhouetteSnapshot(targetId));
+            targetSilhouetteFutures.put(targetId, readSilhouetteSnapshotForRerank(targetId));
         }
 
         ArrayList<CompletableFuture<?>> waits = new ArrayList<>();
         waits.add(viewerFiltersFuture);
-        waits.add(viewerSignalsFuture);
         waits.add(viewerSilhouetteFuture);
-        waits.addAll(targetSignalFutures.values());
+        waits.add(viewerPromptReactionCountFuture);
         waits.addAll(targetSilhouetteFutures.values());
         CompletableFuture<Void> all = CompletableFuture.allOf(waits.toArray(new CompletableFuture[0]));
-        return all.thenApply(ignored -> {
+        Executor rerankExecutor = MatchReranker.hasTestOverride() ? Runnable::run : MATCH_RERANK_EXECUTOR;
+        return all.thenApplyAsync(ignored -> {
             Filters viewerFilters = viewerFiltersFuture.join();
-            Signals viewerSignals = viewerSignalsFuture.join();
-            Map<String, Object> viewerSilhouette = viewerSilhouetteFuture.join();
-            HashMap<Long, Signals> targetSignalsById = new HashMap<>();
-            HashMap<Long, Map<String, Object>> targetSilhouettesById = new HashMap<>();
-            for (Map.Entry<Long, CompletableFuture<Signals>> entry : targetSignalFutures.entrySet()) {
-                Signals snapshot = entry.getValue().join();
-                if (snapshot != null) {
-                    targetSignalsById.put(entry.getKey(), snapshot);
-                }
-            }
-            for (Map.Entry<Long, CompletableFuture<Map<String, Object>>> entry : targetSilhouetteFutures.entrySet()) {
-                Map<String, Object> snapshot = entry.getValue().join();
+            RerankSilhouetteSnapshot viewerSnapshot = viewerSilhouetteFuture.join();
+            Map<String, Object> viewerSilhouette = viewerSnapshot == null ? null : viewerSnapshot.silhouette;
+            int viewerPromptReactionCount = Math.max(0, viewerPromptReactionCountFuture.join());
+            HashMap<Long, RerankSilhouetteSnapshot> targetSilhouettesById = new HashMap<>();
+            for (Map.Entry<Long, CompletableFuture<RerankSilhouetteSnapshot>> entry : targetSilhouetteFutures.entrySet()) {
+                RerankSilhouetteSnapshot snapshot = entry.getValue().join();
                 if (snapshot != null) {
                     targetSilhouettesById.put(entry.getKey(), snapshot);
                 }
+            }
+            boolean facecardSurface = "facecards".equalsIgnoreCase(surface);
+            boolean enforceSilhouetteReadiness = facecardSurface && !MatchReranker.hasTestOverride();
+            if (enforceSilhouetteReadiness && (viewerSnapshot == null || !viewerSnapshot.available)) {
+                String skipReason = silhouettePendingReason("viewer");
+                for (GetMatch candidate : limitedStage2) {
+                    recordAdminRerankSkipEvent(
+                            viewerId,
+                            "facecards_skipped",
+                            candidate,
+                            "facecard_stage2",
+                            skipReason,
+                            viewerPromptReactionCount,
+                            null,
+                            silhouetteRerankAuditDetails("viewer", viewerSnapshot));
+                }
+                return markTier3Pending(limitedStage2, skipReason);
+            }
+            if (enforceSilhouetteReadiness && !silhouetteRerankReady(viewerSnapshot)) {
+                for (GetMatch candidate : limitedStage2) {
+                    recordAdminRerankSkipEvent(
+                            viewerId,
+                            "facecards_skipped",
+                            candidate,
+                            "facecard_stage2",
+                            "viewer_silhouette_sparse",
+                            viewerPromptReactionCount,
+                            null,
+                            silhouetteRerankAuditDetails("viewer", viewerSnapshot));
+                }
+                return limitedStage2;
             }
 
             MatchReranker.RerankRequest request = new MatchReranker.RerankRequest();
             request.surface = surface;
             request.rankingGoal = rankingGoalForMode(CalypsoHelpers.getModeSelfOrNull(viewerFilters));
-            request.viewerSignals = toRerankSignals(viewerSignals, MATCH_RERANK_SIGNAL_LIMIT_VIEWER);
             if (SILHOUETTE_RERANK_ENABLED) {
                 request.viewer = silhouetteDigest(viewerSilhouette);
                 request.viewerSilhouette = silhouetteContext(viewerSilhouette);
@@ -6492,6 +7190,9 @@ public class CalypsoApiManager {
                 request.viewer = new SilhouetteDigest();
                 request.viewerSilhouette = "";
             }
+            boolean candidateSilhouettePending = false;
+            String candidateSilhouettePendingReason = "candidate_silhouette_pending";
+            HashMap<Long, String> pendingCandidateReasonsByTargetId = new HashMap<>();
             for (GetMatch candidate : stage2) {
                 if (candidate == null || candidate.account == null || candidate.account.id == null
                         || candidate.account.id.isBlank()) {
@@ -6504,13 +7205,43 @@ public class CalypsoApiManager {
                 MatchReranker.Candidate entry = new MatchReranker.Candidate();
                 entry.candidateId = candidate.account.id;
                 entry.stage2Normalized = clamp01(candidate.score / 100.0);
-                Signals targetSignals = targetSignalsById.get(targetId);
-                entry.signals = toRerankSignals(targetSignals, MATCH_RERANK_SIGNAL_LIMIT_CANDIDATE);
-                List<String> shared = sharedSignalTokens(viewerSignals, targetSignals, 10);
-                entry.sharedSignals = shared;
-                candidate.sharedSignals = shared;
+                RerankSilhouetteSnapshot candidateSnapshot = targetSilhouettesById.get(targetId);
+                Map<String, Object> candidateSilhouette = candidateSnapshot == null ? null : candidateSnapshot.silhouette;
+                if (enforceSilhouetteReadiness && (candidateSnapshot == null || !candidateSnapshot.available)) {
+                    String skipReason = silhouettePendingReason("candidate");
+                    candidateSilhouettePending = true;
+                    candidateSilhouettePendingReason = skipReason;
+                    pendingCandidateReasonsByTargetId.put(targetId, skipReason);
+                    LinkedHashMap<String, Object> skipDetails = new LinkedHashMap<>();
+                    skipDetails.putAll(silhouetteRerankAuditDetails("viewer", viewerSnapshot));
+                    skipDetails.putAll(silhouetteRerankAuditDetails("candidate", candidateSnapshot));
+                    recordAdminRerankSkipEvent(
+                            viewerId,
+                            "facecards_skipped",
+                            candidate,
+                            "facecard_stage2",
+                            skipReason,
+                            viewerPromptReactionCount,
+                            null,
+                            skipDetails);
+                    continue;
+                }
+                if (enforceSilhouetteReadiness && !silhouetteRerankReady(candidateSnapshot)) {
+                    LinkedHashMap<String, Object> skipDetails = new LinkedHashMap<>();
+                    skipDetails.putAll(silhouetteRerankAuditDetails("viewer", viewerSnapshot));
+                    skipDetails.putAll(silhouetteRerankAuditDetails("candidate", candidateSnapshot));
+                    recordAdminRerankSkipEvent(
+                            viewerId,
+                            "facecards_skipped",
+                            candidate,
+                            "facecard_stage2",
+                            "candidate_silhouette_sparse",
+                            viewerPromptReactionCount,
+                            null,
+                            skipDetails);
+                    continue;
+                }
                 if (SILHOUETTE_RERANK_ENABLED) {
-                    Map<String, Object> candidateSilhouette = targetSilhouettesById.get(targetId);
                     entry.digest = silhouetteDigest(candidateSilhouette);
                     entry.silhouette = silhouetteContext(candidateSilhouette);
                 } else {
@@ -6520,10 +7251,20 @@ public class CalypsoApiManager {
                 request.candidates.add(entry);
             }
             if (request.candidates.isEmpty()) {
+                if (candidateSilhouettePending) {
+                    return markTier3Pending(limitedStage2, candidateSilhouettePendingReason);
+                }
                 return limitedStage2;
             }
 
-            MatchReranker.RerankResult result = MatchReranker.rerank(openAI, request);
+            MatchReranker.RerankResult result = LlmTelemetry.withContext(
+                    LlmTelemetry.context(
+                            Long.valueOf(viewerId),
+                            null,
+                            "facecards".equalsIgnoreCase(surface) ? "facecard_rerank" : "tier3_rerank",
+                            surface,
+                            Integer.valueOf(request.candidates.size())),
+                    () -> MatchReranker.rerank(openAI, request));
             if (result == null || result.rankedCandidates == null || result.rankedCandidates.isEmpty()) {
                 return limitedStage2;
             }
@@ -6544,10 +7285,17 @@ public class CalypsoApiManager {
                         || candidate.account.id.isBlank()) {
                     continue;
                 }
+                long candidateTargetId = parseTargetAccountId(candidate);
                 double stage2Norm = clamp01(candidate.score / 100.0);
                 MatchReranker.Decision decision = decisionById.get(candidate.account.id.trim());
                 if (decision == null) {
-                    reranked.add(candidate);
+                    String pendingReason = pendingCandidateReasonsByTargetId.get(candidateTargetId);
+                    if (pendingReason != null) {
+                        List<GetMatch> pending = markTier3Pending(List.of(candidate), pendingReason);
+                        reranked.add(pending.isEmpty() ? candidate : pending.get(0));
+                    } else {
+                        reranked.add(candidate);
+                    }
                     continue;
                 }
 
@@ -6555,12 +7303,8 @@ public class CalypsoApiManager {
                         decision.finalScore == null ? 0.5 : decision.finalScore.doubleValue());
                 double confidence = clamp01(
                         decision.confidence == null ? 0.5 : decision.confidence.doubleValue());
-                double appliedWeight = MATCH_RERANK_MAX_WEIGHT * Math.max(MATCH_RERANK_CONFIDENCE_MIN, confidence);
-                double blendedNorm = clamp01((stage2Norm * (1.0 - appliedWeight)) + (compatibility * appliedWeight));
-                if ("deprioritize".equals(decision.recommendedUse)) {
-                    blendedNorm = Math.min(blendedNorm, stage2Norm * MATCH_RERANK_BLOCKER_CAP);
-                }
-                blendedNorm = clamp01(blendedNorm);
+                double appliedWeight = FACECARD_RERANK_MAX_WEIGHT * Math.max(MATCH_RERANK_CONFIDENCE_MIN, confidence);
+                double blendedNorm = blendedRerankScore(stage2Norm, compatibility, appliedWeight, decision.recommendedUse);
                 double finalScore = blendedNorm * 100.0;
 
                 Map<String, Object> debug = copyScorerDebug(candidate);
@@ -6576,6 +7320,13 @@ public class CalypsoApiManager {
                 debug.put("tier3AppliedWeight", appliedWeight);
                 debug.put("tier3RecommendedUse", decision.recommendedUse);
                 debug.put("tier3Applied", true);
+                debug.put("tier3ScoreSource", "facecard_stage2");
+                debug.put("viewerSilhouetteMaturity", silhouetteMaturity(viewerSilhouette));
+                debug.put("viewerSilhouetteModeCount", silhouetteModeCount(viewerSilhouette));
+                RerankSilhouetteSnapshot candidateSnapshot = targetSilhouettesById.get(candidateTargetId);
+                Map<String, Object> candidateSilhouette = candidateSnapshot == null ? null : candidateSnapshot.silhouette;
+                debug.put("candidateSilhouetteMaturity", silhouetteMaturity(candidateSilhouette));
+                debug.put("candidateSilhouetteModeCount", silhouetteModeCount(candidateSilhouette));
                 if (decision.fitSummaryInternal != null && !decision.fitSummaryInternal.isBlank()) {
                     debug.put("tier3Reason", decision.fitSummaryInternal.trim());
                 }
@@ -6589,6 +7340,9 @@ public class CalypsoApiManager {
                 debug.put("scoreAfterTier3", finalScore);
                 GetMatch rerankedMatch = new GetMatch(candidate.account, finalScore, candidate.computedAt, debug);
                 rerankedMatch.sharedSignals = candidate.sharedSignals;
+                LinkedHashMap<String, Object> auditDetails = new LinkedHashMap<>();
+                auditDetails.putAll(silhouetteRerankAuditDetails("viewer", viewerSnapshot));
+                auditDetails.putAll(silhouetteRerankAuditDetails("candidate", candidateSnapshot));
                 recordAdminRerankEvent(
                         viewerId,
                         surface,
@@ -6598,7 +7352,9 @@ public class CalypsoApiManager {
                         stage2Norm,
                         compatibility,
                         confidence,
-                        appliedWeight);
+                        appliedWeight,
+                        "facecard_stage2",
+                        auditDetails);
                 reranked.add(rerankedMatch);
             }
 
@@ -6610,11 +7366,336 @@ public class CalypsoApiManager {
                 return Long.compare(b.computedAt, a.computedAt);
             });
             return limitMatches(reranked, limit);
-        }).completeOnTimeout(limitedStage2, MATCH_RERANK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        }, rerankExecutor).completeOnTimeout(
+                markTier3Pending(limitedStage2, "tier3_rerank_timeout"),
+                Math.max(1L, timeoutMs),
+                TimeUnit.MILLISECONDS)
                 .exceptionally(ex -> {
                     LOG.warn("Failed to apply tier3 rerank for account {}", viewerId, ex);
                     return limitedStage2;
                 });
+    }
+
+    private CompletableFuture<GetMatch> applyPairRerankForMatch(
+            long viewerId,
+            String viewerMode,
+            long targetId,
+            GetMatch deterministic,
+            double targetToViewerScore) {
+        if (deterministic == null || deterministic.account == null || deterministic.account.id == null) {
+            return CompletableFuture.completedFuture(deterministic);
+        }
+        if (!shouldApplyPairRerank() || (openAI == null && !MatchReranker.hasTestOverride())) {
+            return CompletableFuture.completedFuture(deterministic);
+        }
+
+        CompletableFuture<RerankSilhouetteSnapshot> viewerSilhouetteFuture = readSilhouetteSnapshotForRerank(viewerId);
+        CompletableFuture<RerankSilhouetteSnapshot> targetSilhouetteFuture = readSilhouetteSnapshotForRerank(targetId);
+        CompletableFuture<Integer> viewerPromptReactionCountFuture = publicPromptReactionCount(viewerId);
+        CompletableFuture<Integer> targetPromptReactionCountFuture = publicPromptReactionCount(targetId);
+
+        CompletableFuture<Void> all = CompletableFuture.allOf(
+                viewerSilhouetteFuture,
+                targetSilhouetteFuture,
+                viewerPromptReactionCountFuture,
+                targetPromptReactionCountFuture);
+
+        return all.thenCompose(ignored -> CompletableFuture.supplyAsync(() -> {
+            RerankSilhouetteSnapshot viewerSnapshot = viewerSilhouetteFuture.join();
+            RerankSilhouetteSnapshot targetSnapshot = targetSilhouetteFuture.join();
+            Map<String, Object> viewerSilhouette = viewerSnapshot == null ? null : viewerSnapshot.silhouette;
+            Map<String, Object> targetSilhouette = targetSnapshot == null ? null : targetSnapshot.silhouette;
+            int viewerPromptReactionCount = Math.max(0, viewerPromptReactionCountFuture.join());
+            int targetPromptReactionCount = Math.max(0, targetPromptReactionCountFuture.join());
+            boolean enforceSilhouetteReadiness = !MatchReranker.hasTestOverride();
+            if (enforceSilhouetteReadiness && (viewerSnapshot == null || !viewerSnapshot.available)) {
+                String skipReason = silhouettePendingReason("viewer");
+                LinkedHashMap<String, Object> skipDetails = new LinkedHashMap<>(
+                        silhouetteRerankAuditDetails("viewer", viewerSnapshot));
+                skipDetails.put("silhouettePendingRetryScheduled", schedulePairRerankRetry(
+                        viewerId,
+                        viewerMode,
+                        targetId,
+                        deterministic,
+                        targetToViewerScore,
+                        skipReason));
+                recordAdminRerankSkipEvent(
+                        viewerId,
+                        "matches_skipped",
+                        deterministic,
+                        "match_mutual_min",
+                        skipReason,
+                        viewerPromptReactionCount,
+                        targetPromptReactionCount,
+                        skipDetails);
+                return deterministic;
+            }
+            if (enforceSilhouetteReadiness && !silhouetteRerankReady(viewerSnapshot)) {
+                clearPairPendingRerankRetry(viewerId, targetId);
+                recordAdminRerankSkipEvent(
+                        viewerId,
+                        "matches_skipped",
+                        deterministic,
+                        "match_mutual_min",
+                        "viewer_silhouette_sparse",
+                        viewerPromptReactionCount,
+                        targetPromptReactionCount,
+                        silhouetteRerankAuditDetails("viewer", viewerSnapshot));
+                return deterministic;
+            }
+            if (enforceSilhouetteReadiness && (targetSnapshot == null || !targetSnapshot.available)) {
+                String skipReason = silhouettePendingReason("candidate");
+                LinkedHashMap<String, Object> skipDetails = new LinkedHashMap<>();
+                skipDetails.putAll(silhouetteRerankAuditDetails("viewer", viewerSnapshot));
+                skipDetails.putAll(silhouetteRerankAuditDetails("candidate", targetSnapshot));
+                skipDetails.put("silhouettePendingRetryScheduled", schedulePairRerankRetry(
+                        viewerId,
+                        viewerMode,
+                        targetId,
+                        deterministic,
+                        targetToViewerScore,
+                        skipReason));
+                recordAdminRerankSkipEvent(
+                        viewerId,
+                        "matches_skipped",
+                        deterministic,
+                        "match_mutual_min",
+                        skipReason,
+                        viewerPromptReactionCount,
+                        targetPromptReactionCount,
+                        skipDetails);
+                return deterministic;
+            }
+            if (enforceSilhouetteReadiness && !silhouetteRerankReady(targetSnapshot)) {
+                clearPairPendingRerankRetry(viewerId, targetId);
+                LinkedHashMap<String, Object> skipDetails = new LinkedHashMap<>();
+                skipDetails.putAll(silhouetteRerankAuditDetails("viewer", viewerSnapshot));
+                skipDetails.putAll(silhouetteRerankAuditDetails("candidate", targetSnapshot));
+                recordAdminRerankSkipEvent(
+                        viewerId,
+                        "matches_skipped",
+                        deterministic,
+                        "match_mutual_min",
+                        "candidate_silhouette_sparse",
+                        viewerPromptReactionCount,
+                        targetPromptReactionCount,
+                        skipDetails);
+                return deterministic;
+            }
+            String viewerSilhouetteHash = SILHOUETTE_RERANK_ENABLED
+                    ? stableHash(silhouetteContext(viewerSilhouette))
+                    : "off";
+            String targetSilhouetteHash = SILHOUETTE_RERANK_ENABLED
+                    ? stableHash(silhouetteContext(targetSilhouette))
+                    : "off";
+
+            long canonicalA = canonicalPairA(viewerId, targetId);
+            long canonicalB = canonicalPairB(viewerId, targetId);
+            boolean viewerIsCanonicalA = viewerId == canonicalA;
+            double scoreAToB = viewerIsCanonicalA ? deterministic.score : targetToViewerScore;
+            double scoreBToA = viewerIsCanonicalA ? targetToViewerScore : deterministic.score;
+            String silhouetteHashA = viewerIsCanonicalA ? viewerSilhouetteHash : targetSilhouetteHash;
+            String silhouetteHashB = viewerIsCanonicalA ? targetSilhouetteHash : viewerSilhouetteHash;
+            Map<String, Object> canonicalViewerSilhouette = viewerIsCanonicalA ? viewerSilhouette : targetSilhouette;
+            Map<String, Object> canonicalCandidateSilhouette = viewerIsCanonicalA ? targetSilhouette : viewerSilhouette;
+            String canonicalCandidateId = CalypsoHelpers.serializeAccountId(canonicalB);
+            String cacheKey = pairRerankCacheKey(viewerId, targetId);
+            long now = System.currentTimeMillis();
+            PairRerankCacheEntry cached = pairRerankCacheByKey.get(cacheKey);
+            if (isPairRerankCacheUsable(
+                    cached,
+                    now,
+                    scoreAToB,
+                    scoreBToA,
+                    silhouetteHashA,
+                    silhouetteHashB)) {
+                clearPairPendingRerankRetry(viewerId, targetId);
+                return applyPairRerankDecision(
+                        viewerId,
+                        deterministic,
+                        cached.decision,
+                        targetToViewerScore,
+                        true,
+                        false,
+                        cacheKey,
+                        canonicalA,
+                        !viewerIsCanonicalA);
+            }
+
+            MatchReranker.RerankRequest request = new MatchReranker.RerankRequest();
+            request.surface = "matches";
+            request.rankingGoal = "balance";
+            if (SILHOUETTE_RERANK_ENABLED) {
+                request.viewer = silhouetteDigest(canonicalViewerSilhouette);
+                request.viewerSilhouette = silhouetteContext(canonicalViewerSilhouette);
+            } else {
+                request.viewer = new SilhouetteDigest();
+                request.viewerSilhouette = "";
+            }
+
+            MatchReranker.Candidate candidate = new MatchReranker.Candidate();
+            candidate.candidateId = canonicalCandidateId;
+            candidate.stage2Normalized = clamp01(scoreAToB / 100.0);
+            if (SILHOUETTE_RERANK_ENABLED) {
+                candidate.digest = silhouetteDigest(canonicalCandidateSilhouette);
+                candidate.silhouette = silhouetteContext(canonicalCandidateSilhouette);
+            } else {
+                candidate.digest = new SilhouetteDigest();
+                candidate.silhouette = "";
+            }
+            request.candidates.add(candidate);
+
+            MatchReranker.RerankResult result = LlmTelemetry.withContext(
+                    LlmTelemetry.context(
+                            Long.valueOf(canonicalA),
+                            Long.valueOf(canonicalB),
+                            "match_pair_rerank",
+                            cacheKey,
+                            Integer.valueOf(1)),
+                    () -> MatchReranker.rerank(openAI, request));
+            MatchReranker.Decision decision = firstDecisionForCandidate(result, canonicalCandidateId);
+            if (decision == null) {
+                clearPairPendingRerankRetry(viewerId, targetId);
+                return deterministic;
+            }
+
+            pairRerankCacheByKey.put(cacheKey, new PairRerankCacheEntry(
+                    now,
+                    scoreAToB,
+                    scoreBToA,
+                    silhouetteHashA,
+                    silhouetteHashB,
+                    decision));
+            clearPairPendingRerankRetry(viewerId, targetId);
+            return applyPairRerankDecision(
+                    viewerId,
+                    deterministic,
+                    decision,
+                    targetToViewerScore,
+                    false,
+                    true,
+                    cacheKey,
+                    canonicalA,
+                    !viewerIsCanonicalA);
+        }, MATCH_RERANK_EXECUTOR)).completeOnTimeout(deterministic, MATCH_RERANK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to apply pair rerank for {} -> {}", viewerId, targetId, ex);
+                    return deterministic;
+                });
+    }
+
+    private static MatchReranker.Decision firstDecisionForCandidate(MatchReranker.RerankResult result, String candidateId) {
+        if (result == null || result.rankedCandidates == null || result.rankedCandidates.isEmpty()
+                || candidateId == null || candidateId.isBlank()) {
+            return null;
+        }
+        String expected = candidateId.trim();
+        for (MatchReranker.Decision decision : result.rankedCandidates) {
+            if (decision != null && decision.candidateId != null
+                    && expected.equals(decision.candidateId.trim())) {
+                return decision;
+            }
+        }
+        return null;
+    }
+
+    private static double blendedRerankScore(
+            double stageNorm,
+            double compatibility,
+            double appliedWeight,
+            String recommendedUse) {
+        double base = clamp01(stageNorm);
+        double blended = clamp01((base * (1.0 - appliedWeight)) + (clamp01(compatibility) * appliedWeight));
+        if ("deprioritize".equals(recommendedUse)) {
+            return clamp01(Math.min(blended, base * MATCH_RERANK_BLOCKER_CAP));
+        }
+        if ("rank_high".equals(recommendedUse)) {
+            return clamp01(Math.max(base, blended));
+        }
+        if ("rank_mid".equals(recommendedUse)) {
+            double boundedDelta = Math.max(-0.015, Math.min(0.015, blended - base));
+            return clamp01(base + boundedDelta);
+        }
+        if ("explore".equals(recommendedUse)) {
+            return clamp01(Math.max(base, Math.min(base + 0.02, blended)));
+        }
+        return blended;
+    }
+
+    private GetMatch applyPairRerankDecision(
+            long viewerId,
+            GetMatch deterministic,
+            MatchReranker.Decision decision,
+            double targetToViewerScore,
+            boolean fromCache,
+            boolean recordAudit,
+            String pairCacheKey,
+            long canonicalViewerId,
+            boolean swapBestModePair) {
+        if (deterministic == null || decision == null) {
+            return deterministic;
+        }
+
+        double deterministicNorm = clamp01(deterministic.score / 100.0);
+        double compatibility = clamp01(decision.finalScore == null ? 0.5 : decision.finalScore.doubleValue());
+        double confidence = clamp01(decision.confidence == null ? 0.5 : decision.confidence.doubleValue());
+        double appliedWeight = MATCH_PAIR_RERANK_MAX_WEIGHT * Math.max(MATCH_RERANK_CONFIDENCE_MIN, confidence);
+        boolean deprioritize = "deprioritize".equals(decision.recommendedUse);
+        double blendedNorm = blendedRerankScore(deterministicNorm, compatibility, appliedWeight, decision.recommendedUse);
+        boolean blocked = deprioritize
+                && confidence >= MATCH_PAIR_RERANK_BLOCK_CONFIDENCE
+                && compatibility <= MATCH_PAIR_RERANK_BLOCK_COMPATIBILITY;
+        double finalScore = blocked ? 0.0 : blendedNorm * 100.0;
+
+        Map<String, Object> debug = copyScorerDebug(deterministic);
+        debug.put("tier3Applied", true);
+        debug.put("tier3Surface", "matches");
+        debug.put("tier3Compatibility", compatibility);
+        debug.put("tier3Spark", decision.sparkScore == null ? 0.5 : clamp01(decision.sparkScore.doubleValue()));
+        debug.put("tier3Sustainability",
+                decision.sustainabilityScore == null ? 0.5 : clamp01(decision.sustainabilityScore.doubleValue()));
+        debug.put("tier3LearningValue",
+                decision.learningValueScore == null ? 0.5 : clamp01(decision.learningValueScore.doubleValue()));
+        debug.put("tier3Confidence", confidence);
+        debug.put("tier3AppliedWeight", appliedWeight);
+        debug.put("tier3RecommendedUse", decision.recommendedUse);
+        debug.put("tier3Cached", fromCache);
+        debug.put("tier3HardBlocker", blocked);
+        debug.put("tier3ScoreSource", "match_mutual_min");
+        debug.put("tier3PairCacheKey", pairCacheKey);
+        debug.put("tier3CanonicalViewerId", CalypsoHelpers.serializeAccountId(canonicalViewerId));
+        debug.put("scoreBeforeTier3", deterministic.score);
+        debug.put("scoreAfterTier3", finalScore);
+        putFiniteMetric(debug, "targetToViewerScoreAtRerank", targetToViewerScore);
+        if (decision.fitSummaryInternal != null && !decision.fitSummaryInternal.isBlank()) {
+            debug.put("tier3Reason", decision.fitSummaryInternal.trim());
+        }
+        if (decision.bestModePair != null) {
+            HashMap<String, Object> bestModePair = new HashMap<>();
+            bestModePair.put("viewerModeId",
+                    swapBestModePair ? decision.bestModePair.candidateModeId : decision.bestModePair.viewerModeId);
+            bestModePair.put("candidateModeId",
+                    swapBestModePair ? decision.bestModePair.viewerModeId : decision.bestModePair.candidateModeId);
+            bestModePair.put("canonicalOrientation", !swapBestModePair);
+            debug.put("tier3BestModePair", bestModePair);
+        }
+
+        GetMatch after = new GetMatch(deterministic.account, finalScore, deterministic.computedAt, debug);
+        after.sharedSignals = deterministic.sharedSignals;
+        if (recordAudit) {
+            recordAdminRerankEvent(
+                    viewerId,
+                    blocked ? "matches_blocked" : "matches",
+                    deterministic,
+                    after,
+                    decision,
+                    deterministicNorm,
+                    compatibility,
+                    confidence,
+                    appliedWeight,
+                    "match_mutual_min");
+        }
+        return blocked ? null : after;
     }
 
     private void recordAdminRerankEvent(
@@ -6626,7 +7707,34 @@ public class CalypsoApiManager {
             double stage2Norm,
             double compatibility,
             double confidence,
-            double appliedWeight) {
+            double appliedWeight,
+            String scoreSource) {
+        recordAdminRerankEvent(
+                viewerId,
+                surface,
+                before,
+                after,
+                decision,
+                stage2Norm,
+                compatibility,
+                confidence,
+                appliedWeight,
+                scoreSource,
+                null);
+    }
+
+    private void recordAdminRerankEvent(
+            long viewerId,
+            String surface,
+            GetMatch before,
+            GetMatch after,
+            MatchReranker.Decision decision,
+            double stage2Norm,
+            double compatibility,
+            double confidence,
+            double appliedWeight,
+            String scoreSource,
+            Map<String, Object> extraDetails) {
         if (before == null || after == null || after.account == null || decision == null) {
             return;
         }
@@ -6635,7 +7743,10 @@ public class CalypsoApiManager {
         double netChange = afterScore - beforeScore;
         LinkedHashMap<String, Object> event = new LinkedHashMap<>();
         event.put("createdAt", System.currentTimeMillis());
+        event.put("eventType", "applied");
+        event.put("rerankStatus", "applied");
         event.put("surface", surface == null || surface.isBlank() ? "unknown" : surface.trim());
+        event.put("scoreSource", scoreSource == null || scoreSource.isBlank() ? "unknown" : scoreSource.trim());
         event.put("viewerId", CalypsoHelpers.serializeAccountId(viewerId));
         event.put("candidateId", after.account.id);
         event.put("candidateName", after.account.name);
@@ -6659,14 +7770,106 @@ public class CalypsoApiManager {
             bestModePair.put("candidateModeId", decision.bestModePair.candidateModeId);
             event.put("bestModePair", bestModePair);
         }
+        putExtraAdminDetails(event, extraDetails);
 
+        addAdminRerankEvent(viewerId, event);
+    }
+
+    private void recordAdminRerankSkipEvent(
+            long viewerId,
+            String surface,
+            GetMatch candidate,
+            String scoreSource,
+            String skipReason,
+            Integer viewerPromptReactionCount,
+            Integer candidatePromptReactionCount) {
+        recordAdminRerankSkipEvent(
+                viewerId,
+                surface,
+                candidate,
+                scoreSource,
+                skipReason,
+                viewerPromptReactionCount,
+                candidatePromptReactionCount,
+                null);
+    }
+
+    private void recordAdminRerankSkipEvent(
+            long viewerId,
+            String surface,
+            GetMatch candidate,
+            String scoreSource,
+            String skipReason,
+            Integer viewerPromptReactionCount,
+            Integer candidatePromptReactionCount,
+            Map<String, Object> extraDetails) {
+        if (candidate == null || candidate.account == null) {
+            return;
+        }
+        String normalizedSkipReason = skipReason == null || skipReason.isBlank() ? "unknown" : skipReason.trim();
+        LinkedHashMap<String, Object> event = new LinkedHashMap<>();
+        event.put("createdAt", System.currentTimeMillis());
+        event.put("eventType", "skipped");
+        event.put("rerankStatus", "skipped");
+        event.put("surface", surface == null || surface.isBlank() ? "unknown" : surface.trim());
+        event.put("scoreSource", scoreSource == null || scoreSource.isBlank() ? "unknown" : scoreSource.trim());
+        event.put("viewerId", CalypsoHelpers.serializeAccountId(viewerId));
+        event.put("candidateId", candidate.account.id);
+        event.put("candidateName", candidate.account.name);
+        event.put("scoreBefore", candidate.score);
+        event.put("skipReason", normalizedSkipReason);
+        if (viewerPromptReactionCount != null) {
+            event.put("viewerPublicPromptReactionCount", Math.max(0, viewerPromptReactionCount.intValue()));
+        }
+        if (candidatePromptReactionCount != null) {
+            event.put("candidatePublicPromptReactionCount", Math.max(0, candidatePromptReactionCount.intValue()));
+        }
+        putExtraAdminDetails(event, extraDetails);
+        addAdminRerankEvent(viewerId, event);
+    }
+
+    private static void putExtraAdminDetails(Map<String, Object> event, Map<String, Object> extraDetails) {
+        if (event == null || extraDetails == null || extraDetails.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, Object> entry : extraDetails.entrySet()) {
+            if (entry != null && entry.getKey() != null && entry.getValue() != null) {
+                event.put(entry.getKey(), entry.getValue());
+            }
+        }
+    }
+
+    private void addAdminRerankEvent(long viewerId, Map<String, Object> event) {
+        if (event == null || event.isEmpty()) {
+            return;
+        }
+        String eventKey = adminRerankEventKey(event);
+        if (!eventKey.isBlank()) {
+            event.put("eventKey", eventKey);
+        }
         Deque<Map<String, Object>> events = adminRerankEventsByViewer.computeIfAbsent(
                 viewerId,
                 ignored -> new ConcurrentLinkedDeque<>());
+        if (!eventKey.isBlank()) {
+            events.removeIf(existing -> eventKey.equals(adminRerankEventKey(existing)));
+        }
         events.addFirst(event);
         while (events.size() > ADMIN_RERANK_EVENT_LIMIT_PER_VIEWER) {
             events.pollLast();
         }
+    }
+
+    private static String adminRerankEventKey(Map<String, Object> event) {
+        if (event == null || event.isEmpty()) {
+            return "";
+        }
+        return String.join("|",
+                Objects.toString(event.get("eventType"), ""),
+                Objects.toString(event.get("surface"), ""),
+                Objects.toString(event.get("scoreSource"), ""),
+                Objects.toString(event.get("viewerId"), ""),
+                Objects.toString(event.get("candidateId"), ""),
+                Objects.toString(event.get("skipReason"), ""));
     }
 
     private static List<String> clampAdminStringList(List<String> raw, int maxItems, int maxChars) {
@@ -6922,10 +8125,10 @@ public class CalypsoApiManager {
                 viewerToTargetFollowupFuture,
                 targetToViewerFollowupFuture);
 
-        return all.thenApply(v -> {
+        return all.thenCompose(v -> {
             Double targetToViewerScore = targetToViewerScoreFuture.join();
             if (targetToViewerScore == null) {
-                return null;
+                return CompletableFuture.completedFuture(null);
             }
             double viewerToTargetScore = ranked.score;
             Filters targetFilters = targetFiltersFuture.join();
@@ -6933,26 +8136,26 @@ public class CalypsoApiManager {
 
             if (viewerToTargetScore < modeAwareMatchThreshold(viewerMode)
                     || targetToViewerScore.doubleValue() < modeAwareMatchThreshold(targetMode)) {
-                return null;
+                return CompletableFuture.completedFuture(null);
             }
 
             boolean viewerLikedTargetFacecard = viewerLikedTargetFacecardFuture.join();
             boolean targetLikedViewerFacecard = targetLikedViewerFacecardFuture.join();
             if (!viewerLikedTargetFacecard || !targetLikedViewerFacecard) {
-                return null;
+                return CompletableFuture.completedFuture(null);
             }
 
             boolean viewerPromptLikeSeen = viewerPromptLikeSeenFuture.join();
             boolean targetPromptLikeSeen = targetPromptLikeSeenFuture.join();
             if (!viewerPromptLikeSeen || !targetPromptLikeSeen) {
-                return null;
+                return CompletableFuture.completedFuture(null);
             }
 
             boolean followupPending = viewerToTargetFollowupFuture.join() || targetToViewerFollowupFuture.join();
             if (followupPending
                     && (viewerToTargetScore < modeAwareAutoPassThreshold(viewerMode)
                             || targetToViewerScore.doubleValue() < modeAwareAutoPassThreshold(targetMode))) {
-                return null;
+                return CompletableFuture.completedFuture(null);
             }
 
             double mutualScore = Math.min(viewerToTargetScore, targetToViewerScore.doubleValue());
@@ -6972,7 +8175,14 @@ public class CalypsoApiManager {
             debug.put("viewerPromptLikeSeen", viewerPromptLikeSeen);
             debug.put("targetPromptLikeSeen", targetPromptLikeSeen);
             debug.put("followupPending", followupPending);
-            return new GetMatch(ranked.account, mutualScore, ranked.computedAt, debug);
+            GetMatch deterministic = new GetMatch(ranked.account, mutualScore, ranked.computedAt, debug);
+            deterministic.sharedSignals = ranked.sharedSignals;
+            return applyPairRerankForMatch(
+                    viewerId,
+                    viewerMode,
+                    targetId,
+                    deterministic,
+                    targetToViewerScore.doubleValue());
         }).exceptionally(ex -> {
             LOG.warn("Failed to evaluate mutual match {} -> {}", viewerId, targetId, ex);
             return null;
@@ -7039,6 +8249,57 @@ public class CalypsoApiManager {
 
     private static String facecardDeckKey(long viewerId, String dayKey, String fingerprint) {
         return viewerId + "|" + dayKey + "|" + (fingerprint == null ? "" : fingerprint);
+    }
+
+    private void clearFacecardPendingRerankRetry(String deckKey) {
+        if (deckKey == null || deckKey.isBlank()) {
+            return;
+        }
+        facecardPendingRerankRetryKeys.remove(deckKey);
+        facecardPendingRerankRetryAttemptsByDeckKey.remove(deckKey);
+    }
+
+    private void scheduleFacecardRerankRetry(
+            long viewerId,
+            String dayKey,
+            String fingerprint,
+            List<GetMatch> deterministicPool) {
+        if (!shouldApplyTier3Rerank("facecards")
+                || facecardDeckDepot == null
+                || deterministicPool == null
+                || deterministicPool.isEmpty()) {
+            return;
+        }
+        String deckKey = facecardDeckKey(viewerId, dayKey, fingerprint);
+        if (!facecardPendingRerankRetryKeys.add(deckKey)) {
+            return;
+        }
+        int attempt = facecardPendingRerankRetryAttemptsByDeckKey.merge(deckKey, 1, Integer::sum);
+        if (attempt > SILHOUETTE_PENDING_RERANK_MAX_RETRIES) {
+            facecardPendingRerankRetryKeys.remove(deckKey);
+            LOG.info("Giving up pending-silhouette facecard rerank retry for {} after {} attempts",
+                    deckKey, SILHOUETTE_PENDING_RERANK_MAX_RETRIES);
+            return;
+        }
+        List<GetMatch> retryPool = List.copyOf(limitMatches(deterministicPool, FACECARD_RERANK_CANDIDATE_POOL_LIMIT));
+        long delayMs = silhouettePendingRetryDelayMs(attempt);
+        LOG.info("Scheduling pending-silhouette facecard rerank retry for {} in {}ms (attempt {})",
+                deckKey, delayMs, attempt);
+        SILHOUETTE_RERANK_RETRY_EXECUTOR.schedule(() -> {
+            facecardPendingRerankRetryKeys.remove(deckKey);
+            try {
+                Map<String, Object> pendingDeck = buildFacecardDeckSnapshot(
+                        viewerId,
+                        dayKey,
+                        FACECARD_DECK_STATUS_RERANK_PENDING,
+                        limitMatches(retryPool, FACECARD_DAILY_LIMIT),
+                        fingerprint);
+                startFacecardRerank(viewerId, dayKey, fingerprint, retryPool, pendingDeck);
+            } catch (RuntimeException ex) {
+                clearFacecardPendingRerankRetry(deckKey);
+                LOG.warn("Pending-silhouette facecard rerank retry failed for {}", deckKey, ex);
+            }
+        }, delayMs, TimeUnit.MILLISECONDS);
     }
 
     private static String facecardDeckFingerprint(List<GetMatch> matches) {
@@ -7113,6 +8374,15 @@ public class CalypsoApiManager {
         return out;
     }
 
+    private static String facecardRerankStatus(boolean tier3Applied, boolean tier3Pending) {
+        if (tier3Pending) {
+            return FACECARD_DECK_STATUS_RERANK_PENDING;
+        }
+        return tier3Applied
+                ? FACECARD_DECK_STATUS_RERANKED
+                : FACECARD_DECK_STATUS_RERANK_ATTEMPTED;
+    }
+
     private static Map<String, Object> buildFacecardDeckSnapshot(long viewerId, String dayKey,
             String status, List<GetMatch> matches, String fingerprint) {
         HashMap<String, Object> deck = new HashMap<>();
@@ -7144,6 +8414,8 @@ public class CalypsoApiManager {
         deck.put("size", cards.size());
         if (FACECARD_DECK_STATUS_RERANKED.equals(status)) {
             deck.put("rerankedAt", deck.get("generatedAt"));
+        } else if (FACECARD_DECK_STATUS_RERANK_PENDING.equals(status)) {
+            deck.put("rerankQueuedAt", deck.get("generatedAt"));
         }
         return deck;
     }
@@ -7154,7 +8426,7 @@ public class CalypsoApiManager {
         if (cards.isEmpty()) {
             return CompletableFuture.completedFuture(List.of());
         }
-        int clamped = clampFacecardLimit(limit);
+        int clamped = Math.max(1, Math.min(FACECARD_RERANK_CANDIDATE_POOL_LIMIT, limit));
         ArrayList<Long> ids = new ArrayList<>();
         for (Map<String, Object> card : cards) {
             Long targetId = asLong(card.get("targetId"));
@@ -7212,30 +8484,39 @@ public class CalypsoApiManager {
                 });
     }
 
-    private CompletableFuture<List<GetMatch>> filterAlreadyReactedFacecards(long viewerId, List<GetMatch> matches,
-            int limit) {
+    private CompletableFuture<List<GetMatch>> filterFacecardEligibleCandidates(
+            long viewerId,
+            List<GetMatch> matches,
+            int limit,
+            String scoreSource,
+            boolean recordSkips) {
         List<GetMatch> safeMatches = matches == null ? List.of() : matches;
         if (safeMatches.isEmpty()) {
             return CompletableFuture.completedFuture(List.of());
         }
-        int clamped = clampFacecardLimit(limit);
-        return viewerIdToTargetIdToFacecardReaction.selectOneAsync(Path.key(viewerId))
-                .completeOnTimeout(null, 2, TimeUnit.SECONDS)
-                .exceptionally(ex -> null)
-                .thenApply(raw -> {
-                    Set<Long> reacted = new HashSet<>();
-                    if (raw instanceof Map<?, ?> map) {
-                        for (Map.Entry<?, ?> entry : map.entrySet()) {
-                            Long targetId = asLong(entry.getKey());
-                            if (targetId != null && targetId.longValue() >= 0L) {
-                                reacted.add(targetId);
-                            }
-                        }
-                    }
-                    ArrayList<GetMatch> out = new ArrayList<>();
+        int clamped = Math.max(1, Math.min(FACECARD_RERANK_CANDIDATE_POOL_LIMIT, limit));
+        CompletableFuture<Set<Long>> promptLikedFuture = readPromptLikedTargetIds(viewerId);
+        CompletableFuture<Set<Long>> reactedFuture = readFacecardReactedTargetIds(viewerId);
+        return promptLikedFuture.thenCombine(reactedFuture, (Set<Long> promptLiked, Set<Long> reacted) -> {
+                    Set<Long> safePromptLiked = promptLiked == null ? Set.of() : promptLiked;
+                    Set<Long> safeReacted = reacted == null ? Set.of() : reacted;
+                    List<GetMatch> out = new ArrayList<>();
                     for (GetMatch match : safeMatches) {
                         long targetId = parseTargetAccountId(match);
-                        if (targetId < 0L || reacted.contains(targetId)) {
+                        if (targetId < 0L || safeReacted.contains(targetId)) {
+                            continue;
+                        }
+                        if (!safePromptLiked.contains(targetId)) {
+                            if (recordSkips) {
+                                recordAdminRerankSkipEvent(
+                                        viewerId,
+                                        "facecards_skipped",
+                                        match,
+                                        scoreSource,
+                                        "no_prompt_like",
+                                        null,
+                                        null);
+                            }
                             continue;
                         }
                         out.add(match);
@@ -7244,6 +8525,10 @@ public class CalypsoApiManager {
                         }
                     }
                     return out;
+                })
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to filter facecard eligibility for account {}", viewerId, ex);
+                    return List.<GetMatch>of();
                 });
     }
 
@@ -7268,52 +8553,150 @@ public class CalypsoApiManager {
         }
         String status = mapString(existingDeck, "status");
         String existingFingerprint = mapString(existingDeck, "fingerprint");
-        return !FACECARD_DECK_STATUS_RERANKED.equals(status)
+        if (FACECARD_DECK_STATUS_RERANK_PENDING.equals(status) && Objects.equals(existingFingerprint, fingerprint)) {
+            return true;
+        }
+        boolean closed = FACECARD_DECK_STATUS_RERANKED.equals(status)
+                || FACECARD_DECK_STATUS_RERANK_ATTEMPTED.equals(status);
+        return !closed
                 || !Objects.equals(existingFingerprint, fingerprint);
     }
 
-    private void queueAsyncFacecardRerank(long viewerId, String dayKey, String fingerprint,
-            List<GetMatch> deterministicDeck, Map<String, Object> existingDeck) {
-        if (deterministicDeck == null || deterministicDeck.isEmpty()
+    private static boolean facecardDeckRerankClosed(Map<String, Object> existingDeck) {
+        String status = mapString(existingDeck, "status");
+        return FACECARD_DECK_STATUS_RERANKED.equals(status)
+                || FACECARD_DECK_STATUS_RERANK_ATTEMPTED.equals(status);
+    }
+
+    private CompletableFuture<Boolean> facecardPromptSignalReady(long viewerId) {
+        return publicPromptReactionCount(viewerId)
+                .thenApply(count -> count != null
+                        && count.intValue() >= FACECARD_MIN_PUBLIC_PROMPT_SIGNAL_REACTIONS);
+    }
+
+    private CompletableFuture<List<GetMatch>> startFacecardRerank(long viewerId, String dayKey, String fingerprint,
+            List<GetMatch> deterministicPool, Map<String, Object> existingDeck) {
+        List<GetMatch> fallback = limitMatches(deterministicPool, FACECARD_DAILY_LIMIT);
+        if (fallback.isEmpty()
                 || !facecardRerankEligible(existingDeck, fingerprint)
                 || facecardDeckDepot == null) {
-            return;
+            return CompletableFuture.completedFuture(fallback);
         }
         String deckKey = facecardDeckKey(viewerId, dayKey, fingerprint);
-        facecardRerankByDeckKey.computeIfAbsent(deckKey, key -> {
-            List<GetMatch> rerankInput = List.copyOf(limitMatches(deterministicDeck, FACECARD_DAILY_LIMIT));
-            CompletableFuture<Void> future = applyTier3Rerank(viewerId, rerankInput, FACECARD_DAILY_LIMIT, "facecards")
+        CompletableFuture<List<GetMatch>> queued = facecardRerankByDeckKey.computeIfAbsent(deckKey, key -> {
+            List<GetMatch> rerankInput = List.copyOf(limitMatches(deterministicPool, FACECARD_RERANK_CANDIDATE_POOL_LIMIT));
+            java.util.concurrent.atomic.AtomicBoolean persistedFinalDeck = new java.util.concurrent.atomic.AtomicBoolean(false);
+            CompletableFuture<List<GetMatch>> future = applyTier3Rerank(
+                    viewerId,
+                    rerankInput,
+                    FACECARD_DAILY_LIMIT,
+                    "facecards",
+                    FACECARD_RERANK_BACKGROUND_TIMEOUT_MS)
                     .thenCompose(reranked -> {
-                        List<GetMatch> finalDeck = reranked == null || reranked.isEmpty() ? rerankInput : reranked;
+                        List<GetMatch> selectedDeck = reranked == null || reranked.isEmpty() ? rerankInput : reranked;
+                        List<GetMatch> finalDeck = limitMatches(selectedDeck, FACECARD_DAILY_LIMIT);
+                        boolean tier3Applied = finalDeck.stream()
+                                .filter(Objects::nonNull)
+                                .map(match -> match.scorerDebug)
+                                .filter(Objects::nonNull)
+                                .anyMatch(debug -> Boolean.TRUE.equals(debug.get("tier3Applied")));
+                        boolean tier3Pending = hasTier3Pending(finalDeck);
+                        String status = facecardRerankStatus(tier3Applied, tier3Pending);
                         Map<String, Object> payload = buildFacecardDeckSnapshot(
                                 viewerId,
                                 dayKey,
-                                FACECARD_DECK_STATUS_RERANKED,
+                                status,
                                 finalDeck,
                                 fingerprint);
-                        return persistFacecardDeck(payload);
+                        return persistFacecardDeck(payload).thenApply(ignored -> {
+                            persistedFinalDeck.set(true);
+                            if (tier3Pending) {
+                                scheduleFacecardRerankRetry(viewerId, dayKey, fingerprint, rerankInput);
+                            } else {
+                                clearFacecardPendingRerankRetry(deckKey);
+                            }
+                            return finalDeck;
+                        });
                     })
-                    .completeOnTimeout(null, MATCH_RERANK_TIMEOUT_MS + 1500L, TimeUnit.MILLISECONDS)
+                    .completeOnTimeout(
+                            markTier3Pending(fallback, "facecard_rerank_timeout"),
+                            FACECARD_RERANK_BACKGROUND_TIMEOUT_MS + 1000L,
+                            TimeUnit.MILLISECONDS)
                     .exceptionally(ex -> {
                         LOG.warn("Async facecard rerank failed for account {}", viewerId, ex);
-                        return null;
+                        return fallback;
+                    })
+                    .thenCompose(finalDeck -> {
+                        if (persistedFinalDeck.get()) {
+                            return CompletableFuture.completedFuture(finalDeck);
+                        }
+                        List<GetMatch> safeDeck = finalDeck == null || finalDeck.isEmpty() ? fallback : finalDeck;
+                        boolean tier3Pending = hasTier3Pending(safeDeck);
+                        Map<String, Object> payload = buildFacecardDeckSnapshot(
+                                viewerId,
+                                dayKey,
+                                tier3Pending
+                                        ? FACECARD_DECK_STATUS_RERANK_PENDING
+                                        : FACECARD_DECK_STATUS_RERANK_ATTEMPTED,
+                                limitMatches(safeDeck, FACECARD_DAILY_LIMIT),
+                                fingerprint);
+                        return persistFacecardDeck(payload).thenApply(ignored -> {
+                            if (tier3Pending) {
+                                scheduleFacecardRerankRetry(viewerId, dayKey, fingerprint, rerankInput);
+                            } else {
+                                clearFacecardPendingRerankRetry(deckKey);
+                            }
+                            return safeDeck;
+                        });
                     });
             future.whenComplete((ignored, ex) -> facecardRerankByDeckKey.remove(key, future));
             return future;
         });
+        if (queued.isDone() || MatchReranker.hasTestOverride()) {
+            return queued.exceptionally(ex -> fallback);
+        }
+        return CompletableFuture.completedFuture(fallback);
     }
 
     private CompletableFuture<List<GetMatch>> legacyFacecards(long requesterId, long viewerId, int limit) {
         int clamped = clampFacecardLimit(limit);
-        int refillTarget = Math.max(120, clamped * 6);
-        requestRefill(viewerId, refillTarget).exceptionally(ex -> {
-            LOG.warn("Failed to enqueue facecard refill for account {} (target size {})", viewerId, refillTarget, ex);
-            return null;
-        });
-        return loadRankedCandidates(requesterId, viewerId, clamped, false)
-                .thenCompose(stage2 -> applyTier3Rerank(viewerId, stage2, clamped, "facecards"))
-                .thenCompose(facecards -> filterAlreadyReactedFacecards(viewerId, facecards, clamped))
-                .completeOnTimeout(List.<GetMatch>of(), 4, TimeUnit.SECONDS)
+        return facecardPromptSignalReady(viewerId)
+                .thenCompose(ready -> {
+                    if (!Boolean.TRUE.equals(ready)) {
+                        return CompletableFuture.completedFuture(List.<GetMatch>of());
+                    }
+                    int refillTarget = Math.max(120, clamped * 6);
+                    requestRefill(viewerId, refillTarget).exceptionally(ex -> {
+                        LOG.warn("Failed to enqueue facecard refill for account {} (target size {})", viewerId,
+                                refillTarget, ex);
+                        return null;
+                    });
+                    return loadRankedCandidates(requesterId, viewerId, FACECARD_RERANK_CANDIDATE_POOL_LIMIT, false)
+                            .thenCompose(stage2 -> filterFacecardEligibleCandidates(
+                                    viewerId,
+                                    stage2,
+                                    FACECARD_RERANK_CANDIDATE_POOL_LIMIT,
+                                    "facecard_stage2",
+                                    true))
+                            .thenCompose(stage2 -> {
+                                if (MatchReranker.hasTestOverride()) {
+                                    return applyTier3Rerank(
+                                            viewerId,
+                                            stage2,
+                                            clamped,
+                                            "facecards",
+                                            FACECARD_RERANK_BACKGROUND_TIMEOUT_MS);
+                                }
+                                return startFacecardRerank(
+                                        viewerId,
+                                        currentFacecardDayKey(),
+                                        facecardDeckFingerprint(stage2),
+                                        stage2,
+                                        null);
+                            })
+                            .thenApply(facecards -> limitMatches(facecards, clamped));
+                })
+                .completeOnTimeout(List.<GetMatch>of(), 6, TimeUnit.SECONDS)
                 .exceptionally(ex -> {
                     LOG.warn("Failed to load legacy facecards for account {}", viewerId, ex);
                     return List.<GetMatch>of();
@@ -7325,54 +8708,137 @@ public class CalypsoApiManager {
         if (facecardDeckDepot == null || getFacecardDeck == null) {
             return legacyFacecards(requesterId, viewerId, clamped);
         }
-        String dayKey = currentFacecardDayKey();
-        CompletableFuture<Map<String, Object>> existingDeckFuture = getFacecardDeck
-                .invokeAsync(requesterId, viewerId, dayKey)
-                .completeOnTimeout(null, 2, TimeUnit.SECONDS)
-                .exceptionally(ex -> {
-                    LOG.warn("Failed to read facecard daily deck for account {}", viewerId, ex);
+        return facecardPromptSignalReady(viewerId).thenCompose(ready -> {
+            if (!Boolean.TRUE.equals(ready)) {
+                return CompletableFuture.completedFuture(List.<GetMatch>of());
+            }
+            String dayKey = currentFacecardDayKey();
+            CompletableFuture<Map<String, Object>> existingDeckFuture = getFacecardDeck
+                    .invokeAsync(requesterId, viewerId, dayKey)
+                    .completeOnTimeout(null, 2, TimeUnit.SECONDS)
+                    .exceptionally(ex -> {
+                        LOG.warn("Failed to read facecard daily deck for account {}", viewerId, ex);
+                        return null;
+                    });
+            return existingDeckFuture.thenCompose(existingDeck -> {
+                List<Map<String, Object>> existingCards = facecardDeckCards(existingDeck);
+                if (!existingCards.isEmpty()) {
+                    if (!facecardDeckRerankClosed(existingDeck)) {
+                        return loadRankedCandidates(requesterId, viewerId, FACECARD_RERANK_CANDIDATE_POOL_LIMIT, false)
+                                .thenCompose(stage2 -> {
+                                    List<GetMatch> deterministicPool = limitMatches(
+                                            stage2,
+                                            FACECARD_RERANK_CANDIDATE_POOL_LIMIT);
+                                    if (deterministicPool.isEmpty()) {
+                                        return hydrateFacecardDeck(requesterId, viewerId, existingDeck, clamped)
+                                                .thenCompose(deck -> filterFacecardEligibleCandidates(
+                                                        viewerId,
+                                                        deck,
+                                                        clamped,
+                                                        "facecard_deck",
+                                                        true));
+                                    }
+                                    return filterFacecardEligibleCandidates(
+                                            viewerId,
+                                            deterministicPool,
+                                            FACECARD_RERANK_CANDIDATE_POOL_LIMIT,
+                                            "facecard_stage2",
+                                            true)
+                                            .thenCompose(eligiblePool -> {
+                                                if (eligiblePool.isEmpty()) {
+                                                    return hydrateFacecardDeck(requesterId, viewerId, existingDeck, clamped)
+                                                            .thenCompose(deck -> filterFacecardEligibleCandidates(
+                                                                    viewerId,
+                                                                    deck,
+                                                                    clamped,
+                                                                    "facecard_deck",
+                                                                    true));
+                                                }
+                                                if (MatchReranker.hasTestOverride()) {
+                                                    return applyTier3Rerank(
+                                                            viewerId,
+                                                            eligiblePool,
+                                                            clamped,
+                                                            "facecards",
+                                                            FACECARD_RERANK_BACKGROUND_TIMEOUT_MS)
+                                                            .thenApply(reranked -> limitMatches(reranked, clamped));
+                                                }
+                                                String poolFingerprint = facecardDeckFingerprint(eligiblePool);
+                                                CompletableFuture<List<GetMatch>> rerankFuture = startFacecardRerank(
+                                                        viewerId,
+                                                        dayKey,
+                                                        poolFingerprint,
+                                                        eligiblePool,
+                                                        existingDeck);
+                                                if (MatchReranker.hasTestOverride()) {
+                                                    return rerankFuture.thenApply(reranked -> limitMatches(reranked, clamped));
+                                                }
+                                                return CompletableFuture.completedFuture(limitMatches(eligiblePool, clamped));
+                                            });
+                                });
+                    }
+                    return hydrateFacecardDeck(requesterId, viewerId, existingDeck, clamped)
+                            .thenCompose(deck -> filterFacecardEligibleCandidates(
+                                    viewerId,
+                                    deck,
+                                    clamped,
+                                    "facecard_deck",
+                                    true));
+                }
+
+                int refillTarget = Math.max(120, clamped * 6);
+                requestRefill(viewerId, refillTarget).exceptionally(ex -> {
+                    LOG.warn("Failed to enqueue facecard refill for account {} (target size {})", viewerId, refillTarget,
+                            ex);
                     return null;
                 });
-        return existingDeckFuture.thenCompose(existingDeck -> {
-            List<Map<String, Object>> existingCards = facecardDeckCards(existingDeck);
-            if (!existingCards.isEmpty()) {
-                String fingerprint = mapString(existingDeck, "fingerprint");
-                return hydrateFacecardDeck(requesterId, viewerId, existingDeck, clamped)
-                        .thenCompose(deck -> filterAlreadyReactedFacecards(viewerId, deck, clamped))
-                        .thenApply(deck -> {
-                            if (!FACECARD_DECK_STATUS_RERANKED.equals(mapString(existingDeck, "status"))) {
-                                queueAsyncFacecardRerank(viewerId, dayKey, fingerprint, deck, existingDeck);
-                            }
-                            return deck;
-                        });
-            }
-
-            int refillTarget = Math.max(120, clamped * 6);
-            requestRefill(viewerId, refillTarget).exceptionally(ex -> {
-                LOG.warn("Failed to enqueue facecard refill for account {} (target size {})", viewerId, refillTarget, ex);
-                return null;
-            });
-            return loadRankedCandidates(requesterId, viewerId, FACECARD_DAILY_LIMIT, false)
-                    .thenCompose(stage2 -> {
-                        List<GetMatch> deterministicDeck = limitMatches(stage2, FACECARD_DAILY_LIMIT);
-                        if (deterministicDeck.isEmpty()) {
-                            return CompletableFuture.completedFuture(List.<GetMatch>of());
-                        }
-                        String fingerprint = facecardDeckFingerprint(deterministicDeck);
-                        Map<String, Object> stage2Snapshot = buildFacecardDeckSnapshot(
+                return loadRankedCandidates(requesterId, viewerId, FACECARD_RERANK_CANDIDATE_POOL_LIMIT, false)
+                        .thenCompose(stage2 -> filterFacecardEligibleCandidates(
                                 viewerId,
-                                dayKey,
-                                FACECARD_DECK_STATUS_STAGE2,
-                                deterministicDeck,
-                                fingerprint);
-                        return persistFacecardDeck(stage2Snapshot)
-                                .thenCompose(ignored -> {
-                                    queueAsyncFacecardRerank(viewerId, dayKey, fingerprint, deterministicDeck, null);
-                                    return filterAlreadyReactedFacecards(viewerId, deterministicDeck, clamped);
-                                });
-                    });
+                                stage2,
+                                FACECARD_RERANK_CANDIDATE_POOL_LIMIT,
+                                "facecard_stage2",
+                                true))
+                        .thenCompose(deterministicPool -> {
+                            List<GetMatch> deterministicDeck = limitMatches(deterministicPool, FACECARD_DAILY_LIMIT);
+                            if (deterministicPool.isEmpty()) {
+                                return CompletableFuture.completedFuture(List.<GetMatch>of());
+                            }
+                            if (MatchReranker.hasTestOverride()) {
+                                return applyTier3Rerank(
+                                        viewerId,
+                                        deterministicPool,
+                                        clamped,
+                                        "facecards",
+                                        FACECARD_RERANK_BACKGROUND_TIMEOUT_MS)
+                                        .thenApply(reranked -> limitMatches(reranked, clamped));
+                            }
+                            String fingerprint = facecardDeckFingerprint(deterministicPool);
+                            Map<String, Object> stage2Snapshot = buildFacecardDeckSnapshot(
+                                    viewerId,
+                                    dayKey,
+                                    shouldApplyTier3Rerank("facecards")
+                                            ? FACECARD_DECK_STATUS_RERANK_PENDING
+                                            : FACECARD_DECK_STATUS_STAGE2,
+                                    deterministicDeck,
+                                    fingerprint);
+                            return persistFacecardDeck(stage2Snapshot)
+                                    .thenCompose(ignored -> {
+                                        CompletableFuture<List<GetMatch>> rerankFuture = startFacecardRerank(
+                                                viewerId,
+                                                dayKey,
+                                                fingerprint,
+                                                deterministicPool,
+                                                null);
+                                        if (MatchReranker.hasTestOverride()) {
+                                            return rerankFuture.thenApply(reranked -> limitMatches(reranked, clamped));
+                                        }
+                                        return CompletableFuture.completedFuture(limitMatches(deterministicDeck, clamped));
+                                    });
+                        });
+            });
         })
-                .completeOnTimeout(List.<GetMatch>of(), 4, TimeUnit.SECONDS)
+                .completeOnTimeout(List.<GetMatch>of(), 6, TimeUnit.SECONDS)
                 .exceptionally(ex -> {
                     LOG.warn("Failed to load facecards for account {}", viewerId, ex);
                     return List.<GetMatch>of();
@@ -7415,6 +8881,28 @@ public class CalypsoApiManager {
                     .invokeAsync(requesterId, targetId)
                     .completeOnTimeout(null, 2, TimeUnit.SECONDS)
                     .exceptionally(ex -> null);
+            CompletableFuture<Double> viewerToTargetReactionScoreFuture = viewerIdToTargetIdToReactionScore
+                    .selectOneAsync(Path.key(viewerId, targetId))
+                    .thenApply(raw -> raw instanceof Number ? ((Number) raw).doubleValue() : 0.0)
+                    .completeOnTimeout(0.0, 2, TimeUnit.SECONDS)
+                    .exceptionally(ex -> 0.0);
+            CompletableFuture<Double> targetToViewerReactionScoreFuture = viewerIdToTargetIdToReactionScore
+                    .selectOneAsync(Path.key(targetId, viewerId))
+                    .thenApply(raw -> raw instanceof Number ? ((Number) raw).doubleValue() : 0.0)
+                    .completeOnTimeout(0.0, 2, TimeUnit.SECONDS)
+                    .exceptionally(ex -> 0.0);
+            CompletableFuture<Boolean> viewerLikedTargetFacecardFuture = viewerIdToTargetIdToFacecardReaction
+                    .selectOneAsync(Path.key(viewerId, targetId))
+                    .thenApply(CalypsoApiManager::isLikeReaction)
+                    .completeOnTimeout(false, 2, TimeUnit.SECONDS)
+                    .exceptionally(ex -> false);
+            CompletableFuture<Boolean> targetLikedViewerFacecardFuture = viewerIdToTargetIdToFacecardReaction
+                    .selectOneAsync(Path.key(targetId, viewerId))
+                    .thenApply(CalypsoApiManager::isLikeReaction)
+                    .completeOnTimeout(false, 2, TimeUnit.SECONDS)
+                    .exceptionally(ex -> false);
+            CompletableFuture<Boolean> viewerPromptLikeSeenFuture = resolvePromptLikeEvidence(viewerId, targetId);
+            CompletableFuture<Boolean> targetPromptLikeSeenFuture = resolvePromptLikeEvidence(targetId, viewerId);
             CompletableFuture<AccountWithId> viewerAccountFuture = getAccountWithId(requesterId, viewerId)
                     .completeOnTimeout(null, 2, TimeUnit.SECONDS)
                     .exceptionally(ex -> null);
@@ -7427,6 +8915,12 @@ public class CalypsoApiManager {
                     targetHeapFuture,
                     viewerFiltersFuture,
                     targetFiltersFuture,
+                    viewerToTargetReactionScoreFuture,
+                    targetToViewerReactionScoreFuture,
+                    viewerLikedTargetFacecardFuture,
+                    targetLikedViewerFacecardFuture,
+                    viewerPromptLikeSeenFuture,
+                    targetPromptLikeSeenFuture,
                     viewerAccountFuture,
                     targetAccountFuture);
             pairFuture = pairAll.thenApply(ignored -> {
@@ -7446,6 +8940,7 @@ public class CalypsoApiManager {
 
                 Map<String, Object> pair = new LinkedHashMap<>();
                 pair.put("targetAccountId", CalypsoHelpers.serializeAccountId(targetId));
+                pair.put("scoreSource", "current_pair_score");
                 pair.put("viewerMode", viewerMode);
                 pair.put("targetMode", targetMode);
                 pair.put("viewerThresholds", thresholdsMap(viewerMatchThreshold, viewerAutoPassThreshold));
@@ -7454,6 +8949,12 @@ public class CalypsoApiManager {
                         viewerToTarget, targetAccount, viewerMatchThreshold, viewerAutoPassThreshold));
                 pair.put("targetToViewer", directionalPairScoreRow(
                         targetToViewer, viewerAccount, targetMatchThreshold, targetAutoPassThreshold));
+                pair.put("viewerToTargetReactionScore", viewerToTargetReactionScoreFuture.join());
+                pair.put("targetToViewerReactionScore", targetToViewerReactionScoreFuture.join());
+                pair.put("viewerLikedTargetFacecard", viewerLikedTargetFacecardFuture.join());
+                pair.put("targetLikedViewerFacecard", targetLikedViewerFacecardFuture.join());
+                pair.put("viewerPromptLikeSeen", viewerPromptLikeSeenFuture.join());
+                pair.put("targetPromptLikeSeen", targetPromptLikeSeenFuture.join());
 
                 if (viewerToTarget != null && targetToViewer != null) {
                     double viewerToTargetScore = viewerToTarget.getStage0Score();
@@ -7539,6 +9040,69 @@ public class CalypsoApiManager {
         return CompletableFuture.completedFuture(out);
     }
 
+    private static final class PairRerankCacheEntry {
+        final long createdAt;
+        final double scoreAToB;
+        final double scoreBToA;
+        final String silhouetteHashA;
+        final String silhouetteHashB;
+        final MatchReranker.Decision decision;
+
+        PairRerankCacheEntry(
+                long createdAt,
+                double scoreAToB,
+                double scoreBToA,
+                String silhouetteHashA,
+                String silhouetteHashB,
+                MatchReranker.Decision decision) {
+            this.createdAt = createdAt;
+            this.scoreAToB = scoreAToB;
+            this.scoreBToA = scoreBToA;
+            this.silhouetteHashA = silhouetteHashA == null ? "" : silhouetteHashA;
+            this.silhouetteHashB = silhouetteHashB == null ? "" : silhouetteHashB;
+            this.decision = decision;
+        }
+    }
+
+    private static final class RerankSilhouetteSnapshot {
+        final Map<String, Object> silhouette;
+        final boolean available;
+        final String unavailableReason;
+
+        private RerankSilhouetteSnapshot(
+                Map<String, Object> silhouette,
+                boolean available,
+                String unavailableReason) {
+            this.silhouette = silhouette == null ? Map.of() : silhouette;
+            this.available = available;
+            this.unavailableReason = unavailableReason;
+        }
+
+        static RerankSilhouetteSnapshot available(Map<String, Object> silhouette) {
+            return new RerankSilhouetteSnapshot(silhouette, true, null);
+        }
+
+        static RerankSilhouetteSnapshot unavailable(long accountId, String reason) {
+            return new RerankSilhouetteSnapshot(
+                    defaultSilhouetteMap(accountId),
+                    false,
+                    reason == null || reason.isBlank() ? "silhouette_read_unavailable" : reason.trim());
+        }
+    }
+
+    private static final class SilhouetteReadiness {
+        String maturity = "empty";
+        int modeCount = 0;
+        int conceptCount = 0;
+        int evidenceCount = 0;
+        int privateEvidenceCount = 0;
+        int summaryCharCount = 0;
+        int contextCharCount = 0;
+        double avgModeConfidence = 0.0;
+        double maxModeConfidence = 0.0;
+        boolean ready = false;
+    }
+
     private static final class ParsedSignalToken {
         final String token;
         final double valence;
@@ -7546,20 +9110,6 @@ public class CalypsoApiManager {
         private ParsedSignalToken(String token, double valence) {
             this.token = token;
             this.valence = valence;
-        }
-    }
-
-    private static final class SignalFeature {
-        final String token;
-        final String intent;
-        double valence;
-        double weight;
-
-        private SignalFeature(String token, String intent, double valence, double weight) {
-            this.token = token;
-            this.intent = intent;
-            this.valence = valence;
-            this.weight = weight;
         }
     }
 

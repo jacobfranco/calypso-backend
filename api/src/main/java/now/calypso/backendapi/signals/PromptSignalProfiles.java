@@ -64,7 +64,7 @@ public final class PromptSignalProfiles {
                 "Treat the named subject as explicit affinity. Keep specific explicit entities as primary signals and any umbrella concepts weaker. Use canonical media title spelling in snake_case.",
                 6, 1, false));
         add(byId, profile("prompt.life.goal",
-                "Prioritize durable ambition and direction signals. If the goal centers on doing activities in a destination, include travel plus the specific destination concept. If the answer references World Cup context, include soccer.",
+                "Prioritize concrete domains, activities, places, and projects. If the goal centers on doing activities in a destination, include travel plus the specific destination concept. If the answer references World Cup context, include soccer. Leave abstract ambition or direction for silhouette.",
                 6, 1, false));
         add(byId, profile("prompt.same.weird",
                 "Look for quirky identity and compatibility-style traits that are stable in dating context.",
@@ -85,7 +85,7 @@ public final class PromptSignalProfiles {
                 "This is non-negotiable framing. Prioritize explicit habits or routines.",
                 5, 1, false));
         add(byId, profile("prompt.respect.people",
-                "Interpret as valued traits in others; prefer seeking intent when partner preference is implied.",
+                "Use only explicit concrete domains or stances as signals. Leave broad character traits and respect dynamics for silhouette.",
                 5, 1, false));
         add(byId, profile("prompt.small.thing",
                 "Treat as subtle value framing. Prefer explicit stable concepts.",
@@ -129,10 +129,10 @@ public final class PromptSignalProfiles {
                 "Hard exclusion framing. Prefer seeking intent with clearly negative valence. Preserve explicitly named people, shows, brands, or artists as separate tokens alongside any category they suggest (for example 'taylor_swift' AND 'mainstream_pop').",
                 7, 1, false));
         add(byId, profile("private.drawn.to",
-                "Primary output should be context-free seeking preferences for partner traits and lifestyle. Preserve explicit franchise/work titles as self-side taste context when named (for example red_rising), but avoid character-name-only tags.",
+                "Primary output should be context-free concrete partner-side lifestyle or interest preferences. Preserve explicit franchise/work titles as self-side taste context when named (for example red_rising), but leave attraction traits/archetypes for silhouette and avoid character-name-only tags.",
                 7, 1, false));
         add(byId, profile("private.repair.rhythm",
-                "Extract communication, reassurance, autonomy, repair, and conflict-rhythm needs with seeking intent. Avoid vague therapy words unless the answer explicitly supports them.",
+                "Extract only durable account-level values or partner preferences. Keep repair/conflict interaction-process behaviors out of signals; dynamics that require decoding, test the other person, punish indirectly, withdraw, or avoid repair belong in silhouette anti-patterns or sustainability needs.",
                 6, 1, false));
         add(byId, profile("private.music.feels.like",
                 "Extract identity and taste signals; keep derived umbrella tags weaker than explicit artists/genres.",
@@ -141,10 +141,10 @@ public final class PromptSignalProfiles {
                 "Explicit repeated media preference implies stable affinity. Preserve specific titles when provided.",
                 7, 1, false));
         add(byId, profile("private.makes.you.laugh",
-                "Extract humor style and social tone preferences.",
+                "Extract explicit named media, comedians, activities, or reusable formats when present. Leave humor style and social tone dynamics for silhouette.",
                 5, 1, false));
         add(byId, profile("private.humor.language",
-                "Extract concrete humor styles, social play, teasing style, irony/sincerity preferences, and conversational rhythm. Keep named shows/comedians/media if explicit.",
+                "Keep named shows, comedians, media, or explicit activities as signals when present. Leave humor style, social play, teasing style, irony/sincerity preferences, and conversational rhythm for silhouette.",
                 6, 1, false));
         add(byId, profile("private.rabbit.hole",
                 "Extract specific curiosity domains and keep broad umbrella tags weaker.",
@@ -156,16 +156,16 @@ public final class PromptSignalProfiles {
                 "Extract stable place, environment, domestic rhythm, city/room/late-night atmosphere, and sensory aesthetic signals. Preserve specific named places when explicit.",
                 6, 1, false));
         add(byId, profile("private.great.night",
-                "Extract durable social style and activity preferences. Avoid seasonal, weather, or time-of-day specifics (not 'warm_summer_night'). For balanced or flexible answers ('X but also good with Y'), emit both X and Y as separate signals. Prefer stable concepts like 'home_socializing', 'social_drinking', 'nightlife'.",
+                "Extract concrete activity and place preferences. Avoid seasonal, weather, or time-of-day specifics (not 'warm_summer_night'). For balanced or flexible answers ('X but also good with Y'), emit both X and Y as separate signals. Leave broad social-style interpretation for silhouette.",
                 5, 1, false));
         add(byId, profile("private.visual.aesthetic",
                 "Translate aesthetic language into stable vibe/style concepts, not decorative literal terms.",
                 5, 1, false));
         add(byId, profile("private.stuck.with",
-                "Long-term consistency framing. Preserve concrete activities as self signals (for example gym -> gym/fitness) and add durable commitment/discipline only when clearly supported.",
+                "Long-term consistency framing. Preserve concrete activities as self signals (for example gym -> gym/fitness). Leave commitment, discipline, and consistency interpretation for silhouette.",
                 5, 1, false));
         add(byId, profile("private.communities.scene",
-                "Signal-first prompt: extract concrete communities/scenes (for example gym, gaming, dance) as durable signals. Avoid generic social-belonging abstractions.",
+                "Signal-first prompt: extract concrete communities/scenes (for example gym, gaming, dance) as durable signals. Avoid generic community, identity, or social-belonging abstractions.",
                 6, 1, false));
 
         // Synthetic prompt ids.

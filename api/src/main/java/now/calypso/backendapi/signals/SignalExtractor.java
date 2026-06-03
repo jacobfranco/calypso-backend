@@ -29,28 +29,6 @@ public final class SignalExtractor {
     private static final double EXPLICIT_ANSWER_FLOOR_YAP_HOURS = 0.65;
     private static final double EXPLICIT_ANSWER_FLOOR_TALK_HOURS = 0.60;
     private static final double NEGATIVE_PREFERENCE_MIN_MAGNITUDE = 0.45;
-    private static final Set<String> FORMATIVE_ROLE_FANTASY_TOKENS = Set.of(
-            "secret_agent",
-            "spy",
-            "detective");
-    private static final Set<String> FORMATIVE_PROMPT_OPTION_TOKENS = Set.of(
-            "books",
-            "book",
-            "reading",
-            "game",
-            "games",
-            "video_games",
-            "board_games",
-            "media");
-    private static final Set<String> LOW_VALUE_FORMATIVE_SIGNAL_TOKENS = Set.of(
-            "nostalgia_formative_games",
-            "nostalgic_formative_games",
-            "formative_games",
-            "formative_media",
-            "nostalgic_media",
-            "childhood_media",
-            "childhood_games");
-
     private SignalExtractor() {
     }
 
@@ -611,8 +589,7 @@ public final class SignalExtractor {
         adjusted = applyFormativeTitleSpecificity(promptId, answer, adjusted);
         adjusted = applyHobbyShareMirroring(promptId, question, answer, adjusted);
         adjusted = applyDrawnToMediaIntentRouting(promptId, adjusted);
-        adjusted = applyFormativeImprintRoleSuppression(promptId, adjusted);
-        adjusted = applyFormativePromptOptionSuppression(promptId, adjusted);
+        adjusted = applyFormativeSignalSuppression(promptId, adjusted);
         return cleanupSpecificityConflicts(adjusted);
     }
 
@@ -654,7 +631,7 @@ public final class SignalExtractor {
         return out;
     }
 
-    private static List<ExtractedSignal> applyFormativePromptOptionSuppression(
+    private static List<ExtractedSignal> applyFormativeSignalSuppression(
             String promptId,
             List<ExtractedSignal> signals) {
         if (signals == null || signals.isEmpty()) {
@@ -670,34 +647,7 @@ public final class SignalExtractor {
                 continue;
             }
             String token = SignalNormalizer.normalizeOne(signal.token());
-            if (token != null && LOW_VALUE_FORMATIVE_SIGNAL_TOKENS.contains(token)) {
-                continue;
-            }
-            if (token != null && FORMATIVE_PROMPT_OPTION_TOKENS.contains(token)) {
-                continue;
-            }
-            out.add(signal);
-        }
-        return out;
-    }
-
-    private static List<ExtractedSignal> applyFormativeImprintRoleSuppression(
-            String promptId,
-            List<ExtractedSignal> signals) {
-        if (signals == null || signals.isEmpty()) {
-            return List.of();
-        }
-        String normalizedPromptId = promptId == null ? "" : promptId.trim().toLowerCase(Locale.ROOT);
-        if (!"private.formative.imprints".equals(normalizedPromptId)) {
-            return signals;
-        }
-        ArrayList<ExtractedSignal> out = new ArrayList<>(signals.size());
-        for (ExtractedSignal signal : signals) {
-            if (signal == null || signal.token() == null || signal.token().isBlank()) {
-                continue;
-            }
-            String token = SignalNormalizer.normalizeOne(signal.token());
-            if (token != null && FORMATIVE_ROLE_FANTASY_TOKENS.contains(token)) {
+            if (SignalExtractionPolicy.shouldSuppressFormativeSignalToken(token)) {
                 continue;
             }
             out.add(signal);

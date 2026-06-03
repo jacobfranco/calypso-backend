@@ -114,11 +114,13 @@ public final class PrivatePromptTurnResponder {
             Exception lastError = null;
             for (ChatModel model : OpenAIModelRouter.modelChain(MODEL_ENV, MODEL_DEFAULT)) {
                 long startedAt = System.currentTimeMillis();
+                String userInput = buildUserInput(input);
+                long promptChars = (long) SYSTEM_PROMPT.length() + (long) userInput.length();
                 try {
                     ResponseCreateParams params = ResponseCreateParams.builder()
                             .model(model)
                             .instructions(SYSTEM_PROMPT)
-                            .input(buildUserInput(input))
+                            .input(userInput)
                             .temperature(0.55)
                             .maxOutputTokens(220L)
                             .build();
@@ -131,7 +133,8 @@ public final class PrivatePromptTurnResponder {
                             model,
                             resp,
                             latencyMs,
-                            220L);
+                            220L,
+                            promptChars);
                     TurnResult parsed = parseTurnResult(collectOutputText(resp));
                     if (parsed == null) {
                         continue;
@@ -149,7 +152,8 @@ public final class PrivatePromptTurnResponder {
                             model,
                             latencyMs,
                             220L,
-                            ex);
+                            ex,
+                            promptChars);
                 }
             }
             if (lastError != null) {

@@ -18,6 +18,7 @@ import org.springframework.web.server.session.*;
 import reactor.core.publisher.Mono;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 @Configuration
@@ -48,42 +49,92 @@ public class CalypsoApiConfig implements WebFluxConfigurer {
     public ReactiveSessionRepository reactiveSessionRepository() {
         return new ReactiveSessionRepository<MapSession>() {
             private final Map<String, Session> sessions = CalypsoApiConcurrentFixedMap.init(10000);
+            private final Set<String> authRefreshesInFlight = ConcurrentHashMap.newKeySet();
+            private static final String AUTH_VALIDATED_AT_ATTR = "_calypsoAuthValidatedAt";
+            private static final long AUTH_LOOKUP_TIMEOUT_MS = 750L;
+            private static final long AUTH_REVALIDATE_INTERVAL_MS = 30_000L;
 
             @Override
             public Mono<Void> save(MapSession session) {
                 return Mono.fromRunnable(() -> {
                     if (!session.getId().equals(session.getOriginalId()))
                         this.sessions.remove(session.getOriginalId());
-                    this.sessions.put(session.getId(), new MapSession(session));
+                    MapSession stored = new MapSession(session);
+                    if (stored.getAttribute("accountId") != null
+                            && stored.getAttribute(AUTH_VALIDATED_AT_ATTR) == null) {
+                        stored.setAttribute(AUTH_VALIDATED_AT_ATTR, System.currentTimeMillis());
+                    }
+                    this.sessions.put(session.getId(), stored);
                 });
             }
 
             @Override
             public Mono<MapSession> findById(String id) {
-                return Mono.defer(() ->
-                // find the session id in the backend
-                // we always query it first in case it has been revoked
-                Mono.fromFuture(CalypsoApiController.manager.getAccountIdFromAuthCode(id))
-                        // if we can't find it, make sure it's removed from memory
-                        .switchIfEmpty(Mono.defer(() -> this.deleteById(id).then(Mono.empty())))
-                        .flatMap(accountId ->
-                // try to get the session from the in-memory map
-                Mono.justOrEmpty(this.sessions.get(id))
-                        .map(MapSession::new)
-                        // if we can't find the session, query the backend for the account info
-                        // and create the session. this could happen if the user logged in via
-                        // a different API server.
-                        .switchIfEmpty(
-                                Mono.defer(
-                                        () -> Mono.fromFuture(CalypsoApiController.manager.getAccountWithId(accountId))
-                                                .flatMap(accountWithId -> this.createSession()
-                                                        .flatMap(session -> {
-                                                            session.setId(id);
-                                                            session.setAttribute("accountId", accountWithId.accountId);
-                                                            session.setAttribute("accountName",
-                                                                    accountWithId.account.name);
-                                                            return this.save(session).then(Mono.just(session));
-                                                        }))))));
+                return Mono.defer(() -> {
+                    Session cached = this.sessions.get(id);
+                    if (cached != null) {
+                        this.refreshCachedAuthAsync(id, cached);
+                        return Mono.just(new MapSession(cached));
+                    }
+                    return Mono.fromFuture(
+                            CalypsoApiController.manager.getAccountIdFromAuthCode(id)
+                                    .orTimeout(AUTH_LOOKUP_TIMEOUT_MS, TimeUnit.MILLISECONDS))
+                            // if we can't find it, make sure it's removed from memory
+                            .switchIfEmpty(Mono.defer(() -> this.deleteById(id).then(Mono.empty())))
+                            // if we can't find the session locally, query the backend for the account info
+                            // and create the session. this could happen if the user logged in via
+                            // a different API server.
+                            .flatMap(accountId -> Mono.fromFuture(
+                                    CalypsoApiController.manager.getAccountWithId(accountId)
+                                            .orTimeout(AUTH_LOOKUP_TIMEOUT_MS, TimeUnit.MILLISECONDS))
+                                    .flatMap(accountWithId -> this.createSession()
+                                            .flatMap(session -> {
+                                                session.setId(id);
+                                                session.setAttribute("accountId", accountWithId.accountId);
+                                                session.setAttribute("accountName",
+                                                        accountWithId.account.name);
+                                                session.setAttribute(AUTH_VALIDATED_AT_ATTR,
+                                                        System.currentTimeMillis());
+                                                return this.save(session).then(Mono.just(session));
+                                            })))
+                            .onErrorResume(ex -> Mono.empty());
+                });
+            }
+
+            private void refreshCachedAuthAsync(String id, Session cached) {
+                Object lastRaw = cached.getAttribute(AUTH_VALIDATED_AT_ATTR);
+                long now = System.currentTimeMillis();
+                if (lastRaw instanceof Number last
+                        && now - last.longValue() < AUTH_REVALIDATE_INTERVAL_MS) {
+                    return;
+                }
+                if (!this.authRefreshesInFlight.add(id)) {
+                    return;
+                }
+                CalypsoApiController.manager.getAccountIdFromAuthCode(id)
+                        .orTimeout(AUTH_LOOKUP_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                        .whenComplete((accountId, ex) -> {
+                            this.authRefreshesInFlight.remove(id);
+                            if (ex != null) {
+                                return;
+                            }
+                            if (accountId == null) {
+                                this.sessions.remove(id);
+                                return;
+                            }
+                            Session current = this.sessions.get(id);
+                            if (current == null) {
+                                return;
+                            }
+                            Long currentAccountId = current.getAttribute("accountId");
+                            if (currentAccountId == null || !currentAccountId.equals(accountId)) {
+                                this.sessions.remove(id);
+                                return;
+                            }
+                            MapSession refreshed = new MapSession(current);
+                            refreshed.setAttribute(AUTH_VALIDATED_AT_ATTR, System.currentTimeMillis());
+                            this.sessions.put(id, refreshed);
+                        });
             }
 
             @Override

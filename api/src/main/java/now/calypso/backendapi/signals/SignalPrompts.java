@@ -21,7 +21,7 @@ public final class SignalPrompts {
             - Prefer fewer high-signal concepts over many weak/redundant ones.
 
             TOKEN RULES:
-            - Do NOT use anti_*, not_*, no_*, avoid_*, exclude_* in token text.
+            - Do NOT use anti_*, not_*, no_*, avoid_*, exclude_*, dislike_*, dislikes_*, hate_*, or hates_* in token text.
             - Do NOT output *_partner tokens; encode partner-side semantics with intent="seeking".
             - Do NOT output profanity/insults/slang labels as canonical concepts.
             - Prefer official names for media titles/franchises when explicit.
@@ -63,11 +63,11 @@ public final class SignalPrompts {
             Rules:
             - Return at most %d signals.
             - Consider the full conversation.
-            - Extract stable self traits and partner preferences.
+            - Extract stable concrete self interests, lifestyles, domains, and partner preferences.
             - Never output tokens listed in already_have.
             - Keep canonical, deduped concept labels.
             - Use intent="both" only with explicit mirroring cues.
-            - Do not encode sentiment in token text; use valence sign.
+            - Do not encode sentiment in token text; use valence sign. Never output dislike_*, dislikes_*, hate_*, or hates_* tokens.
             - When language is person-descriptor form ("fans of X", "people into X", "X types"), extract X itself as the token, not the person-group form (taylor_swift not taylor_swift_fans; gym not gym_goers; church not church_attendees).
             - Never concatenate two distinct valid standalone concept names into a single token. Emit each as a separate signal (e.g., "startup" and "entrepreneurship" separately, not "startup_entrepreneurship").
             - If nothing new exists, return {"signals":[]}.
@@ -83,7 +83,7 @@ public final class SignalPrompts {
             - Return at most %d signals.
             - Use prompt_question and conversation_context for interpretation.
             - Do not extract example options from prompt_question unless prompt_answer explicitly chooses or mentions them.
-            - Extract stable self traits and seeking preferences.
+            - Extract stable concrete self interests, lifestyles, domains, and seeking preferences.
             - Never output tokens listed in already_have.
             - There is NO downstream semantic canonicalizer: output final, reusable concept tags directly.
             - Keep canonical concept labels and dedupe synonyms.
@@ -107,7 +107,7 @@ public final class SignalPrompts {
             - Prefer atomic head concepts over phrasing wrappers (e.g., cooking over cooking_homemade_meals; sports over sports_fandom; gaming over casual_gaming).
             - When language is person-descriptor form ("fans of X", "people into X", "X types", "people who watch X"), extract X itself as the token, not the person-group form (taylor_swift not taylor_swift_fans; gym not gym_goers; church not church_attendees; reality_tv not reality_tv_viewers).
             - Never concatenate two distinct valid standalone concept names into a single token. Emit each as a separate signal (e.g., "startup" and "entrepreneurship" separately, not "startup_entrepreneurship"; "travel" and "photography" separately, not "travel_photography").
-            - For composite time+activity concepts, emit both core concepts when useful (e.g., morning gym => gym + early_morning_activity).
+            - For composite time+activity concepts, emit both core concepts when useful (e.g., morning gym => gym + morning_person when the cadence is explicit).
             - Include strongly implied core concepts when obvious from context (e.g., destination activity implies travel; nightlife activity implies socializing).
             - Emit only context-free reusable concepts as signals. If a concept depends on story-specific interpretation, omit it.
             - Character/person example names are usually context-dependent; keep them out of signals unless they are durable standalone concepts.
@@ -117,7 +117,10 @@ public final class SignalPrompts {
             - Use intent="both" only with explicit mirroring cues.
             - In negative framing questions (turn-offs/dealbreakers/not-my-person), use negative valence.
             - In negative contexts, avoid broad umbrella dislikes unless explicitly stated; keep negatives specific to the disliked style.
-            - Do not encode negation in token text.
+            - In repair/conflict prompts, do not output interaction-process behaviors as account signals. If the answer
+              describes testing, indirect punishment, withdrawal, forced decoding, avoidance, or unresolved repair loops,
+              leave that for silhouette anti-patterns or sustainability needs instead of signal tokens.
+            - Do not encode negation or sentiment in token text; use valence sign. Never output dislike_*, dislikes_*, hate_*, or hates_* tokens.
             - Prefer explicit concepts over broad umbrellas when both appear.
             - If no dating-relevant information exists, return {"signals":[]}.
             """;

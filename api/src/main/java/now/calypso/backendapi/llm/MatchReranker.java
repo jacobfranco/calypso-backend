@@ -52,7 +52,7 @@ public final class MatchReranker {
             - Do not moralize or pathologize users.
             - Do not expose sensitive psychological labels.
             - Prefer concrete reasoning grounded in the supplied silhouettes.
-            - If a trait, need, anti-pattern, or attraction pattern is not present in the silhouettes or shared signals, do not infer it strongly. Mark it as missingInfo instead.
+            - If a trait, need, anti-pattern, or attraction pattern is not present in the silhouettes, do not infer it strongly. Mark it as missingInfo instead.
 
             Return JSON only in this exact schema:
             {"rankedCandidates":[{"candidateId":"...","finalScore":0.0,"sparkScore":0.0,"sustainabilityScore":0.0,"learningValueScore":0.0,"confidence":0.0,"bestModePair":{"viewerModeId":"...","candidateModeId":"..."},"fitSummaryInternal":"...","whyItWorks":[],"risks":[],"recommendedUse":"rank_high","conversationSeeds":[],"missingInfo":[]}]}
@@ -92,6 +92,7 @@ public final class MatchReranker {
             return emptyResult();
         }
         String input = buildInput(request);
+        long promptChars = (long) SYSTEM_PROMPT.length() + (long) input.length();
         Exception lastError = null;
         for (ChatModel model : OpenAIModelRouter.modelChain(MODEL_ENV, MODEL_DEFAULT)) {
             long startedAt = System.currentTimeMillis();
@@ -114,7 +115,8 @@ public final class MatchReranker {
                         model,
                         response,
                         latencyMs,
-                        1400L);
+                        1400L,
+                        promptChars);
                 RerankResult parsed = extractPayload(response);
                 if (parsed == null) {
                     continue;
@@ -132,7 +134,8 @@ public final class MatchReranker {
                         model,
                         latencyMs,
                         1400L,
-                        ex);
+                        ex,
+                        promptChars);
             }
         }
         if (lastError != null) {
@@ -162,8 +165,6 @@ public final class MatchReranker {
                 item.put("silhouette", nonBlank(candidate.silhouette, ""));
                 item.put("digest", candidate.digest == null ? new SilhouetteDigest().toMap() : candidate.digest.toMap());
                 item.put("stage2Normalized", clamp01(candidate.stage2Normalized));
-                item.put("signals", signalMaps(candidate.signals));
-                item.put("sharedSignals", stringList(candidate.sharedSignals, 12, 48));
                 candidates.add(item);
             }
         }
@@ -173,7 +174,7 @@ public final class MatchReranker {
         context.put("hardFiltersAlreadyPassed", true);
         context.put("viewerMaturity", request.viewer == null ? "empty" : SilhouetteState.normalizeMaturity(request.viewer.maturity));
         context.put("surface", nonBlank(request.surface, "unknown"));
-        context.put("viewerSignals", signalMaps(request.viewerSignals));
+        context.put("stage2AlreadyIncludesSignals", true);
         root.put("context", context);
         try {
             return JSON.writeValueAsString(root);
@@ -182,23 +183,17 @@ public final class MatchReranker {
         }
     }
 
-    private static List<Object> signalMaps(List<Signal> signals) {
-        ArrayList<Object> out = new ArrayList<>();
-        if (signals == null) {
-            return out;
+    private static String rankingGoal(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "balance";
         }
-        for (Signal signal : signals) {
-            if (signal == null || signal.token == null || signal.token.isBlank()) {
-                continue;
-            }
-            LinkedHashMap<String, Object> item = new LinkedHashMap<>();
-            item.put("token", signal.token.trim());
-            item.put("intent", nonBlank(signal.intent, "self"));
-            item.put("weight", clamp01(signal.weight));
-            item.put("valence", clampSigned(signal.valence));
-            out.add(item);
-        }
-        return out;
+        String normalized = raw.trim().toLowerCase(java.util.Locale.ROOT);
+        return switch (normalized) {
+            case "discover", "balance", "precision" -> normalized;
+            case "exploratory" -> "discover";
+            case "focused" -> "precision";
+            default -> "balance";
+        };
     }
 
     private static List<String> stringList(List<String> values, int maxItems, int maxChars) {
@@ -220,19 +215,6 @@ public final class MatchReranker {
             }
         }
         return out;
-    }
-
-    private static String rankingGoal(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return "balance";
-        }
-        String normalized = raw.trim().toLowerCase(java.util.Locale.ROOT);
-        return switch (normalized) {
-            case "discover", "balance", "precision" -> normalized;
-            case "exploratory" -> "discover";
-            case "focused" -> "precision";
-            default -> "balance";
-        };
     }
 
     private static String nonBlank(String raw, String fallback) {
@@ -357,26 +339,11 @@ public final class MatchReranker {
         return v;
     }
 
-    private static Double clampSigned(Double value) {
-        if (value == null || !Double.isFinite(value.doubleValue())) {
-            return 0.0;
-        }
-        double v = value.doubleValue();
-        if (v < -1.0) {
-            return -1.0;
-        }
-        if (v > 1.0) {
-            return 1.0;
-        }
-        return v;
-    }
-
     public static final class RerankRequest {
         public String surface;
         public String rankingGoal;
         public String viewerSilhouette;
         public SilhouetteDigest viewer;
-        public List<Signal> viewerSignals = new ArrayList<>();
         public List<Candidate> candidates = new ArrayList<>();
     }
 
@@ -385,15 +352,6 @@ public final class MatchReranker {
         public String silhouette;
         public Double stage2Normalized;
         public SilhouetteDigest digest;
-        public List<Signal> signals = new ArrayList<>();
-        public List<String> sharedSignals = new ArrayList<>();
-    }
-
-    public static final class Signal {
-        public String token;
-        public String intent;
-        public Double weight;
-        public Double valence;
     }
 
     public static final class RerankResult {

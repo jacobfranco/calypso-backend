@@ -11,6 +11,25 @@ public final class SignalNormalizer {
     private static final Pattern UNDERSCORE_POSSESSIVE_SEGMENT = Pattern.compile("(?<=[a-z0-9])_s(?=_[a-z0-9]|$)");
     private static final Set<String> STOP = Set.of("yes", "ok", "okay", "idk", "lol", "maybe", "sure", "no", "nah",
             "yep", "nope");
+    private static final String[] NEGATIVE_SENTIMENT_PREFIXES = {
+            "dislike_of_",
+            "dislikes_of_",
+            "dislike_",
+            "dislikes_",
+            "disliked_",
+            "disliking_",
+            "hate_",
+            "hates_",
+            "hated_",
+            "hating_",
+            "dont_like_",
+            "doesnt_like_",
+            "do_not_like_",
+            "does_not_like_",
+            "not_into_",
+            "cant_stand_",
+            "cannot_stand_"
+    };
 
     private SignalNormalizer() {
     }
@@ -74,10 +93,22 @@ public final class SignalNormalizer {
             if (s.startsWith("anti_not_")) {
                 s = "anti_" + s.substring("anti_not_".length());
                 changed = true;
+            } else if (s.startsWith("anti_")) {
+                String negativeRemainder = negativeSentimentRemainder(s.substring("anti_".length()));
+                if (negativeRemainder != null) {
+                    s = "anti_" + negativeRemainder;
+                    changed = true;
+                }
             }
             if (s.startsWith("not_")) {
                 s = "anti_" + s.substring("not_".length());
                 changed = true;
+            } else {
+                String negativeRemainder = negativeSentimentRemainder(s);
+                if (negativeRemainder != null) {
+                    s = "anti_" + negativeRemainder;
+                    changed = true;
+                }
             }
             if (s.startsWith("anti_anti_")) {
                 s = "anti_" + s.substring("anti_anti_".length());
@@ -87,6 +118,18 @@ public final class SignalNormalizer {
         if ("anti_".equals(s))
             return null;
         return s;
+    }
+
+    private static String negativeSentimentRemainder(String token) {
+        if (token == null || token.isBlank()) {
+            return null;
+        }
+        for (String prefix : NEGATIVE_SENTIMENT_PREFIXES) {
+            if (prefix != null && token.startsWith(prefix) && token.length() > prefix.length()) {
+                return token.substring(prefix.length());
+            }
+        }
+        return null;
     }
 
     private static String canonicalizeIntentSuffix(String token) {

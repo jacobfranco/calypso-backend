@@ -285,6 +285,21 @@ class CalypsoApiControllerTest {
                                 .value(gf -> assertEquals(7, gf.filters.getAccountId()));
         }
 
+        @Test
+        void getSignals_managerFails_returnsEmptyPayload() {
+                when(mockManager.getSignals(eq(7L), eq(7L)))
+                                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("signals unavailable")));
+                client.get()
+                                .uri("/api/accounts/" + serializedId + "/signals")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .exchange().expectStatus().isOk()
+                                .expectBody(GetSignals.class)
+                                .value(gs -> {
+                                        assertEquals(7L, gs.accountId);
+                                        assertEquals(0, gs.records.size());
+                                });
+        }
+
         // ---------------------------------------------------------------------------
         // builds a valid PostFilters object we can tweak per test
         // ---------------------------------------------------------------------------

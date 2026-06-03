@@ -362,32 +362,30 @@ public final class SignalConceptRegistry {
                 "swimming", "martial_arts", "nutrition", "science", "space", "sci_fi", "cooking", "reading", "books",
                 "writing", "music", "concerts", "nightlife", "club", "socializing",
                 "coffee", "tea", "wine", "beer", "foodie", "baking", "entrepreneurship",
-                "startup", "career", "ambition", "academics", "education", "phd",
+                "startup", "career", "academics", "education", "phd",
                 "tech", "software", "design", "art", "painting", "photography",
                 "film", "cinema", "reality_tv", "modeling", "streetwear", "high_fashion",
                 "nature", "outdoors", "camping", "birdwatching", "adventure",
                 "world_cup", "meditation", "mindfulness", "homebody", "cozy", "pets", "dogs", "cats",
-                "family", "faith", "spirituality", "politics", "volunteering", "community",
-                "communication", "kindness", "humor", "intelligence", "creativity",
-                "discipline", "consistency", "morning_person", "night_owl",
+                "family", "faith", "spirituality", "politics", "volunteering",
+                "morning_person", "night_owl",
                 "relaxing", "rest", "self_care", "romance_novels", "romance_genre", "romance",
                 "jojos_bizarre_adventure", "elden_ring", "soulslike", "cosplay", "kpop", "jpop",
                 "rnb", "hip_hop", "jazz", "classical_music", "country_music", "edm", "metal", "underground_music",
                 "indie_music", "board_games", "dnd", "pokemon", "nintendo", "playstation", "xbox",
                 "pc_gaming", "streaming", "content_creation", "podcasts", "history", "philosophy",
                 "economics", "finance", "investing", "real_estate", "ux", "product_management",
-                "marketing", "sales", "leadership", "public_speaking", "languages",
+                "marketing", "sales", "public_speaking", "languages",
                 "beach", "mountains", "city_life", "suburban_life", "minimalism", "luxury_lifestyle", "y2k",
                 "thrifting", "sustainability", "vegan", "vegetarian", "meal_prep", "desserts",
                 "cocktails", "karaoke", "dance", "festivals", "museum", "theater",
                 "opera", "architecture", "cars", "motorcycles", "f1", "ufc", "wrestling",
                 "healthcare", "law", "teaching", "nursing", "engineering", "data_science",
                 "machine_learning", "ai", "cybersecurity", "open_source", "side_projects", "maker",
-                "networking", "self_improvement", "journaling", "therapy",
-                "mental_health", "greek_life", "solo_travel",
+                "journaling",
+                "greek_life", "solo_travel",
                 "backpacking", "language_exchange",
                 "street_food", "fine_dining",
-                "long_term_planning", "commitment", "loyalty", "honesty", "empathy", "respect",
                 "red_rising", "frieren_beyond_journeys_end", "leftist_politics");
 
         // Keep aliases intentionally small and high-confidence.
@@ -477,20 +475,14 @@ public final class SignalConceptRegistry {
         addParent(seeds, "machine_learning", "ai", 0.82);
         addParent(seeds, "ai", "tech", 0.66);
         addParent(seeds, "cybersecurity", "tech", 0.72);
-        addParent(seeds, "career", "career_focus", 0.62);
-        addParent(seeds, "career_focus", "ambition", 0.66);
-        addParent(seeds, "career_growth", "career_focus", 0.78);
-        addParent(seeds, "long_term_planning", "ambition", 0.64);
-        addParent(seeds, "phd", "academic_ambition", 0.90);
-        addParent(seeds, "education", "academic_ambition", 0.58);
-        addParent(seeds, "morning_person", "early_morning_activity", 0.84);
+        addParent(seeds, "phd", "academics", 0.78);
+        addParent(seeds, "education", "academics", 0.58);
         addParent(seeds, "early_riser", "morning_person", 0.82);
         addParent(seeds, "cozy", "homebody", 0.66);
         addParent(seeds, "rest", "relaxing", 0.70);
         addParent(seeds, "self_care", "relaxing", 0.58);
         addParent(seeds, "romance_novels", "reading", 0.78);
         addParent(seeds, "romance_genre", "romance", 0.74);
-        addParent(seeds, "greek_life", "community", 0.62);
         addParent(seeds, "leftist_politics", "politics", 0.88);
         addParent(seeds, "leftist_politics", "history", 0.62);
         addParent(seeds, "y2k", "fashion", 0.58);

@@ -30,12 +30,26 @@ public class Core implements RamaModule {
       private static final String PUBLIC_REACTION_STRENGTH_PROMPT_SUFFIX = "|reaction_strength:";
       private static final int PUBLIC_REACTION_STRENGTH_MIN = -3;
       private static final int PUBLIC_REACTION_STRENGTH_MAX = 3;
-      private static final double FACECARD_PAIR_DELTA_LIKE = 6.0;
-      private static final double FACECARD_PAIR_DELTA_DISLIKE = -14.0;
-      private static final double FACECARD_PAIR_DELTA_SKIP = -1.0;
+      private static final double FACECARD_PAIR_DELTA_LIKE = 8.0;
+      private static final double FACECARD_PAIR_DELTA_DISLIKE = -16.0;
+      private static final double FACECARD_PAIR_DELTA_SKIP = -0.5;
       private static final double SIGNAL_PRESENT_EPSILON = 1.0e-6;
-      private static final double RESONANCE_POSITIVE_MAX_DELTA = 0.10;
-      private static final double RESONANCE_NEGATIVE_MAX_DELTA = 0.05;
+      private static final double RESONANCE_POSITIVE_MAX_DELTA = 0.08;
+      private static final double RESONANCE_NEGATIVE_MAX_DELTA = 0.08;
+      private static final double SCORE_WEIGHT_FILTER_FIT = 0.25;
+      private static final double SCORE_WEIGHT_VIEWER_REACTION = 0.18;
+      private static final double SCORE_WEIGHT_TARGET_REACTION = 0.08;
+      private static final double SCORE_WEIGHT_VIEWER_NEEDS = 0.17;
+      private static final double SCORE_WEIGHT_TARGET_NEEDS = 0.16;
+      private static final double SCORE_WEIGHT_SELF_OVERLAP = 0.08;
+      private static final double SCORE_WEIGHT_NOVELTY = 0.02;
+      private static final double SCORE_WEIGHT_TOTAL = SCORE_WEIGHT_FILTER_FIT
+                  + SCORE_WEIGHT_VIEWER_REACTION
+                  + SCORE_WEIGHT_TARGET_REACTION
+                  + SCORE_WEIGHT_VIEWER_NEEDS
+                  + SCORE_WEIGHT_TARGET_NEEDS
+                  + SCORE_WEIGHT_SELF_OVERLAP
+                  + SCORE_WEIGHT_NOVELTY;
 
       // ---------------------------
       // Low-level helpers
@@ -575,6 +589,20 @@ public class Core implements RamaModule {
             return legacyReactionStrength(reactionValue);
       }
 
+      private static double publicPromptPairDelta(Integer reactionStrength) {
+            if (reactionStrength == null) {
+                  return 0.0;
+            }
+            int strength = clampPublicReactionStrength(reactionStrength.intValue());
+            if (strength > 0) {
+                  return strength * 0.5;
+            }
+            if (strength < 0) {
+                  return -Math.min(2.0, Math.abs(strength) * 0.75);
+            }
+            return 0.0;
+      }
+
       private static long parseFacecardTargetId(String answerId) {
             if (answerId == null || answerId.isBlank() || !answerId.startsWith(FACECARD_REACTION_ANSWER_PREFIX)) {
                   return -1L;
@@ -634,14 +662,21 @@ public class Core implements RamaModule {
                         0.45 * viewerNeedsMetByTarget + 0.35 * targetNeedsMetByViewer + 0.20 * sharedSelfOverlap);
             double profileSignalBlend = clamp01(0.55 * filterPreferenceFit + 0.45 * signalAlignment);
             double viewerReactionScore = normalizedReactionScore(viewerToTargetReaction);
+            double targetReactionScore = normalizedReactionScore(targetToViewerReaction);
             double targetInterestScore = clamp01(
-                        0.30 * targetNeedsMetByViewer + 0.20 * normalizedReactionScore(targetToViewerReaction)
-                                    + 0.50 * filterPreferenceFit);
+                        0.50 * targetNeedsMetByViewer + 0.30 * targetReactionScore
+                                    + 0.20 * filterPreferenceFit);
             double noveltyScore = noveltyBoost(exposureMap, targetId, now);
 
             double finalScoreBeforeResonance = clamp01(
-                        0.50 * profileSignalBlend + 0.30 * viewerReactionScore + 0.15 * targetInterestScore
-                                    + 0.05 * noveltyScore);
+                        (SCORE_WEIGHT_FILTER_FIT * filterPreferenceFit
+                                    + SCORE_WEIGHT_VIEWER_NEEDS * viewerNeedsMetByTarget
+                                    + SCORE_WEIGHT_TARGET_NEEDS * targetNeedsMetByViewer
+                                    + SCORE_WEIGHT_SELF_OVERLAP * sharedSelfOverlap
+                                    + SCORE_WEIGHT_VIEWER_REACTION * viewerReactionScore
+                                    + SCORE_WEIGHT_TARGET_REACTION * targetReactionScore
+                                    + SCORE_WEIGHT_NOVELTY * noveltyScore)
+                                    / SCORE_WEIGHT_TOTAL);
             double resonanceDelta = resonance.alignment >= 0.0
                         ? resonance.alignment * RESONANCE_POSITIVE_MAX_DELTA
                         : resonance.alignment * RESONANCE_NEGATIVE_MAX_DELTA;
@@ -665,6 +700,7 @@ public class Core implements RamaModule {
             reasons.add(String.format(Locale.ROOT, "signalAlignment=%.3f", signalAlignment));
             reasons.add(String.format(Locale.ROOT, "profileSignalBlend=%.3f", profileSignalBlend));
             reasons.add(String.format(Locale.ROOT, "viewerReactionScore=%.3f", viewerReactionScore));
+            reasons.add(String.format(Locale.ROOT, "targetReactionScore=%.3f", targetReactionScore));
             reasons.add(String.format(Locale.ROOT, "targetInterestScore=%.3f", targetInterestScore));
             reasons.add(String.format(Locale.ROOT, "noveltyScore=%.3f", noveltyScore));
             reasons.add(String.format(Locale.ROOT, "resonanceAlignment=%.3f", resonance.alignment));
@@ -1185,9 +1221,7 @@ public class Core implements RamaModule {
                         }, "*reactionStrength", "*isFacecardReaction").out("*delta")
                         .each((Integer reactionValue, Integer reactionStrength, Boolean isFacecardReaction) -> {
                               if (!Boolean.TRUE.equals(isFacecardReaction)) {
-                                    if (reactionStrength == null)
-                                          return 0.0;
-                                    return reactionStrength.doubleValue();
+                                    return publicPromptPairDelta(reactionStrength);
                               }
                               if (reactionValue == null)
                                     return 0.0;

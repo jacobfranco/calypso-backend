@@ -7,7 +7,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
+
+import now.calypso.backendapi.signals.SignalExtractionPolicy;
 
 public final class SilhouetteModeMerger {
     public static final int MAX_MODES = 7;
@@ -18,60 +19,6 @@ public final class SilhouetteModeMerger {
     public static final int MAX_OPEN_QUESTIONS_PER_MODE = 5;
 
     private static final int SILHOUETTE_SUMMARY_MAX_CHARS = 4200;
-    private static final Set<String> LOW_VALUE_FORMATIVE_CONCEPT_WORDS = Set.of(
-            "nostalgia",
-            "nostalgic",
-            "formative",
-            "imprint",
-            "imprints",
-            "emotional",
-            "media",
-            "game",
-            "games",
-            "book",
-            "books",
-            "toy",
-            "toys",
-            "website",
-            "websites",
-            "place",
-            "places",
-            "show",
-            "shows",
-            "movie",
-            "movies",
-            "thing",
-            "things",
-            "childhood",
-            "growing",
-            "up",
-            "self",
-            "expression",
-            "interest",
-            "interests",
-            "affinity",
-            "and",
-            "or",
-            "of",
-            "from",
-            "via",
-            "with",
-            "toward",
-            "towards",
-            "worldview",
-            "worldviews",
-            "shaping",
-            "shaped",
-            "influence",
-            "influences",
-            "influenced",
-            "emerging",
-            "resonance",
-            "resonant",
-            "pattern",
-            "patterns",
-            "mode");
-
     private SilhouetteModeMerger() {
     }
 
@@ -545,7 +492,7 @@ public final class SilhouetteModeMerger {
             if (word == null || word.isBlank()) {
                 continue;
             }
-            if (!LOW_VALUE_FORMATIVE_CONCEPT_WORDS.contains(word)) {
+            if (!SignalExtractionPolicy.isLowValueFormativeConceptWord(word)) {
                 meaningfulWords += 1;
             }
         }

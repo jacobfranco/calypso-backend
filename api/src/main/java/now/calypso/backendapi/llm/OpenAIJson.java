@@ -93,6 +93,7 @@ public final class OpenAIJson {
 
         String systemText = system == null ? "" : system;
         String userText = user == null ? "" : user;
+        long promptChars = (long) systemText.length() + (long) userText.length();
         CallSpec effectiveSpec = spec == null ? CallSpec.signalExtract("generic", null, 320L) : spec;
         ChatModel pinned = PINNED_MODEL;
         if (pinned != null) {
@@ -107,7 +108,8 @@ public final class OpenAIJson {
                         pinned,
                         result.response,
                         latencyMs,
-                        effectiveSpec.maxOutputTokens);
+                        effectiveSpec.maxOutputTokens,
+                        promptChars);
                 String raw = result.raw;
                 if (raw != null && !raw.isBlank()) {
                     return raw;
@@ -123,7 +125,8 @@ public final class OpenAIJson {
                         pinned,
                         latencyMs,
                         effectiveSpec.maxOutputTokens,
-                        ex);
+                        ex,
+                        promptChars);
             }
             PINNED_MODEL = null;
         }
@@ -145,7 +148,8 @@ public final class OpenAIJson {
                         model,
                         result.response,
                         latencyMs,
-                        effectiveSpec.maxOutputTokens);
+                        effectiveSpec.maxOutputTokens,
+                        promptChars);
                 String raw = result.raw;
                 if (raw != null && !raw.isBlank()) {
                     PINNED_MODEL = model;
@@ -164,7 +168,8 @@ public final class OpenAIJson {
                         model,
                         latencyMs,
                         effectiveSpec.maxOutputTokens,
-                        ex);
+                        ex,
+                        promptChars);
             }
         }
         if (lastError != null) {

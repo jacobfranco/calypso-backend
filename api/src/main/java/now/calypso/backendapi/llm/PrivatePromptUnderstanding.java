@@ -58,8 +58,10 @@ public final class PrivatePromptUnderstanding {
               aesthetic_frutiger_aero, attraction_archetype_playful_competence, or
               emotional_media_melancholy_adventure. Never output bare nostalgia, aesthetic, attraction, or media as meta.
             - Avoid character-name-only tags unless context-free durability is clear.
-            - Preserve explicit concrete activities as signals even when an abstract trait is also implied (e.g., "the gym" => gym, not only discipline).
+            - Preserve explicit concrete activities as signals even when an abstract trait is also implied (e.g., "the gym" => gym; leave discipline/consistency interpretation for silhouette).
             - In dislike prompts, keep negative signals specific; do not turn dislike of a genre/artist/show format into dislike of all music, TV, or media.
+            - Do not encode sentiment in signal tokens. Keep the reusable concept token neutral and carry dislike/avoidance with negative valence.
+            - In repair/conflict prompts, keep interaction-process behaviors out of signals. Encode decoding, testing, indirect punishment, withdrawal, avoidance, or unresolved repair loops in the silhouette patch as anti_patterns or sustainability_needs.
 
             Silhouette domain guidance:
             - prompt_silhouette_domains names the intended extraction domain when available.

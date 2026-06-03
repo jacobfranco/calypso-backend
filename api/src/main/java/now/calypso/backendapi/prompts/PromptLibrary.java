@@ -70,11 +70,11 @@ public final class PromptLibrary {
         defs.add(def("private.fictional.characters", PromptBankKind.PRIVATE,
                 "Name up to 3 fictional characters you've felt drawn to romantically (from any medium - film, books, games, etc). "
                         + "What about each of them pulls you in? Name up to 3 fictional characters you relate to most.",
-                "private", null, "agent", "signal:media_title", "signal:attraction",
+                "private", null, "agent", "signal:media_title",
                 "silhouette:spark_archetypes"));
         defs.add(def("private.gravitational.pull", PromptBankKind.PRIVATE,
                 "What kind of person has a weird gravitational pull for you, even if they are not your usual type? What is the pull?",
-                "private", null, "agent", "signal:seeking_traits", "signal:attraction",
+                "private", null, "agent",
                 "silhouette:spark_archetypes"));
         defs.add(def("private.color.presence", PromptBankKind.PRIVATE,
                 "If your presence had a color in a room, what would it be? What color feels magnetic to you in someone else?",
@@ -100,12 +100,11 @@ public final class PromptLibrary {
                 "silhouette:anti_patterns"));
         defs.add(def("private.drawn.to", PromptBankKind.PRIVATE,
                 "Describe the kind of person you tend to be drawn to.",
-                "private", null, "agent", "signal:seeking_traits", "signal:attraction",
+                "private", null, "agent",
                 "silhouette:spark_archetypes", "silhouette:sustainability_needs"));
         defs.add(def("private.repair.rhythm", PromptBankKind.PRIVATE,
                 "When something feels off with someone, what kind of response makes you feel safe, respected, or willing to stay in the conversation?",
-                "private", null, "agent", "signal:communication", "signal:repair",
-                "silhouette:sustainability_needs"));
+                "private", null, "agent", "silhouette:sustainability_needs", "silhouette:anti_patterns"));
         defs.add(def("private.music.feels.like", PromptBankKind.PRIVATE,
                 "What music feels the most like you? Why?",
                 "private", null, "agent", "signal:music", "signal:aesthetic",
@@ -116,11 +115,10 @@ public final class PromptLibrary {
                 "silhouette:formative_imprints"));
         defs.add(def("private.makes.you.laugh", PromptBankKind.PRIVATE,
                 "What kind of things reliably make you laugh?",
-                "private", null, "agent", "signal:humor", "signal:social_energy",
-                "silhouette:humor_play"));
+                "private", null, "agent", "signal:media_title", "silhouette:humor_play"));
         defs.add(def("private.humor.language", PromptBankKind.PRIVATE,
                 "What kind of humor, teasing, bit, or running joke makes you feel instantly understood by someone?",
-                "private", null, "agent", "signal:humor", "signal:social_energy",
+                "private", null, "agent", "signal:media_title",
                 "silhouette:humor_play", "silhouette:spark_archetypes"));
         defs.add(def("private.rabbit.hole", PromptBankKind.PRIVATE,
                 "What topic or niche have you spent way too much time exploring?",
@@ -142,11 +140,11 @@ public final class PromptLibrary {
                 "private", null, "agent", "signal:aesthetic", "silhouette:aesthetic_field"));
         defs.add(def("private.stuck.with", PromptBankKind.PRIVATE,
                 "What's something you've stuck with for a long time?",
-                "private", null, "agent", "signal:commitment", "signal:hobbies",
+                "private", null, "agent", "signal:hobbies",
                 "silhouette:sustainability_needs"));
         defs.add(def("private.communities.scene", PromptBankKind.PRIVATE,
                 "What communities or scenes have you felt the most at home in?",
-                "private", null, "agent", "signal:community", "signal:scene",
+                "private", null, "agent", "signal:scene",
                 "silhouette:social_belonging"));
         DEFINITIONS = Collections.unmodifiableList(defs);
 

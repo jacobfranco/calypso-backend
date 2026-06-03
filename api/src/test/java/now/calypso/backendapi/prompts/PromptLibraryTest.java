@@ -26,18 +26,19 @@ class PromptLibraryTest {
     }
 
     @Test
-    void resonancePromptsExposeSignalAndSilhouetteDomains() {
+    void resonancePromptsRouteAbstractDomainsToSilhouette() {
         PromptDefinition formative = PromptLibrary.getById("private.formative.imprints");
         assertTrue(PromptLibrary.signalDomains(formative).contains("nostalgia"));
         assertTrue(PromptLibrary.silhouetteDomains(formative).contains("formative_imprints"));
 
         PromptDefinition pull = PromptLibrary.getById("private.gravitational.pull");
-        assertTrue(PromptLibrary.signalDomains(pull).contains("attraction"));
+        assertFalse(PromptLibrary.signalDomains(pull).contains("attraction"));
         assertTrue(PromptLibrary.silhouetteDomains(pull).contains("spark_archetypes"));
 
         PromptDefinition repair = PromptLibrary.getById("private.repair.rhythm");
-        assertTrue(PromptLibrary.signalDomains(repair).contains("repair"));
+        assertFalse(PromptLibrary.signalDomains(repair).contains("repair"));
         assertTrue(PromptLibrary.silhouetteDomains(repair).contains("sustainability_needs"));
+        assertTrue(PromptLibrary.silhouetteDomains(repair).contains("anti_patterns"));
     }
 
     @Test
