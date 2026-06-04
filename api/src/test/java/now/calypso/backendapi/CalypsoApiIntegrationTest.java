@@ -2638,6 +2638,82 @@ class CalypsoApiIntegrationTest {
     }
 
     @Test
+    void matchmakingFollowupPlanner_skipsLowSignalTopMissingAndUsesAlternative() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = 949L;
+            long targetId = 950L;
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetId).get(5, TimeUnit.SECONDS);
+
+            long now = System.currentTimeMillis();
+            SignalRecord brunch = new SignalRecord();
+            brunch.setToken("brunch");
+            brunch.setIntent(SignalIntent.SEEKING);
+            brunch.setCount(9);
+            brunch.setValence(0.95);
+            brunch.setFirstSeen(now);
+            brunch.setLastSeen(now);
+            brunch.setSource("test");
+
+            SignalRecord hiking = new SignalRecord();
+            hiking.setToken("hiking");
+            hiking.setIntent(SignalIntent.SEEKING);
+            hiking.setCount(2);
+            hiking.setValence(0.90);
+            hiking.setFirstSeen(now);
+            hiking.setLastSeen(now);
+            hiking.setSource("test");
+
+            Signals viewerSignals = new Signals();
+            viewerSignals.setAccountId(viewerId);
+            viewerSignals.setRecords(List.of(brunch, hiking));
+            ipc.clusterDepot(Core.class.getName(), "*signalsDepot").append(viewerSignals);
+
+            ActivePrivatePrompt followup = awaitMatchmakingFollowup(mgr, viewerId, targetId, 5000);
+            assertNotNull(followup);
+            assertNotNull(followup.getPrompt());
+            String text = followup.getPrompt().getText().toLowerCase();
+            assertTrue(text.contains("hiking"), "Planner should use the useful alternate missing signal.");
+            assertFalse(text.contains("brunch"), "Planner should not spend the daily follow-up on brunch.");
+        }
+    }
+
+    @Test
+    void matchmakingFollowupPlanner_usesNegativeValenceBoundaryQuestion() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = 951L;
+            long targetId = 952L;
+            mgr.postFilters(filtersForGender("Woman", List.of("Man")), viewerId).get(5, TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("Man", List.of("Woman")), targetId).get(5, TimeUnit.SECONDS);
+
+            long now = System.currentTimeMillis();
+            SignalRecord desiredBoundary = new SignalRecord();
+            desiredBoundary.setToken("clubbing");
+            desiredBoundary.setIntent(SignalIntent.SEEKING);
+            desiredBoundary.setCount(3);
+            desiredBoundary.setValence(-0.95);
+            desiredBoundary.setFirstSeen(now);
+            desiredBoundary.setLastSeen(now);
+            desiredBoundary.setSource("test");
+
+            Signals viewerSignals = new Signals();
+            viewerSignals.setAccountId(viewerId);
+            viewerSignals.setRecords(List.of(desiredBoundary));
+            ipc.clusterDepot(Core.class.getName(), "*signalsDepot").append(viewerSignals);
+
+            ActivePrivatePrompt followup = awaitMatchmakingFollowup(mgr, viewerId, targetId, 5000);
+            assertNotNull(followup);
+            assertNotNull(followup.getPrompt());
+            String text = followup.getPrompt().getText().toLowerCase();
+            assertTrue(text.contains("clubbing"));
+            assertTrue(text.contains("turns you off"));
+            assertFalse(text.contains("anti"));
+        }
+    }
+
+    @Test
     void facecardsEndpointUsesRankedCandidatePool() throws Exception {
         try (InProcessCluster ipc = newCluster()) {
             CalypsoApiManager mgr = newManager(ipc);

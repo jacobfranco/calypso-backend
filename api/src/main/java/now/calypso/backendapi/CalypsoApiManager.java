@@ -28,6 +28,7 @@ import now.calypso.backendapi.agent.PrivatePromptTurnResponder;
 import now.calypso.backendapi.llm.MatchReranker;
 import now.calypso.backendapi.llm.LlmTelemetry;
 import now.calypso.backendapi.llm.PrivatePromptUnderstanding;
+import now.calypso.backendapi.matchmaking.MatchmakingFollowupPlanner;
 import now.calypso.backendapi.pojos.*;
 import now.calypso.backendapi.prompts.*;
 import now.calypso.backendapi.signals.*;
@@ -68,6 +69,7 @@ public class CalypsoApiManager {
     private final Set<String> facecardPendingRerankRetryKeys = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<String, Integer> facecardPendingRerankRetryAttemptsByDeckKey = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, PairRerankCacheEntry> pairRerankCacheByKey = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, PairInsightCacheEntry> pairInsightByKey = new ConcurrentHashMap<>();
     private final Set<String> pairPendingRerankRetryKeys = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<String, Integer> pairPendingRerankRetryAttemptsByKey = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Deque<Map<String, Object>>> adminRerankEventsByViewer = new ConcurrentHashMap<>();
@@ -2462,19 +2464,38 @@ public class CalypsoApiManager {
         return promptId != null && promptId.startsWith(MATCHMAKING_FOLLOWUP_PROMPT_PREFIX);
     }
 
-    private static String encodeMatchmakingFollowupPromptId(long viewerId, String missingToken, double missingValence,
-            double pairScore, double uncertainty) {
-        String token = SignalNormalizer.normalizeOne(missingToken);
+    private static String encodeMatchmakingFollowupPromptId(
+            long viewerId,
+            String missingToken,
+            double missingValence,
+            double pairScore,
+            double uncertainty,
+            MatchmakingFollowupPlanner.FollowupPlan plan) {
+        String token = SignalNormalizer.normalizeOne(plan == null || plan.token == null ? missingToken : plan.token);
         if (token == null) {
             token = "unknown";
         }
         double clampedValence = Math.max(-1.0, Math.min(1.0, missingValence));
-        return MATCHMAKING_FOLLOWUP_PROMPT_PREFIX
-                + "viewer=" + viewerId
-                + "&token=" + urlEncode(token)
-                + "&val=" + String.format(Locale.ROOT, "%.3f", clampedValence)
-                + "&score=" + String.format(Locale.ROOT, "%.3f", pairScore)
-                + "&unc=" + String.format(Locale.ROOT, "%.3f", uncertainty);
+        StringBuilder out = new StringBuilder();
+        out.append(MATCHMAKING_FOLLOWUP_PROMPT_PREFIX)
+                .append("viewer=").append(viewerId)
+                .append("&token=").append(urlEncode(token))
+                .append("&val=").append(String.format(Locale.ROOT, "%.3f", clampedValence))
+                .append("&score=").append(String.format(Locale.ROOT, "%.3f", pairScore))
+                .append("&unc=").append(String.format(Locale.ROOT, "%.3f", uncertainty));
+        if (plan != null) {
+            if (plan.strategy != null) {
+                out.append("&strategy=").append(urlEncode(plan.strategy.name()));
+            }
+            if (plan.tokenClass != null) {
+                out.append("&class=").append(urlEncode(plan.tokenClass.name()));
+            }
+            out.append("&utility=").append(String.format(Locale.ROOT, "%.3f", plan.utility));
+            if (plan.question != null && !plan.question.isBlank()) {
+                out.append("&q=").append(urlEncode(plan.question.trim()));
+            }
+        }
+        return out.toString();
     }
 
     private static Map<String, String> parseMatchmakingFollowupPromptFields(String promptId) {
@@ -2551,25 +2572,96 @@ public class CalypsoApiManager {
         return phrase;
     }
 
-   private static String buildMatchmakingFollowupQuestion(String token, Double missingValenceMaybe) {
-    String normalized = SignalNormalizer.normalizeOne(token);
-    if (normalized == null) {
-        return "Quick matchmaking check: say a little more about what matters here.";
+    private static String buildMatchmakingFollowupQuestion(Map<String, String> fields) {
+        if (fields != null) {
+            String stored = asTrimmedString(fields.get("q"));
+            if (stored != null) {
+                return stored;
+            }
+        }
+        String token = fields == null ? null : fields.get("token");
+        Double missingValence = parseFollowupValence(fields == null ? null : fields.get("val"), token);
+        return MatchmakingFollowupPlanner.fallbackQuestion(token, missingValence == null ? 1.0 : missingValence);
     }
 
-    double missingValence = missingValenceMaybe == null ? 1.0 : missingValenceMaybe.doubleValue();
-    if (missingValence < 0.0 && normalized.startsWith("anti_") && normalized.length() > "anti_".length()) {
-        normalized = normalized.substring("anti_".length());
+    private static String buildMatchmakingFollowupQuestion(String token, Double missingValenceMaybe) {
+        HashMap<String, String> fields = new HashMap<>();
+        if (token != null) {
+            fields.put("token", token);
+        }
+        if (missingValenceMaybe != null) {
+            fields.put("val", String.format(Locale.ROOT, "%.3f", missingValenceMaybe.doubleValue()));
+        }
+        return buildMatchmakingFollowupQuestion(fields);
     }
 
-    String phrase = humanizeSignalToken(normalized);
-
-    if (missingValence < 0.0) {
-        return "Quick check: how do you feel about " + phrase + "?";
+    private static String matchmakingFollowupExtractionQuestion(String visibleQuestion, Map<String, String> fields) {
+        String question = visibleQuestion == null || visibleQuestion.isBlank()
+                ? "Quick matchmaking check: say a little more about what matters here."
+                : visibleQuestion.trim();
+        if (fields == null || fields.isEmpty()) {
+            return question;
+        }
+        String token = asTrimmedString(fields.get("token"));
+        String valence = asTrimmedString(fields.get("val"));
+        String strategy = asTrimmedString(fields.get("strategy"));
+        String tokenClass = asTrimmedString(fields.get("class"));
+        if (token == null && valence == null && strategy == null && tokenClass == null) {
+            return question;
+        }
+        StringBuilder out = new StringBuilder(question);
+        out.append("\n\nInternal follow-up context for extraction only:");
+        if (token != null) {
+            out.append("\n- target_token: ").append(token);
+        }
+        if (valence != null) {
+            out.append("\n- requested_valence: ").append(valence);
+        }
+        if (strategy != null) {
+            out.append("\n- question_strategy: ").append(strategy);
+        }
+        if (tokenClass != null) {
+            out.append("\n- token_class: ").append(tokenClass);
+        }
+        out.append("\nUse this context only to interpret concise answers; do not invent unsupported signals.");
+        return out.toString();
     }
 
-    return "Quick check: how do you feel about " + phrase + "?";
-}
+    private MatchmakingFollowupPlanner.PairInsight pairInsightFor(long viewerId, long targetId) {
+        String key = pairRerankCacheKey(viewerId, targetId);
+        PairInsightCacheEntry entry = pairInsightByKey.get(key);
+        if (entry == null) {
+            return null;
+        }
+        long now = System.currentTimeMillis();
+        if (now - entry.createdAt > MATCH_PAIR_RERANK_COOLDOWN_MS) {
+            pairInsightByKey.remove(key, entry);
+            return null;
+        }
+        return entry.insight;
+    }
+
+    private void rememberPairInsight(long viewerId, long targetId, MatchReranker.Decision decision) {
+        if (decision == null) {
+            return;
+        }
+        MatchmakingFollowupPlanner.PairInsight insight = new MatchmakingFollowupPlanner.PairInsight(
+                decision.recommendedUse,
+                decision.confidence == null ? 0.0 : decision.confidence.doubleValue(),
+                decision.missingInfo,
+                decision.conversationSeeds,
+                decision.risks);
+        pairInsightByKey.put(pairRerankCacheKey(viewerId, targetId), new PairInsightCacheEntry(
+                System.currentTimeMillis(),
+                insight));
+    }
+
+    private void invalidatePairRerankState(long viewerId, long targetId) {
+        String key = pairRerankCacheKey(viewerId, targetId);
+        pairRerankCacheByKey.remove(key);
+        pairInsightByKey.remove(key);
+        clearPairPendingRerankRetry(viewerId, targetId);
+    }
 
     private static PromptDefinition matchmakingFollowupPromptDefinition(String questionText) {
         PromptDefinition prompt = new PromptDefinition();
@@ -3253,8 +3345,7 @@ public class CalypsoApiManager {
             return CompletableFuture.completedFuture(null);
         }
         Map<String, String> fields = parseMatchmakingFollowupPromptFields(assignment.getPromptId());
-        Double missingValence = parseFollowupValence(fields.get("val"), fields.get("token"));
-        String questionText = buildMatchmakingFollowupQuestion(fields.get("token"), missingValence);
+        String questionText = buildMatchmakingFollowupQuestion(fields);
         return getMatchmakingFollowupAnswerByInstanceId.invokeAsync(assignment.getInstanceId()).thenApply(answer -> {
             ActivePrivatePrompt out = new ActivePrivatePrompt();
             PrivatePromptAssignment sanitizedAssignment = new PrivatePromptAssignment(assignment);
@@ -3295,6 +3386,137 @@ public class CalypsoApiManager {
         });
     }
 
+    private MatchmakingFollowupChoice chooseMatchmakingFollowup(
+            long accountId,
+            List<Map<String, Object>> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            return null;
+        }
+        MatchmakingFollowupChoice best = null;
+        for (Map<String, Object> cand : candidates) {
+            if (cand == null || cand.isEmpty()) {
+                continue;
+            }
+            long viewerId = parseLong(asTrimmedString(cand.get("viewerId")), -1L);
+            if (viewerId < 0L || viewerId == accountId) {
+                continue;
+            }
+            double pairScore = parseDouble(asTrimmedString(cand.get("pairScore")), 0.0);
+            double uncertainty = parseDouble(asTrimmedString(cand.get("uncertainty")), 1.0);
+            MatchmakingFollowupPlanner.PairInsight insight = pairInsightFor(viewerId, accountId);
+            for (MatchmakingFollowupPlanner.MissingSignal signal : missingSignalsFromFollowupCandidate(cand)) {
+                if (signal == null || signal.token == null || signal.token.isBlank()) {
+                    continue;
+                }
+                MatchmakingFollowupPlanner.FollowupPlan plan = MatchmakingFollowupPlanner.plan(
+                        new MatchmakingFollowupPlanner.Input(
+                                viewerId,
+                                accountId,
+                                signal,
+                                pairScore,
+                                uncertainty,
+                                insight));
+                if (plan == null || plan.action != MatchmakingFollowupPlanner.FollowupAction.ASK) {
+                    continue;
+                }
+                MatchmakingFollowupChoice candidate = new MatchmakingFollowupChoice(
+                        viewerId,
+                        accountId,
+                        signal,
+                        pairScore,
+                        uncertainty,
+                        plan);
+                if (betterFollowupChoice(candidate, best)) {
+                    best = candidate;
+                }
+            }
+        }
+        return best;
+    }
+
+    private static boolean betterFollowupChoice(MatchmakingFollowupChoice candidate, MatchmakingFollowupChoice current) {
+        if (candidate == null || candidate.plan == null) {
+            return false;
+        }
+        if (current == null || current.plan == null) {
+            return true;
+        }
+        int byUtility = Double.compare(candidate.plan.utility, current.plan.utility);
+        if (byUtility != 0) {
+            return byUtility > 0;
+        }
+        int byPairScore = Double.compare(candidate.pairScore, current.pairScore);
+        if (byPairScore != 0) {
+            return byPairScore > 0;
+        }
+        int byUncertainty = Double.compare(candidate.uncertainty, current.uncertainty);
+        if (byUncertainty != 0) {
+            return byUncertainty > 0;
+        }
+        return candidate.missingSignal.rank < current.missingSignal.rank;
+    }
+
+    private static List<MatchmakingFollowupPlanner.MissingSignal> missingSignalsFromFollowupCandidate(
+            Map<String, Object> cand) {
+        if (cand == null || cand.isEmpty()) {
+            return List.of();
+        }
+        ArrayList<MatchmakingFollowupPlanner.MissingSignal> out = new ArrayList<>();
+        Object rawSignals = cand.get("missingSignals");
+        if (rawSignals instanceof Collection<?>) {
+            int fallbackRank = 1;
+            for (Object raw : (Collection<?>) rawSignals) {
+                MatchmakingFollowupPlanner.MissingSignal signal = missingSignalFromObject(raw, cand, fallbackRank);
+                fallbackRank += 1;
+                if (signal != null) {
+                    out.add(signal);
+                }
+            }
+        }
+        if (!out.isEmpty()) {
+            return out;
+        }
+        MatchmakingFollowupPlanner.MissingSignal legacy = new MatchmakingFollowupPlanner.MissingSignal(
+                asTrimmedString(cand.get("missingToken")),
+                parseDouble(asTrimmedString(cand.get("missingValence")), 1.0),
+                parseDouble(asTrimmedString(cand.get("missingAbsWeight")), 0.5),
+                1);
+        return legacy.token == null || legacy.token.isBlank() ? List.of() : List.of(legacy);
+    }
+
+    private static MatchmakingFollowupPlanner.MissingSignal missingSignalFromObject(
+            Object raw,
+            Map<String, Object> fallback,
+            int fallbackRank) {
+        if (!(raw instanceof Map<?, ?>)) {
+            String token = asTrimmedString(raw);
+            if (token == null) {
+                return null;
+            }
+            return new MatchmakingFollowupPlanner.MissingSignal(
+                    token,
+                    parseDouble(asTrimmedString(fallback == null ? null : fallback.get("missingValence")), 1.0),
+                    parseDouble(asTrimmedString(fallback == null ? null : fallback.get("missingAbsWeight")), 0.5),
+                    fallbackRank);
+        }
+        Map<?, ?> map = (Map<?, ?>) raw;
+        String token = asTrimmedString(map.get("token"));
+        if (token == null) {
+            token = asTrimmedString(fallback == null ? null : fallback.get("missingToken"));
+        }
+        if (token == null) {
+            return null;
+        }
+        double valence = parseDouble(
+                asTrimmedString(map.get("valence")),
+                parseDouble(asTrimmedString(fallback == null ? null : fallback.get("missingValence")), 1.0));
+        double absWeight = parseDouble(
+                asTrimmedString(map.get("absWeight")),
+                parseDouble(asTrimmedString(fallback == null ? null : fallback.get("missingAbsWeight")), 0.5));
+        int rank = (int) Math.max(1L, parseLong(asTrimmedString(map.get("rank")), fallbackRank));
+        return new MatchmakingFollowupPlanner.MissingSignal(token, valence, absWeight, rank);
+    }
+
     private CompletableFuture<ActivePrivatePrompt> scheduleNextMatchmakingFollowup(long accountId,
             Map<String, Object> state,
             long now,
@@ -3310,32 +3532,17 @@ public class CalypsoApiManager {
                     if (candidates == null || candidates.isEmpty()) {
                         return CompletableFuture.completedFuture(null);
                     }
-                    Map<String, Object> picked = null;
-                    for (Map<String, Object> cand : candidates) {
-                        if (cand == null || cand.isEmpty()) {
-                            continue;
-                        }
-                        long viewerId = parseLong(asTrimmedString(cand.get("viewerId")), -1L);
-                        String missingToken = asTrimmedString(cand.get("missingToken"));
-                        if (viewerId >= 0L && viewerId != accountId && missingToken != null) {
-                            picked = cand;
-                            break;
-                        }
-                    }
-                    if (picked == null) {
+                    MatchmakingFollowupChoice picked = chooseMatchmakingFollowup(accountId, candidates);
+                    if (picked == null || picked.plan == null) {
                         return CompletableFuture.completedFuture(null);
                     }
-                    long viewerId = parseLong(asTrimmedString(picked.get("viewerId")), -1L);
-                    String missingToken = asTrimmedString(picked.get("missingToken"));
-                    double missingValence = parseDouble(asTrimmedString(picked.get("missingValence")), 1.0);
-                    double pairScore = parseDouble(asTrimmedString(picked.get("pairScore")), 0.0);
-                    double uncertainty = parseDouble(asTrimmedString(picked.get("uncertainty")), 1.0);
                     String encodedPromptId = encodeMatchmakingFollowupPromptId(
-                            viewerId,
-                            missingToken,
-                            missingValence,
-                            pairScore,
-                            uncertainty);
+                            picked.viewerId,
+                            picked.missingSignal.token,
+                            picked.missingSignal.valence,
+                            picked.pairScore,
+                            picked.uncertainty,
+                            picked.plan);
 
                     PrivatePromptAssignment assignment = new PrivatePromptAssignment();
                     assignment.setInstanceId(UUID.randomUUID().toString());
@@ -3405,8 +3612,7 @@ public class CalypsoApiManager {
                 instanceId).thenCompose(current -> {
                     Map<String, String> fields = parseMatchmakingFollowupPromptFields(current.getPromptId());
                     long viewerId = parseLong(fields.get("viewer"), -1L);
-                    Double missingValence = parseFollowupValence(fields.get("val"), fields.get("token"));
-                    String baseQuestion = buildMatchmakingFollowupQuestion(fields.get("token"), missingValence);
+                    String baseQuestion = buildMatchmakingFollowupQuestion(fields);
                     String effectivePart = normalizedQuestionPart == null ? baseQuestion : normalizedQuestionPart;
                     PrivatePromptTurnResponder.TurnInput input = new PrivatePromptTurnResponder.TurnInput(
                             MATCHMAKING_FOLLOWUP_PROMPT_ID,
@@ -3444,8 +3650,8 @@ public class CalypsoApiManager {
                     long now = System.currentTimeMillis();
                     Map<String, String> fields = parseMatchmakingFollowupPromptFields(current.getPromptId());
                     long viewerId = parseLong(fields.get("viewer"), -1L);
-                    Double missingValence = parseFollowupValence(fields.get("val"), fields.get("token"));
-                    String question = buildMatchmakingFollowupQuestion(fields.get("token"), missingValence);
+                    String question = buildMatchmakingFollowupQuestion(fields);
+                    String extractionQuestion = matchmakingFollowupExtractionQuestion(question, fields);
 
                     PrivatePromptAnswer answer = new PrivatePromptAnswer();
                     answer.setInstanceId(current.getInstanceId());
@@ -3458,7 +3664,7 @@ public class CalypsoApiManager {
                             ? extractAndAppendFromUnifiedPrivateUnderstanding(
                                     accountId,
                                     MATCHMAKING_FOLLOWUP_PROMPT_ID,
-                                    question,
+                                    extractionQuestion,
                                     normalizedBody,
                                     normalizedConversation,
                                     "matchmaking_followup",
@@ -3467,7 +3673,7 @@ public class CalypsoApiManager {
                                                 ex);
                                         return PrivatePromptProcessingResult.empty(false, compactSilhouetteDelta(
                                                 MATCHMAKING_FOLLOWUP_PROMPT_ID,
-                                                question,
+                                                extractionQuestion,
                                                 normalizedBody,
                                                 normalizedConversation));
                                     }).thenCompose(result -> {
@@ -3477,7 +3683,7 @@ public class CalypsoApiManager {
                                         return extractAndAppendSignalsFromPrompt(
                                                 accountId,
                                                 MATCHMAKING_FOLLOWUP_PROMPT_ID,
-                                                question,
+                                                extractionQuestion,
                                                 normalizedBody,
                                                 normalizedConversation,
                                                 "matchmaking_followup",
@@ -3487,14 +3693,14 @@ public class CalypsoApiManager {
                                                         false,
                                                         compactSilhouetteDelta(
                                                                 MATCHMAKING_FOLLOWUP_PROMPT_ID,
-                                                                question,
+                                                                extractionQuestion,
                                                                 normalizedBody,
                                                                 normalizedConversation)));
                                     })
                             : extractAndAppendSignalsFromPrompt(
                                     accountId,
                                     MATCHMAKING_FOLLOWUP_PROMPT_ID,
-                                    question,
+                                    extractionQuestion,
                                     normalizedBody,
                                     normalizedConversation,
                                     "matchmaking_followup",
@@ -3504,7 +3710,7 @@ public class CalypsoApiManager {
                                             false,
                                             compactSilhouetteDelta(
                                                     MATCHMAKING_FOLLOWUP_PROMPT_ID,
-                                                    question,
+                                                    extractionQuestion,
                                                     normalizedBody,
                                                     normalizedConversation)))
                                     .exceptionally(ex -> {
@@ -3512,7 +3718,7 @@ public class CalypsoApiManager {
                                                 ex);
                                         return PrivatePromptProcessingResult.empty(false, compactSilhouetteDelta(
                                                 MATCHMAKING_FOLLOWUP_PROMPT_ID,
-                                                question,
+                                                extractionQuestion,
                                                 normalizedBody,
                                                 normalizedConversation));
                                     });
@@ -3528,10 +3734,13 @@ public class CalypsoApiManager {
                             updated.unsetSnoozeUntil();
                         }
                         CompletableFuture<ActivePrivatePrompt> persisted = matchmakingFollowupAnswerDepot.appendAsync(answer)
-                                .thenCompose(v -> matchmakingFollowupAssignmentDepot.appendAsync(updated))
-                                .thenCompose(v -> {
-                                    CompletableFuture<Void> refillSelf = requestRefill(accountId, 120)
-                                            .exceptionally(ex -> null);
+	                                .thenCompose(v -> matchmakingFollowupAssignmentDepot.appendAsync(updated))
+	                                .thenCompose(v -> {
+	                                    if (viewerId >= 0L) {
+	                                        invalidatePairRerankState(accountId, viewerId);
+	                                    }
+	                                    CompletableFuture<Void> refillSelf = requestRefill(accountId, 120)
+	                                            .exceptionally(ex -> null);
                                     CompletableFuture<Void> refillViewer = viewerId < 0L
                                             ? CompletableFuture.completedFuture(null)
                                             : requestRefill(viewerId, 120).exceptionally(ex -> null);
@@ -3549,7 +3758,7 @@ public class CalypsoApiManager {
                                                 "matchmaking_followup",
                                                 current.getInstanceId(),
                                                 MATCHMAKING_FOLLOWUP_PROMPT_ID,
-                                                question,
+                                                extractionQuestion,
                                                 normalizedBody,
                                                 normalizedConversation,
                                                 context,
@@ -3559,10 +3768,10 @@ public class CalypsoApiManager {
                                         queueSilhouetteUpdateAsync(
                                                 accountId,
                                                 "matchmaking_followup",
-                                                current.getInstanceId(),
-                                                MATCHMAKING_FOLLOWUP_PROMPT_ID,
-                                                question,
-                                                normalizedBody,
+	                                                current.getInstanceId(),
+	                                                MATCHMAKING_FOLLOWUP_PROMPT_ID,
+	                                                extractionQuestion,
+	                                                normalizedBody,
                                                 normalizedConversation,
                                                 context);
                                     }
@@ -3572,7 +3781,7 @@ public class CalypsoApiManager {
                                             "matchmaking_followup",
                                             current.getInstanceId(),
                                             MATCHMAKING_FOLLOWUP_PROMPT_ID,
-                                            question,
+                                            extractionQuestion,
                                             normalizedBody,
                                             normalizedConversation,
                                             context);
@@ -7287,20 +7496,23 @@ public class CalypsoApiManager {
                 }
                 long candidateTargetId = parseTargetAccountId(candidate);
                 double stage2Norm = clamp01(candidate.score / 100.0);
-                MatchReranker.Decision decision = decisionById.get(candidate.account.id.trim());
-                if (decision == null) {
-                    String pendingReason = pendingCandidateReasonsByTargetId.get(candidateTargetId);
+	                MatchReranker.Decision decision = decisionById.get(candidate.account.id.trim());
+	                if (decision == null) {
+	                    String pendingReason = pendingCandidateReasonsByTargetId.get(candidateTargetId);
                     if (pendingReason != null) {
                         List<GetMatch> pending = markTier3Pending(List.of(candidate), pendingReason);
                         reranked.add(pending.isEmpty() ? candidate : pending.get(0));
                     } else {
                         reranked.add(candidate);
                     }
-                    continue;
-                }
+	                    continue;
+	                }
+	                if (candidateTargetId >= 0L) {
+	                    rememberPairInsight(viewerId, candidateTargetId, decision);
+	                }
 
-                double compatibility = clamp01(
-                        decision.finalScore == null ? 0.5 : decision.finalScore.doubleValue());
+	                double compatibility = clamp01(
+	                        decision.finalScore == null ? 0.5 : decision.finalScore.doubleValue());
                 double confidence = clamp01(
                         decision.confidence == null ? 0.5 : decision.confidence.doubleValue());
                 double appliedWeight = FACECARD_RERANK_MAX_WEIGHT * Math.max(MATCH_RERANK_CONFIDENCE_MIN, confidence);
@@ -7510,6 +7722,7 @@ public class CalypsoApiManager {
                     silhouetteHashA,
                     silhouetteHashB)) {
                 clearPairPendingRerankRetry(viewerId, targetId);
+                rememberPairInsight(canonicalA, canonicalB, cached.decision);
                 return applyPairRerankDecision(
                         viewerId,
                         deterministic,
@@ -7566,6 +7779,7 @@ public class CalypsoApiManager {
                     silhouetteHashA,
                     silhouetteHashB,
                     decision));
+            rememberPairInsight(canonicalA, canonicalB, decision);
             clearPairPendingRerankRetry(viewerId, targetId);
             return applyPairRerankDecision(
                     viewerId,
@@ -9038,6 +9252,40 @@ public class CalypsoApiManager {
         out.put("viewerId", CalypsoHelpers.serializeAccountId(viewerId));
         out.put("events", rows);
         return CompletableFuture.completedFuture(out);
+    }
+
+    private static final class MatchmakingFollowupChoice {
+        final long viewerId;
+        final long targetId;
+        final MatchmakingFollowupPlanner.MissingSignal missingSignal;
+        final double pairScore;
+        final double uncertainty;
+        final MatchmakingFollowupPlanner.FollowupPlan plan;
+
+        MatchmakingFollowupChoice(
+                long viewerId,
+                long targetId,
+                MatchmakingFollowupPlanner.MissingSignal missingSignal,
+                double pairScore,
+                double uncertainty,
+                MatchmakingFollowupPlanner.FollowupPlan plan) {
+            this.viewerId = viewerId;
+            this.targetId = targetId;
+            this.missingSignal = missingSignal;
+            this.pairScore = pairScore;
+            this.uncertainty = uncertainty;
+            this.plan = plan;
+        }
+    }
+
+    private static final class PairInsightCacheEntry {
+        final long createdAt;
+        final MatchmakingFollowupPlanner.PairInsight insight;
+
+        PairInsightCacheEntry(long createdAt, MatchmakingFollowupPlanner.PairInsight insight) {
+            this.createdAt = createdAt;
+            this.insight = insight;
+        }
     }
 
     private static final class PairRerankCacheEntry {

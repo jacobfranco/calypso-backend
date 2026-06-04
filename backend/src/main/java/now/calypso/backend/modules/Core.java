@@ -25,6 +25,7 @@ public class Core implements RamaModule {
       private static final double MIN_SCORE_BALANCED = 55.0;
       private static final double MIN_SCORE_FOCUSED = 65.0;
       private static final double FOLLOWUP_MIN_NORMALIZED_SCORE = 0.60;
+      private static final int FOLLOWUP_MISSING_SIGNAL_LIMIT = 4;
       private static final String ALL_ACCOUNTS_KEY = "all";
       private static final String FACECARD_REACTION_ANSWER_PREFIX = "facecard_target:";
       private static final String PUBLIC_REACTION_STRENGTH_PROMPT_SUFFIX = "|reaction_strength:";
@@ -444,13 +445,12 @@ public class Core implements RamaModule {
             return clamp01(missing / total);
       }
 
-      private static MissingDesiredSignal topMissingDesiredSignal(Map<String, Double> desired, Map<String, Double> otherSelf) {
+      private static List<MissingDesiredSignal> topMissingDesiredSignals(Map<String, Double> desired,
+                  Map<String, Double> otherSelf, int limit) {
             if (desired == null || desired.isEmpty())
-                  return null;
+                  return Collections.emptyList();
             Map<String, Double> other = (otherSelf == null) ? Collections.emptyMap() : otherSelf;
-            String bestToken = null;
-            double bestWeightAbs = -1.0;
-            double bestValence = 1.0;
+            ArrayList<MissingDesiredSignal> candidates = new ArrayList<>();
             for (Map.Entry<String, Double> entry : desired.entrySet()) {
                   String token = entry.getKey();
                   double weight = entry.getValue() == null ? 0.0 : entry.getValue();
@@ -461,15 +461,44 @@ public class Core implements RamaModule {
                         continue;
                   if (Math.abs(other.getOrDefault(token, 0.0)) > SIGNAL_PRESENT_EPSILON)
                         continue;
-                  if (absWeight > bestWeightAbs) {
-                        bestWeightAbs = absWeight;
-                        bestToken = token;
-                        bestValence = Math.signum(weight) == 0.0 ? 1.0 : Math.signum(weight);
-                  }
+                  double valence = Math.signum(weight) == 0.0 ? 1.0 : Math.signum(weight);
+                  candidates.add(new MissingDesiredSignal(token, valence, absWeight));
             }
-            if (bestToken == null)
-                  return null;
-            return new MissingDesiredSignal(bestToken, bestValence, bestWeightAbs);
+            if (candidates.isEmpty())
+                  return Collections.emptyList();
+            candidates.sort((a, b) -> {
+                  int byWeight = Double.compare(b.absWeight, a.absWeight);
+                  if (byWeight != 0)
+                        return byWeight;
+                  return String.valueOf(a.token).compareTo(String.valueOf(b.token));
+            });
+            int bounded = Math.max(1, limit);
+            if (candidates.size() <= bounded)
+                  return candidates;
+            return new ArrayList<>(candidates.subList(0, bounded));
+      }
+
+      private static MissingDesiredSignal topMissingDesiredSignal(Map<String, Double> desired, Map<String, Double> otherSelf) {
+            List<MissingDesiredSignal> signals = topMissingDesiredSignals(desired, otherSelf, 1);
+            return signals.isEmpty() ? null : signals.get(0);
+      }
+
+      private static List<Map<String, Object>> missingSignalPayloads(List<MissingDesiredSignal> signals) {
+            if (signals == null || signals.isEmpty())
+                  return Collections.emptyList();
+            ArrayList<Map<String, Object>> out = new ArrayList<>();
+            int rank = 1;
+            for (MissingDesiredSignal signal : signals) {
+                  if (signal == null || signal.token == null || signal.token.isBlank())
+                        continue;
+                  HashMap<String, Object> item = new HashMap<>();
+                  item.put("token", signal.token);
+                  item.put("valence", signal.valence);
+                  item.put("absWeight", signal.absWeight);
+                  item.put("rank", rank++);
+                  out.add(item);
+            }
+            return out;
       }
 
       private static final class ParsedSignalToken {
@@ -715,7 +744,11 @@ public class Core implements RamaModule {
             out.put("uncertainty", uncertainty);
             out.put("normalizedScore", finalScore);
 
-            MissingDesiredSignal missingSignal = topMissingDesiredSignal(viewerDesired, targetSelf);
+            List<MissingDesiredSignal> missingSignals = topMissingDesiredSignals(
+                        viewerDesired,
+                        targetSelf,
+                        FOLLOWUP_MISSING_SIGNAL_LIMIT);
+            MissingDesiredSignal missingSignal = missingSignals.isEmpty() ? null : missingSignals.get(0);
             boolean followupEligible = missingSignal != null
                         && finalScore >= FOLLOWUP_MIN_NORMALIZED_SCORE
                         && uncertainty >= 0.35;
@@ -724,6 +757,8 @@ public class Core implements RamaModule {
                   followup.put("targetId", targetId);
                   followup.put("missingToken", missingSignal.token);
                   followup.put("missingValence", missingSignal.valence);
+                  followup.put("missingAbsWeight", missingSignal.absWeight);
+                  followup.put("missingSignals", missingSignalPayloads(missingSignals));
                   followup.put("pairScore", finalScorePercent);
                   followup.put("uncertainty", uncertainty);
                   followup.put("eligibleAt", now);
