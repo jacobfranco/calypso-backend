@@ -24,7 +24,10 @@ import com.rpl.rama.*;
 import com.rpl.rama.cluster.ClusterManagerBase;
 
 import now.calypso.backendapi.agent.AgentResponder;
+import now.calypso.backendapi.agent.PrivatePromptSufficiencyPlanner;
 import now.calypso.backendapi.agent.PrivatePromptTurnResponder;
+import now.calypso.backendapi.ai.AiDecisionLog;
+import now.calypso.backendapi.ai.QuestionBudgetPlanner;
 import now.calypso.backendapi.llm.MatchReranker;
 import now.calypso.backendapi.llm.LlmTelemetry;
 import now.calypso.backendapi.llm.PrivatePromptUnderstanding;
@@ -41,6 +44,7 @@ import now.calypso.backendapi.silhouette.SilhouetteModeMerger;
 import now.calypso.backendapi.silhouette.SilhouetteModeDigest;
 import now.calypso.backendapi.silhouette.SilhouetteMode;
 import now.calypso.backendapi.silhouette.SilhouettePatch;
+import now.calypso.backendapi.silhouette.SilhouettePatchValidator;
 import now.calypso.backendapi.silhouette.SilhouetteState;
 import now.calypso.backend.*;
 import now.calypso.backend.data.*;
@@ -73,6 +77,7 @@ public class CalypsoApiManager {
     private final Set<String> pairPendingRerankRetryKeys = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<String, Integer> pairPendingRerankRetryAttemptsByKey = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Deque<Map<String, Object>>> adminRerankEventsByViewer = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, ConcurrentHashMap<String, Long>> recentMatchmakingFollowupTokensByAccount = new ConcurrentHashMap<>();
 
     // Modules
     public static final String CORE_MODULE_NAME = Core.class.getName();
@@ -150,6 +155,7 @@ public class CalypsoApiManager {
     private static final int PRIVATE_PROMPT_DAILY_SPAWN_HOUR = 20;
     private static final int PRIVATE_PROMPT_BODY_LIMIT = 2000;
     private static final long MATCHMAKING_FOLLOWUP_COOLDOWN_MS = 24L * 60 * 60 * 1000;
+    private static final long MATCHMAKING_FOLLOWUP_TOKEN_DEDUPE_MS = 14L * 24 * 60 * 60 * 1000;
     private static final int MATCHMAKING_FOLLOWUP_DEFAULT_LIMIT = 20;
     private static final String MATCHMAKING_FOLLOWUP_PROMPT_ID = "private.matchmaking.followup";
     private static final String MATCHMAKING_FOLLOWUP_PROMPT_PREFIX = MATCHMAKING_FOLLOWUP_PROMPT_ID + "|";
@@ -622,6 +628,17 @@ public class CalypsoApiManager {
         return CompletableFuture.completedFuture(LlmTelemetry.snapshot(limit));
     }
 
+    public CompletableFuture<Map<String, Object>> getAiDecisions(long accountId, int limit) {
+        if (accountId < 0L) {
+            return CompletableFuture.completedFuture(Map.of(
+                    "generatedAt", System.currentTimeMillis(),
+                    "totals", Map.of(),
+                    "byDecision", List.of(),
+                    "events", List.of()));
+        }
+        return CompletableFuture.completedFuture(AiDecisionLog.snapshot(limit));
+    }
+
     private CompletableFuture<Map<String, Object>> readSilhouetteSnapshot(long accountId) {
         if (accountId < 0L) {
             return CompletableFuture.completedFuture(defaultSilhouetteMap(accountId));
@@ -871,6 +888,18 @@ public class CalypsoApiManager {
                                         null),
                                 () -> SilhouetteEditor.buildPatch(openAI, base, augmented));
                     }
+                    SilhouettePatchValidator.ValidationResult validation = validateSilhouettePatchForMerge(
+                            accountId,
+                            source,
+                            sourceId,
+                            promptId,
+                            eventId,
+                            patch,
+                            answer);
+                    patch = validation.patch;
+                    if (patch == null || patch.isEmpty()) {
+                        return ackSilhouetteEvent(accountId, eventId).thenApply(acked -> false);
+                    }
                     SilhouetteState merged = SilhouetteModeMerger.apply(
                             base,
                             patch,
@@ -952,6 +981,18 @@ public class CalypsoApiManager {
             if (patch == null || patch.isEmpty()) {
                 return ackSilhouetteEvents(accountId, eventIds(eligible)).thenApply(done -> false);
             }
+            SilhouettePatchValidator.ValidationResult validation = validateSilhouettePatchForMerge(
+                    accountId,
+                    source,
+                    sourceId,
+                    promptId,
+                    eventId,
+                    patch,
+                    answer);
+            patch = validation.patch;
+            if (patch == null || patch.isEmpty()) {
+                return ackSilhouetteEvents(accountId, eventIds(eligible)).thenApply(done -> false);
+            }
             SilhouetteState merged = SilhouetteModeMerger.apply(
                     base,
                     patch,
@@ -987,6 +1028,35 @@ public class CalypsoApiManager {
             }
             return CompletableFuture.allOf(recoveries.toArray(new CompletableFuture[0])).thenApply(v -> false);
         }).thenCompose(f -> f));
+    }
+
+    private SilhouettePatchValidator.ValidationResult validateSilhouettePatchForMerge(
+            long accountId,
+            String source,
+            String sourceId,
+            String promptId,
+            String eventId,
+            SilhouettePatch patch,
+            String evidenceExcerpt) {
+        SilhouettePatchValidator.ValidationResult validation = SilhouettePatchValidator.validate(
+                promptId,
+                patch,
+                evidenceExcerpt);
+        if (validation.inputOps > 0) {
+            LinkedHashMap<String, Object> details = new LinkedHashMap<>(
+                    validation.auditDetails(promptId, source, sourceId));
+            if (eventId != null && !eventId.isBlank()) {
+                details.put("eventId", eventId.trim());
+            }
+            AiDecisionLog.record(
+                    "silhouette_patch",
+                    source == null || source.isBlank() ? "silhouette_update" : source,
+                    validation.droppedOps() > 0 ? "filtered" : "accepted",
+                    accountId < 0L ? null : Long.valueOf(accountId),
+                    null,
+                    details);
+        }
+        return validation;
     }
 
     private CompletableFuture<Void> requeueSilhouetteEvent(Map<String, Object> original, long nextAttempt) {
@@ -3055,6 +3125,8 @@ public class CalypsoApiManager {
                             effectivePart,
                             normalizedConversation,
                             normalizedUserMessage);
+                    PrivatePromptSufficiencyPlanner.SufficiencyPlan sufficiencyPlan =
+                            PrivatePromptSufficiencyPlanner.plan(input);
                     return CompletableFuture.supplyAsync(() -> LlmTelemetry.withContext(
                             LlmTelemetry.context(
                                     Long.valueOf(accountId),
@@ -3063,9 +3135,18 @@ public class CalypsoApiManager {
                                     instanceId,
                                     null),
                             () -> PrivatePromptTurnResponder.generate(openAI, input)))
-                            .thenApply(result -> new GetPrivatePromptChatTurn(
-                                    result == null ? null : result.agentMessage,
-                                    result != null && result.needsMoreDetail));
+                            .thenApply(result -> {
+                                recordPrivatePromptTurnDecision(
+                                        accountId,
+                                        null,
+                                        "private_prompt_chat",
+                                        instanceId,
+                                        sufficiencyPlan,
+                                        result);
+                                return new GetPrivatePromptChatTurn(
+                                        result == null ? null : result.agentMessage,
+                                        result != null && result.needsMoreDetail);
+                            });
                 }));
     }
 
@@ -3392,7 +3473,11 @@ public class CalypsoApiManager {
         if (candidates == null || candidates.isEmpty()) {
             return null;
         }
-        MatchmakingFollowupChoice best = null;
+        ArrayList<QuestionBudgetPlanner.QuestionCandidate> budgetCandidates = new ArrayList<>();
+        LinkedHashMap<String, MatchmakingFollowupChoice> choicesByKey = new LinkedHashMap<>();
+        LinkedHashMap<String, Integer> skipReasons = new LinkedHashMap<>();
+        int consideredSignals = 0;
+        long sequence = 0L;
         for (Map<String, Object> cand : candidates) {
             if (cand == null || cand.isEmpty()) {
                 continue;
@@ -3405,7 +3490,9 @@ public class CalypsoApiManager {
             double uncertainty = parseDouble(asTrimmedString(cand.get("uncertainty")), 1.0);
             MatchmakingFollowupPlanner.PairInsight insight = pairInsightFor(viewerId, accountId);
             for (MatchmakingFollowupPlanner.MissingSignal signal : missingSignalsFromFollowupCandidate(cand)) {
+                consideredSignals += 1;
                 if (signal == null || signal.token == null || signal.token.isBlank()) {
+                    incrementCount(skipReasons, "missing_token_required");
                     continue;
                 }
                 MatchmakingFollowupPlanner.FollowupPlan plan = MatchmakingFollowupPlanner.plan(
@@ -3417,6 +3504,11 @@ public class CalypsoApiManager {
                                 uncertainty,
                                 insight));
                 if (plan == null || plan.action != MatchmakingFollowupPlanner.FollowupAction.ASK) {
+                    incrementCount(skipReasons, plan == null ? "planner_returned_null" : plan.skipReason);
+                    continue;
+                }
+                if (recentlyAskedMatchmakingFollowupToken(accountId, plan.token, plan.missingValence)) {
+                    incrementCount(skipReasons, "recent_token_already_asked");
                     continue;
                 }
                 MatchmakingFollowupChoice candidate = new MatchmakingFollowupChoice(
@@ -3426,12 +3518,53 @@ public class CalypsoApiManager {
                         pairScore,
                         uncertainty,
                         plan);
-                if (betterFollowupChoice(candidate, best)) {
-                    best = candidate;
-                }
+                String key = "viewer:" + viewerId + "|token:" + plan.token + "|seq:" + sequence;
+                choicesByKey.put(key, candidate);
+                LinkedHashMap<String, Object> metadata = new LinkedHashMap<>();
+                metadata.put("viewerId", viewerId);
+                metadata.put("targetId", accountId);
+                metadata.put("token", plan.token);
+                metadata.put("strategy", plan.strategy == null ? "" : plan.strategy.name());
+                metadata.put("tokenClass", plan.tokenClass == null ? "" : plan.tokenClass.name());
+                metadata.put("missingValence", plan.missingValence);
+                metadata.put("absWeight", plan.absWeight);
+                metadata.put("pairScore", pairScore);
+                metadata.put("uncertainty", uncertainty);
+                budgetCandidates.add(new QuestionBudgetPlanner.QuestionCandidate(
+                        "matchmaking_followup",
+                        key,
+                        plan.question,
+                        plan.utility,
+                        Math.max(0, 100 - signal.rank),
+                        sequence,
+                        metadata));
+                sequence += 1L;
             }
         }
-        return best;
+        QuestionBudgetPlanner.Selection selection = QuestionBudgetPlanner.select(budgetCandidates);
+        MatchmakingFollowupChoice picked = selection.selected == null ? null : choicesByKey.get(selection.selected.key);
+        LinkedHashMap<String, Object> details = new LinkedHashMap<>();
+        details.put("candidateRows", candidates.size());
+        details.put("consideredSignals", consideredSignals);
+        details.put("eligibleQuestions", selection.eligibleCount());
+        if (!skipReasons.isEmpty()) {
+            details.put("skipReasons", skipReasons);
+        }
+        if (selection.selected != null) {
+            details.put("selected", selection.selected.auditSummary());
+        }
+        List<Map<String, Object>> alternatives = selection.topAlternatives(4);
+        if (!alternatives.isEmpty()) {
+            details.put("alternatives", alternatives);
+        }
+        AiDecisionLog.record(
+                "matchmaking_followup",
+                "question_budget",
+                picked == null ? "no_question_selected" : "question_selected",
+                Long.valueOf(accountId),
+                picked == null ? null : Long.valueOf(picked.viewerId),
+                details);
+        return picked;
     }
 
     private static boolean betterFollowupChoice(MatchmakingFollowupChoice candidate, MatchmakingFollowupChoice current) {
@@ -3454,6 +3587,60 @@ public class CalypsoApiManager {
             return byUncertainty > 0;
         }
         return candidate.missingSignal.rank < current.missingSignal.rank;
+    }
+
+    private boolean recentlyAskedMatchmakingFollowupToken(long accountId, String token, double valence) {
+        String key = matchmakingFollowupTokenDedupeKey(token, valence);
+        if (key.isBlank()) {
+            return false;
+        }
+        ConcurrentHashMap<String, Long> recent = recentMatchmakingFollowupTokensByAccount.get(accountId);
+        if (recent == null || recent.isEmpty()) {
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        pruneRecentMatchmakingFollowupTokens(recent, now);
+        Long askedAt = recent.get(key);
+        return askedAt != null && now - askedAt.longValue() < MATCHMAKING_FOLLOWUP_TOKEN_DEDUPE_MS;
+    }
+
+    private void rememberMatchmakingFollowupToken(long accountId, String token, double valence, long now) {
+        String key = matchmakingFollowupTokenDedupeKey(token, valence);
+        if (accountId < 0L || key.isBlank()) {
+            return;
+        }
+        ConcurrentHashMap<String, Long> recent = recentMatchmakingFollowupTokensByAccount.computeIfAbsent(
+                accountId,
+                ignored -> new ConcurrentHashMap<>());
+        pruneRecentMatchmakingFollowupTokens(recent, now);
+        recent.put(key, now > 0L ? now : System.currentTimeMillis());
+    }
+
+    private static void pruneRecentMatchmakingFollowupTokens(ConcurrentHashMap<String, Long> recent, long now) {
+        if (recent == null || recent.isEmpty()) {
+            return;
+        }
+        long effectiveNow = now > 0L ? now : System.currentTimeMillis();
+        recent.entrySet().removeIf(entry -> entry == null
+                || entry.getValue() == null
+                || effectiveNow - entry.getValue().longValue() >= MATCHMAKING_FOLLOWUP_TOKEN_DEDUPE_MS);
+    }
+
+    private static String matchmakingFollowupTokenDedupeKey(String token, double valence) {
+        String normalized = SignalNormalizer.normalizeOne(token);
+        if (normalized == null || normalized.isBlank()) {
+            return "";
+        }
+        String sign = valence < -0.05 ? "negative" : "positive";
+        return normalized + "|" + sign;
+    }
+
+    private static void incrementCount(Map<String, Integer> counts, String key) {
+        if (counts == null) {
+            return;
+        }
+        String normalized = key == null || key.isBlank() ? "unknown" : key.trim();
+        counts.put(normalized, counts.getOrDefault(normalized, 0) + 1);
     }
 
     private static List<MatchmakingFollowupPlanner.MissingSignal> missingSignalsFromFollowupCandidate(
@@ -3553,7 +3740,10 @@ public class CalypsoApiManager {
                     assignment.setStatus(PrivatePromptStatus.ACTIVE);
 
                     return matchmakingFollowupAssignmentDepot.appendAsync(assignment)
-                            .thenCompose(v -> hydrateMatchmakingFollowup(assignment));
+                            .thenCompose(v -> {
+                                rememberMatchmakingFollowupToken(accountId, picked.plan.token, picked.plan.missingValence, now);
+                                return hydrateMatchmakingFollowup(assignment);
+                            });
                 });
     }
 
@@ -3620,6 +3810,8 @@ public class CalypsoApiManager {
                             effectivePart,
                             normalizedConversation,
                             normalizedUserMessage);
+                    PrivatePromptSufficiencyPlanner.SufficiencyPlan sufficiencyPlan =
+                            PrivatePromptSufficiencyPlanner.plan(input);
                     return CompletableFuture.supplyAsync(() -> LlmTelemetry.withContext(
                             LlmTelemetry.context(
                                     Long.valueOf(accountId),
@@ -3628,9 +3820,18 @@ public class CalypsoApiManager {
                                     instanceId,
                                     null),
                             () -> PrivatePromptTurnResponder.generate(openAI, input)))
-                            .thenApply(result -> new GetPrivatePromptChatTurn(
-                                    result == null ? null : result.agentMessage,
-                                    result != null && result.needsMoreDetail));
+                            .thenApply(result -> {
+                                recordPrivatePromptTurnDecision(
+                                        accountId,
+                                        viewerId < 0L ? null : Long.valueOf(viewerId),
+                                        "matchmaking_followup_chat",
+                                        instanceId,
+                                        sufficiencyPlan,
+                                        result);
+                                return new GetPrivatePromptChatTurn(
+                                        result == null ? null : result.agentMessage,
+                                        result != null && result.needsMoreDetail);
+                            });
                 }));
     }
 
@@ -3795,6 +3996,42 @@ public class CalypsoApiManager {
     public CompletableFuture<ActivePrivatePrompt> postMatchmakingFollowupAnswer(long accountId, String instanceId,
             String body) {
         return postMatchmakingFollowupAnswer(accountId, instanceId, body, List.of());
+    }
+
+    private void recordPrivatePromptTurnDecision(
+            long accountId,
+            Long targetAccountId,
+            String surface,
+            String sourceId,
+            PrivatePromptSufficiencyPlanner.SufficiencyPlan plan,
+            PrivatePromptTurnResponder.TurnResult result) {
+        LinkedHashMap<String, Object> details = new LinkedHashMap<>();
+        if (sourceId != null && !sourceId.isBlank()) {
+            details.put("sourceId", sourceId.trim());
+        }
+        if (plan != null) {
+            details.put("promptType", plan.promptType);
+            details.put("plannedComplete", plan.complete);
+            details.put("plannedNeedsMoreDetail", plan.needsMoreDetail);
+            if (plan.strategy != null && !plan.strategy.isBlank()) {
+                details.put("strategy", plan.strategy);
+            }
+            if (plan.missing != null && !plan.missing.isEmpty()) {
+                details.put("missing", plan.missing);
+            }
+            if (plan.dimensions != null && !plan.dimensions.isEmpty()) {
+                details.put("dimensions", plan.dimensions);
+            }
+        }
+        details.put("resultNeedsMoreDetail", result != null && result.needsMoreDetail);
+        details.put("agentMessageChars", result == null || result.agentMessage == null ? 0 : result.agentMessage.length());
+        AiDecisionLog.record(
+                surface == null || surface.isBlank() ? "private_prompt_chat" : surface,
+                "sufficiency",
+                result != null && result.needsMoreDetail ? "needs_more_detail" : "complete",
+                accountId < 0L ? null : Long.valueOf(accountId),
+                targetAccountId,
+                details);
     }
 
     public CompletableFuture<Boolean> postMatchmakingFollowupSkip(long accountId, String instanceId) {
@@ -5334,7 +5571,11 @@ public class CalypsoApiManager {
                         operation,
                         sourceId,
                         null),
-                () -> SignalExtractor.extractFreeform(openAI, text)));
+                () -> SignalExtractor.extractFreeform(openAI, text)))
+                .thenApply(signals -> {
+                    SignalExtractionAudit.record(accountId, null, operation, sourceId, null, text, List.of(), signals);
+                    return signals;
+                });
     }
 
     public CompletableFuture<List<ExtractedSignal>> extractSignalsFromAgentConversation(List<String> conversation) {
@@ -5354,7 +5595,11 @@ public class CalypsoApiManager {
                         operation,
                         sourceId,
                         null),
-                () -> SignalExtractor.extractFromAgentConversation(openAI, conversation, Set.of())));
+                () -> SignalExtractor.extractFromAgentConversation(openAI, conversation, Set.of())))
+                .thenApply(signals -> {
+                    SignalExtractionAudit.record(accountId, null, operation, sourceId, null, null, conversation, signals);
+                    return signals;
+                });
     }
 
     public CompletableFuture<List<ExtractedSignal>> extractSignalsFromPrompt(String question, String answer) {
@@ -5399,7 +5644,19 @@ public class CalypsoApiManager {
                         question,
                         answer,
                         conversationLines,
-                        Set.of())));
+                        Set.of())))
+                .thenApply(signals -> {
+                    SignalExtractionAudit.record(
+                            accountId,
+                            promptId,
+                            operation,
+                            sourceId,
+                            question,
+                            answer,
+                            conversationLines,
+                            signals);
+                    return signals;
+                });
     }
 
     private void observePromptDisambiguationCandidates(
@@ -5591,6 +5848,15 @@ public class CalypsoApiManager {
                                     .thenApply(backstop -> mergeExtractedSignals(signals, backstop))
                             : CompletableFuture.completedFuture(signals);
                     return finalSignalsFuture.thenCompose(finalSignals -> {
+                        SignalExtractionAudit.record(
+                                accountId,
+                                promptId,
+                                source == null || source.isBlank() ? "private_understanding_unified" : source + "_unified",
+                                sourceId,
+                                question,
+                                answer,
+                                normalizedConversation,
+                                finalSignals);
                         observePromptDisambiguationCandidates(
                                 accountId,
                                 promptId,
@@ -7987,6 +8253,14 @@ public class CalypsoApiManager {
         putExtraAdminDetails(event, extraDetails);
 
         addAdminRerankEvent(viewerId, event);
+        long targetAccountId = parseTargetAccountId(after);
+        AiDecisionLog.record(
+                "rerank",
+                surface == null || surface.isBlank() ? "unknown" : surface,
+                "matches_blocked".equals(surface) ? "blocked" : "applied",
+                Long.valueOf(viewerId),
+                targetAccountId < 0L ? null : Long.valueOf(targetAccountId),
+                event);
     }
 
     private void recordAdminRerankSkipEvent(
@@ -8040,6 +8314,14 @@ public class CalypsoApiManager {
         }
         putExtraAdminDetails(event, extraDetails);
         addAdminRerankEvent(viewerId, event);
+        long targetAccountId = parseTargetAccountId(candidate);
+        AiDecisionLog.record(
+                "rerank",
+                surface == null || surface.isBlank() ? "unknown" : surface,
+                "skipped",
+                Long.valueOf(viewerId),
+                targetAccountId < 0L ? null : Long.valueOf(targetAccountId),
+                event);
     }
 
     private static void putExtraAdminDetails(Map<String, Object> event, Map<String, Object> extraDetails) {

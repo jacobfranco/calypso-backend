@@ -606,6 +606,19 @@ public class CalypsoApiController {
         return Mono.fromFuture(manager.getLlmTelemetry(accountId, limit));
     }
 
+    @GetMapping("/api/accounts/{id}/admin/ai-decisions")
+    public Mono<Map<String, Object>> getAdminAiDecisions(
+            @PathVariable("id") String idStr,
+            @RequestParam(value = "limit", required = false, defaultValue = "120") int limit,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getAiDecisions(accountId, limit));
+    }
+
     @GetMapping("/api/accounts/{id}/admin/pair-score")
     public Mono<Map<String, Object>> getAdminPairScore(
             @PathVariable("id") String idStr,

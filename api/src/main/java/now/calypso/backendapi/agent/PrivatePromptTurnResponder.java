@@ -188,22 +188,30 @@ public final class PrivatePromptTurnResponder {
     }
 
     private static void appendSufficiencyGuidance(StringBuilder buf, TurnInput input) {
-        FormativeSufficiency formative = formativeSufficiency(input);
-        if (formative == null) {
+        PrivatePromptSufficiencyPlanner.SufficiencyPlan plan = PrivatePromptSufficiencyPlanner.plan(input);
+        if (plan == null || (plan.complete && plan.guidance.isBlank() && plan.missing.isEmpty())) {
             return;
         }
         buf.append("answer_sufficiency:\n");
-        buf.append("- prompt_type: formative_imprints\n");
-        buf.append("- references_present: ").append(formative.hasReference).append("\n");
-        buf.append("- imprint_present: ").append(formative.hasImprint).append("\n");
-        buf.append("- followup_already_asked: ").append(formative.followupAlreadyAsked).append("\n");
-        buf.append("- latest_message_needs_reframe: ").append(formative.latestNeedsReframe).append("\n");
-        if (!formative.complete && formative.hasReference) {
-            buf.append("- missing: lasting_imprint\n");
-            buf.append("- guidance: ask what part of the named references stayed with the user, or what they left the user drawn toward later. Do not say what information is missing. Do not ask for the first thing that comes to mind.\n");
-        } else if (!formative.complete) {
-            buf.append("- missing: concrete_reference_or_memory\n");
-            buf.append("- guidance: ask one concrete question without repeating prior wording.\n");
+        buf.append("- prompt_type: ").append(plan.promptType).append("\n");
+        buf.append("- complete: ").append(plan.complete).append("\n");
+        buf.append("- needs_more_detail: ").append(plan.needsMoreDetail).append("\n");
+        if (plan.strategy != null && !plan.strategy.isBlank()) {
+            buf.append("- strategy: ").append(plan.strategy).append("\n");
+        }
+        if (!plan.missing.isEmpty()) {
+            buf.append("- missing: ").append(String.join(", ", plan.missing)).append("\n");
+        }
+        if (plan.dimensions != null && !plan.dimensions.isEmpty()) {
+            for (Map.Entry<String, Object> entry : plan.dimensions.entrySet()) {
+                if (entry == null || entry.getKey() == null || entry.getValue() == null) {
+                    continue;
+                }
+                buf.append("- ").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
+            }
+        }
+        if (plan.guidance != null && !plan.guidance.isBlank()) {
+            buf.append("- guidance: ").append(plan.guidance).append("\n");
         }
     }
 
