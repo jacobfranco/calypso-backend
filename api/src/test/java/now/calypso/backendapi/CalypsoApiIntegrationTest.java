@@ -22,6 +22,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -3090,12 +3091,47 @@ class CalypsoApiIntegrationTest {
             String targetSerialized = now.calypso.backend.CalypsoHelpers.serializeAccountId(targetId);
             String viewerSerialized = now.calypso.backend.CalypsoHelpers.serializeAccountId(viewerId);
 
-            waitFor(() -> findMatch(mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS),
-                    targetSerialized) != null, 35000,
-                    "Reciprocal prompt + facecard likes should produce a mutual match.");
-            waitFor(() -> findMatch(mgr.getMatches(targetId, targetId, 20).get(8, TimeUnit.SECONDS),
-                    viewerSerialized) != null, 35000,
-                    "Reciprocal prompt + facecard likes should produce the reverse mutual match.");
+            Double viewerHeapScore = candidateScoreFromHeap(heapP, viewerId, targetId);
+            Double targetHeapScore = candidateScoreFromHeap(heapP, targetId, viewerId);
+            assertNotNull(viewerHeapScore);
+            assertNotNull(targetHeapScore);
+            double expectedMutualScore = Math.min(viewerHeapScore.doubleValue(), targetHeapScore.doubleValue());
+
+            List<GetMatch> noRerankMatches = mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
+            assertNull(findMatch(noRerankMatches, targetSerialized),
+                    "Reciprocal prompt + facecard likes should still wait for a pair rerank.");
+
+            AtomicInteger positiveRerankCalls = new AtomicInteger();
+            MatchReranker.setTestOverride(request -> {
+                positiveRerankCalls.incrementAndGet();
+                MatchReranker.RerankResult result = new MatchReranker.RerankResult();
+                if (request == null || request.candidates == null) {
+                    return result;
+                }
+                for (MatchReranker.Candidate candidate : request.candidates) {
+                    if (candidate == null || candidate.candidateId == null) {
+                        continue;
+                    }
+                    MatchReranker.Decision decision = new MatchReranker.Decision();
+                    decision.candidateId = candidate.candidateId;
+                    decision.finalScore = 1.0;
+                    decision.confidence = 1.0;
+                    decision.recommendedUse = "rank_high";
+                    decision.fitSummaryInternal = "Strong pair fit";
+                    result.rankedCandidates.add(decision);
+                }
+                return result;
+            });
+            try {
+                waitFor(() -> findMatch(mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS),
+                        targetSerialized) != null, 35000,
+                        "Reciprocal prompt + facecard likes plus a pair rerank should produce a mutual match.");
+                waitFor(() -> findMatch(mgr.getMatches(targetId, targetId, 20).get(8, TimeUnit.SECONDS),
+                        viewerSerialized) != null, 35000,
+                        "Reciprocal prompt + facecard likes plus a pair rerank should produce the reverse mutual match.");
+            } finally {
+                MatchReranker.clearTestOverride();
+            }
 
             List<GetMatch> viewerMatches = mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
             List<GetMatch> targetMatches = mgr.getMatches(targetId, targetId, 20).get(8, TimeUnit.SECONDS);
@@ -3105,17 +3141,82 @@ class CalypsoApiIntegrationTest {
             assertNotNull(targetMatch);
             assertNotNull(viewerMatch.scorerDebug);
             assertNotNull(targetMatch.scorerDebug);
-            assertEquals("deterministicMutualMin", viewerMatch.scorerDebug.get("matchScoreSource"));
-            assertEquals("deterministicMutualMin", targetMatch.scorerDebug.get("matchScoreSource"));
+            assertTrue(Boolean.TRUE.equals(viewerMatch.scorerDebug.get("tier3Applied"))
+                    || "stagingEligible".equals(viewerMatch.scorerDebug.get("matchScoreSource")));
+            assertTrue(Boolean.TRUE.equals(targetMatch.scorerDebug.get("tier3Applied"))
+                    || "stagingEligible".equals(targetMatch.scorerDebug.get("matchScoreSource")));
+            assertTrue(viewerMatch.score >= expectedMutualScore);
+            assertTrue(targetMatch.score >= expectedMutualScore);
+            assertTrue(positiveRerankCalls.get() >= 1, "Match-plausible pairs should invoke the pair reranker.");
 
-            Double viewerHeapScore = candidateScoreFromHeap(heapP, viewerId, targetId);
-            Double targetHeapScore = candidateScoreFromHeap(heapP, targetId, viewerId);
-            assertNotNull(viewerHeapScore);
-            assertNotNull(targetHeapScore);
-            double expectedMutualScore = Math.min(viewerHeapScore.doubleValue(), targetHeapScore.doubleValue());
-            assertEquals(expectedMutualScore, viewerMatch.score, 0.0001);
-            assertEquals(expectedMutualScore, targetMatch.score, 0.0001);
+            AtomicReference<Map<String, Object>> lastAdminStaging = new AtomicReference<>();
+            boolean adminStagingVisible = false;
+            long adminStagingDeadline = System.currentTimeMillis() + 12000L;
+            while (System.currentTimeMillis() < adminStagingDeadline) {
+                Map<String, Object> staging = adminPairStaging(mgr, viewerId, targetId);
+                lastAdminStaging.set(staging);
+                if (staging != null
+                        && "eligible".equals(staging.get("status"))
+                        && Boolean.TRUE.equals(staging.get("visibleMatch"))
+                        && Boolean.TRUE.equals(staging.get("rerankEvidence"))) {
+                    adminStagingVisible = true;
+                    break;
+                }
+                Thread.sleep(75L);
+            }
+            assertTrue(adminStagingVisible,
+                    "Admin pair-score staging snapshot should reflect the visible eligible match. last="
+                            + lastAdminStaging.get());
+            Map<String, Object> adminStaging = adminPairStaging(mgr, viewerId, targetId);
+            assertNotNull(adminStaging);
+            assertEquals("eligible", adminStaging.get("status"));
+            assertEquals(Boolean.TRUE, adminStaging.get("visibleMatch"));
+            assertEquals(Boolean.TRUE, adminStaging.get("rerankEvidence"));
+        }
+    }
 
+    @Test
+    void matchPairRerankDeprioritizeBlocksFreshPair() throws Exception {
+        try (InProcessCluster ipc = newCluster()) {
+            CalypsoApiManager mgr = newManager(ipc);
+            long viewerId = createAccount(mgr, "Blocked Viewer", "+1555000980");
+            long targetId = createAccount(mgr, "Blocked Target", "+1555000981");
+
+            mgr.postFilters(filtersForGender("woman", List.of("man", "woman"), "exploratory"), viewerId).get(5,
+                    TimeUnit.SECONDS);
+            mgr.postFilters(filtersForGender("man", List.of("woman", "man"), "exploratory"), targetId).get(5,
+                    TimeUnit.SECONDS);
+
+            PublicPromptAnswer viewerAnswer;
+            PublicPromptAnswer targetAnswer;
+            OpenAIJson.setTestOverride((system, user) -> "{\"signals\":[]}");
+            try {
+                viewerAnswer = mgr.postPublicPromptAnswer(
+                        viewerId,
+                        "prompt.talk.hours",
+                        "I can talk for hours about cities.").get(5, TimeUnit.SECONDS);
+                targetAnswer = mgr.postPublicPromptAnswer(
+                        targetId,
+                        "prompt.ideal.sunday",
+                        "A calm walk and coffee.").get(5, TimeUnit.SECONDS);
+                mgr.postPublicPromptReaction(viewerId, targetAnswer.getAnswerId(), PromptReaction.LIKE).get(5,
+                        TimeUnit.SECONDS);
+                mgr.postPublicPromptReaction(targetId, viewerAnswer.getAnswerId(), PromptReaction.LIKE).get(5,
+                        TimeUnit.SECONDS);
+            } finally {
+                OpenAIJson.clearTestOverride();
+            }
+            mgr.postFacecardReaction(viewerId, targetId, PromptReaction.LIKE).get(5, TimeUnit.SECONDS);
+            mgr.postFacecardReaction(targetId, viewerId, PromptReaction.LIKE).get(5, TimeUnit.SECONDS);
+
+            PState heapP = ipc.clusterPState(Core.class.getName(), "$$accountIdToCandidateHeap");
+            waitFor(() -> {
+                mgr.getMatches(viewerId, viewerId, 20).get(8, TimeUnit.SECONDS);
+                return candidateScoreFromHeap(heapP, viewerId, targetId) != null
+                        && candidateScoreFromHeap(heapP, targetId, viewerId) != null;
+            }, 20000, "Both directions should be plausible enough to attempt pair rerank.");
+
+            String targetSerialized = now.calypso.backend.CalypsoHelpers.serializeAccountId(targetId);
             AtomicInteger matchRerankCalls = new AtomicInteger();
             MatchReranker.setTestOverride(request -> {
                 matchRerankCalls.incrementAndGet();
@@ -3132,6 +3233,7 @@ class CalypsoApiIntegrationTest {
                     decision.finalScore = 0.0;
                     decision.confidence = 1.0;
                     decision.recommendedUse = "deprioritize";
+                    decision.fitSummaryInternal = "High confidence mismatch";
                     result.rankedCandidates.add(decision);
                 }
                 return result;
@@ -3497,6 +3599,20 @@ class CalypsoApiIntegrationTest {
             }
         }
         return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> adminPairStaging(CalypsoApiManager mgr, long viewerId, long targetId) throws Exception {
+        Map<String, Object> adminPairDebug = mgr.getAdminPairScoreDebug(viewerId, viewerId, targetId, 20)
+                .get(8, TimeUnit.SECONDS);
+        if (adminPairDebug == null || !(adminPairDebug.get("pair") instanceof Map<?, ?>)) {
+            return null;
+        }
+        Map<String, Object> adminPair = (Map<String, Object>) adminPairDebug.get("pair");
+        if (!(adminPair.get("staging") instanceof Map<?, ?>)) {
+            return null;
+        }
+        return (Map<String, Object>) adminPair.get("staging");
     }
 
     private static double scoreFromDebug(Map<String, Object> scorerDebug, String key, double fallback) {

@@ -24,11 +24,22 @@ public class Core implements RamaModule {
       private static final double MIN_SCORE_EXPLORATORY = 45.0;
       private static final double MIN_SCORE_BALANCED = 55.0;
       private static final double MIN_SCORE_FOCUSED = 65.0;
+      private static final double STAGING_ENTRANCE_EXPLORATORY = 54.0;
+      private static final double STAGING_ENTRANCE_BALANCED = 60.0;
+      private static final double STAGING_ENTRANCE_FOCUSED = 68.0;
+      private static final double STAGING_EXIT_HYSTERESIS = 5.0;
+      private static final double STAGING_RERANK_SCORE_INVALIDATION_DELTA = 8.0;
       private static final double FOLLOWUP_MIN_NORMALIZED_SCORE = 0.60;
       private static final int FOLLOWUP_MISSING_SIGNAL_LIMIT = 4;
       private static final String ALL_ACCOUNTS_KEY = "all";
       private static final String FACECARD_REACTION_ANSWER_PREFIX = "facecard_target:";
       private static final String PUBLIC_REACTION_STRENGTH_PROMPT_SUFFIX = "|reaction_strength:";
+      private static final String STAGING_STATUS_STAGED = "staged";
+      private static final String STAGING_STATUS_RERANK_PENDING = "rerank_pending";
+      private static final String STAGING_STATUS_NEEDS_EVIDENCE = "needs_evidence";
+      private static final String STAGING_STATUS_ELIGIBLE = "eligible";
+      private static final String STAGING_STATUS_DEMOTED = "demoted";
+      private static final String STAGING_STATUS_BLOCKED = "blocked";
       private static final int PUBLIC_REACTION_STRENGTH_MIN = -3;
       private static final int PUBLIC_REACTION_STRENGTH_MAX = 3;
       private static final double FACECARD_PAIR_DELTA_LIKE = 8.0;
@@ -155,6 +166,86 @@ public class Core implements RamaModule {
             if ("exploratory".equalsIgnoreCase(viewerMode))
                   return MIN_SCORE_EXPLORATORY;
             return MIN_SCORE_BALANCED;
+      }
+
+      private static double stagingEntranceThreshold(String viewerMode) {
+            if ("focused".equalsIgnoreCase(viewerMode))
+                  return STAGING_ENTRANCE_FOCUSED;
+            if ("exploratory".equalsIgnoreCase(viewerMode))
+                  return STAGING_ENTRANCE_EXPLORATORY;
+            return STAGING_ENTRANCE_BALANCED;
+      }
+
+      private static double stagingExitThreshold(String viewerMode) {
+            return Math.max(0.0, stagingEntranceThreshold(viewerMode) - STAGING_EXIT_HYSTERESIS);
+      }
+
+      private static String normalizedStagingStatus(Object raw, String fallback) {
+            String text = asStringTrimmed(raw);
+            if (text == null) {
+                  return fallback;
+            }
+            return switch (text) {
+                  case STAGING_STATUS_STAGED,
+                              STAGING_STATUS_RERANK_PENDING,
+                              STAGING_STATUS_NEEDS_EVIDENCE,
+                              STAGING_STATUS_ELIGIBLE,
+                              STAGING_STATUS_DEMOTED,
+                              STAGING_STATUS_BLOCKED -> text;
+                  default -> fallback;
+            };
+      }
+
+      private static boolean stagedStatusTerminal(String status) {
+            return STAGING_STATUS_DEMOTED.equals(status) || STAGING_STATUS_BLOCKED.equals(status);
+      }
+
+      private static boolean stagedStatusReranked(String status) {
+            return STAGING_STATUS_ELIGIBLE.equals(status) || STAGING_STATUS_BLOCKED.equals(status);
+      }
+
+      private static double explicitStagingUpdateScore(Map<String, Object> update) {
+            double score = asDouble(update.get("scoreAtRerank"), Double.NaN);
+            if (Double.isFinite(score)) {
+                  return score;
+            }
+            score = asDouble(update.get("mutualScore"), Double.NaN);
+            if (Double.isFinite(score)) {
+                  return score;
+            }
+            score = asDouble(update.get("deterministicScore"), Double.NaN);
+            if (Double.isFinite(score)) {
+                  return score;
+            }
+            return asDouble(update.get("effectiveScore"), Double.NaN);
+      }
+
+      private static boolean shouldPreserveRerankedStagingStatusForHold(
+                  Map<String, Object> current,
+                  Map<String, Object> update,
+                  String previousStatus,
+                  String incomingStatus) {
+            if (current == null || current.isEmpty() || update == null || update.isEmpty()) {
+                  return false;
+            }
+            if (!stagedStatusReranked(previousStatus)
+                        || Boolean.TRUE.equals(update.get("incrementRerankCount"))) {
+                  return false;
+            }
+            if (!STAGING_STATUS_RERANK_PENDING.equals(incomingStatus)
+                        && !STAGING_STATUS_NEEDS_EVIDENCE.equals(incomingStatus)) {
+                  return false;
+            }
+            long rerankCount = asLong(current.get("rerankCount"), 0L);
+            long lastRerankedAt = asLong(current.get("lastRerankedAt"), 0L);
+            if (rerankCount <= 0L && lastRerankedAt <= 0L) {
+                  return false;
+            }
+            double scoreAtRerank = asDouble(current.get("scoreAtRerank"), Double.NaN);
+            double incomingScore = explicitStagingUpdateScore(update);
+            return !Double.isFinite(scoreAtRerank)
+                        || !Double.isFinite(incomingScore)
+                        || Math.abs(incomingScore - scoreAtRerank) <= STAGING_RERANK_SCORE_INVALIDATION_DELTA;
       }
 
       private static double clampSigned(double value) {
@@ -791,6 +882,148 @@ public class Core implements RamaModule {
             return asDouble(payload.get("uncertainty"), 1.0);
       }
 
+      private static Map<String, Object> mergeStagingFromScore(
+                  Object rawCurrent,
+                  Long viewerId,
+                  Long targetId,
+                  MatchCandidate candidate,
+                  Double uncertainty,
+                  Filters viewerFilters,
+                  long now) {
+            long viewer = viewerId == null ? -1L : viewerId.longValue();
+            long target = targetId == null ? -1L : targetId.longValue();
+            if (viewer < 0L || target < 0L || viewer == target) {
+                  return null;
+            }
+
+            Map<String, Object> current = toStringObjectMap(rawCurrent);
+            String viewerMode = CalypsoHelpers.getModeSelfOrNull(viewerFilters);
+            double entrance = stagingEntranceThreshold(viewerMode);
+            double exit = stagingExitThreshold(viewerMode);
+            double score = candidate == null ? Double.NaN : candidate.getStage0Score();
+            boolean hasScore = Double.isFinite(score);
+            if (!hasScore || score < exit) {
+                  if (current.isEmpty()) {
+                        return null;
+                  }
+                  HashMap<String, Object> demoted = new HashMap<>(current);
+                  demoted.put("accountId", viewer);
+                  demoted.put("viewerAccountId", viewer);
+                  demoted.put("targetAccountId", target);
+                  if (hasScore) {
+                        demoted.put("deterministicScore", score);
+                        demoted.put("effectiveScore", score);
+                  }
+                  demoted.put("status", STAGING_STATUS_DEMOTED);
+                  demoted.put("holdReason", hasScore ? "score_below_staging_exit" : "not_in_explore_pool");
+                  demoted.put("stagingEntranceThreshold", entrance);
+                  demoted.put("stagingExitThreshold", exit);
+                  demoted.put("updatedAt", now);
+                  demoted.put("demotedAt", now);
+                  return demoted;
+            }
+
+            if (score < entrance && current.isEmpty()) {
+                  return null;
+            }
+
+            HashMap<String, Object> out = new HashMap<>(current);
+            out.put("accountId", viewer);
+            out.put("viewerAccountId", viewer);
+            out.put("targetAccountId", target);
+            out.put("deterministicScore", score);
+            out.put("effectiveScore", score);
+            out.put("computedAt", candidate == null ? now : candidate.getComputedAt());
+            out.put("updatedAt", now);
+            out.put("stagingEntranceThreshold", entrance);
+            out.put("stagingExitThreshold", exit);
+            if (uncertainty != null && Double.isFinite(uncertainty.doubleValue())) {
+                  out.put("uncertainty", clamp01(uncertainty.doubleValue()));
+            }
+            if (candidate != null && candidate.isSetReasons() && candidate.getReasons() != null) {
+                  out.put("reasons", new ArrayList<>(candidate.getReasons()));
+            }
+            if (!out.containsKey("enteredAt")) {
+                  out.put("enteredAt", now);
+            }
+
+            String previousStatus = normalizedStagingStatus(current.get("status"), STAGING_STATUS_STAGED);
+            String nextStatus = previousStatus;
+            double scoreAtRerank = asDouble(current.get("scoreAtRerank"), Double.NaN);
+            if (stagedStatusReranked(previousStatus)
+                        && Double.isFinite(scoreAtRerank)
+                        && Math.abs(score - scoreAtRerank) > STAGING_RERANK_SCORE_INVALIDATION_DELTA) {
+                  nextStatus = STAGING_STATUS_RERANK_PENDING;
+                  out.put("holdReason", "score_changed_since_rerank");
+                  out.put("rerankInvalidatedAt", now);
+            } else if (current.isEmpty() || STAGING_STATUS_DEMOTED.equals(previousStatus)) {
+                  nextStatus = STAGING_STATUS_STAGED;
+                  out.put("holdReason", "awaiting_mutual_gate");
+            } else if (!stagedStatusTerminal(previousStatus) && !out.containsKey("holdReason")) {
+                  out.put("holdReason", score >= entrance ? "awaiting_rerank" : "within_staging_hysteresis");
+            }
+            out.put("status", nextStatus);
+            return out;
+      }
+
+      private static Map<String, Object> mergeExplicitStagingUpdate(
+                  Object rawCurrent,
+                  Map<String, Object> update,
+                  long now) {
+            if (update == null || update.isEmpty()) {
+                  return null;
+            }
+            long viewer = normalizeMapAccountId(update.get("accountId"));
+            long target = asLong(update.get("targetAccountId"), -1L);
+            if (viewer < 0L || target < 0L || viewer == target) {
+                  return null;
+            }
+            Map<String, Object> current = toStringObjectMap(rawCurrent);
+            String previousStatus = normalizedStagingStatus(current.get("status"), STAGING_STATUS_STAGED);
+            String incomingStatus = normalizedStagingStatus(update.get("status"), STAGING_STATUS_STAGED);
+            boolean preserveRerankedStatus = shouldPreserveRerankedStagingStatusForHold(
+                        current,
+                        update,
+                        previousStatus,
+                        incomingStatus);
+            HashMap<String, Object> out = new HashMap<>(current);
+            for (Map.Entry<String, Object> entry : update.entrySet()) {
+                  if (entry == null || entry.getKey() == null || entry.getValue() == null) {
+                        continue;
+                  }
+                  out.put(entry.getKey(), entry.getValue());
+            }
+            out.put("accountId", viewer);
+            out.put("viewerAccountId", viewer);
+            out.put("targetAccountId", target);
+            out.put("status", preserveRerankedStatus
+                        ? previousStatus
+                        : normalizedStagingStatus(out.get("status"), incomingStatus));
+            if (preserveRerankedStatus && current.get("holdReason") != null) {
+                  out.put("holdReason", current.get("holdReason"));
+            }
+            if (Boolean.TRUE.equals(update.get("incrementRerankCount"))) {
+                  int currentCount = (int) asLong(current.get("rerankCount"), 0L);
+                  out.put("rerankCount", currentCount + 1);
+                  out.remove("incrementRerankCount");
+            }
+            if (!out.containsKey("enteredAt")) {
+                  out.put("enteredAt", now);
+            }
+            out.put("updatedAt", asLong(update.get("updatedAt"), now));
+            if (STAGING_STATUS_DEMOTED.equals(out.get("status")) && !out.containsKey("demotedAt")) {
+                  out.put("demotedAt", now);
+            }
+            return out;
+      }
+
+      private static long stagingTargetIdFromUpdate(Map<String, Object> update) {
+            if (update == null) {
+                  return -1L;
+            }
+            return asLong(update.get("targetAccountId"), -1L);
+      }
+
       private static long normalizeAccountId(Number n) {
             return n == null ? 0L : n.longValue();
       }
@@ -910,6 +1143,71 @@ public class Core implements RamaModule {
                   return out;
             }
             return new ArrayList<>(out.subList(0, limit));
+      }
+
+      private static List<Map<String, Object>> toSortedStagedMatches(Map<?, ?> byTarget, Object limitObj) {
+            int limit = normalizeInt(limitObj, 20, 1, 100);
+            ArrayList<Map<String, Object>> out = new ArrayList<>();
+            if (byTarget == null || byTarget.isEmpty()) {
+                  return out;
+            }
+            for (Object rawValue : byTarget.values()) {
+                  Map<String, Object> row = toStringObjectMap(rawValue);
+                  if (row.isEmpty()) {
+                        continue;
+                  }
+                  long targetId = asLong(row.get("targetAccountId"), -1L);
+                  if (targetId < 0L) {
+                        continue;
+                  }
+                  row.put("targetAccountId", targetId);
+                  row.put("status", normalizedStagingStatus(row.get("status"), STAGING_STATUS_STAGED));
+                  row.put("effectiveScore", asDouble(
+                              row.get("effectiveScore"),
+                              asDouble(row.get("mutualScore"), asDouble(row.get("deterministicScore"), 0.0))));
+                  row.put("updatedAt", asLong(row.get("updatedAt"), 0L));
+                  out.add(row);
+            }
+            out.sort((a, b) -> {
+                  int byStatus = Integer.compare(stagingStatusSortRank(a.get("status")),
+                              stagingStatusSortRank(b.get("status")));
+                  if (byStatus != 0) {
+                        return byStatus;
+                  }
+                  double as = asDouble(a.get("effectiveScore"), 0.0);
+                  double bs = asDouble(b.get("effectiveScore"), 0.0);
+                  int byScore = Double.compare(bs, as);
+                  if (byScore != 0) {
+                        return byScore;
+                  }
+                  long au = asLong(a.get("updatedAt"), 0L);
+                  long bu = asLong(b.get("updatedAt"), 0L);
+                  return Long.compare(bu, au);
+            });
+            if (out.size() <= limit) {
+                  return out;
+            }
+            return new ArrayList<>(out.subList(0, limit));
+      }
+
+      private static int stagingStatusSortRank(Object rawStatus) {
+            String status = normalizedStagingStatus(rawStatus, STAGING_STATUS_STAGED);
+            if (STAGING_STATUS_ELIGIBLE.equals(status)) {
+                  return 0;
+            }
+            if (STAGING_STATUS_RERANK_PENDING.equals(status)) {
+                  return 1;
+            }
+            if (STAGING_STATUS_STAGED.equals(status)) {
+                  return 2;
+            }
+            if (STAGING_STATUS_NEEDS_EVIDENCE.equals(status)) {
+                  return 3;
+            }
+            if (STAGING_STATUS_BLOCKED.equals(status)) {
+                  return 4;
+            }
+            return 5;
       }
 
       private static Map<String, Object> buildMatchmakingFollowupSchedulerState(String activeInstanceId,
@@ -1482,6 +1780,8 @@ public class Core implements RamaModule {
             // viewer -> sorted heap (List<MatchCandidate>)
             stream.pstate("$$accountIdToCandidateHeap",
                         PState.mapSchema(Long.class, List.class));
+            stream.pstate("$$accountIdToStagedMatchesByTarget",
+                        PState.mapSchema(Long.class, Map.class));
             stream.pstate("$$accountIdToRefillPending",
                         PState.mapSchema(Long.class, Boolean.class));
             stream.pstate("$$accountIdToLastRefillAt",
@@ -1490,6 +1790,39 @@ public class Core implements RamaModule {
                         PState.mapSchema(Long.class, Map.class));
             stream.pstate("$$targetIdToFollowupByViewer",
                         PState.mapSchema(Long.class, Map.class));
+
+            stream.source("*matchStagingDepot").out("*data")
+                        .each((Object data) -> toStringObjectMap(data), "*data").out("*update")
+                        .each((Map<String, Object> update) -> normalizeMapAccountId(update.get("accountId")), "*update")
+                        .out("*aidL")
+                        .each((Map<String, Object> update) -> stagingTargetIdFromUpdate(update), "*update")
+                        .out("*tidL")
+                        .each((Long aid, Long tid) -> aid != null
+                                    && tid != null
+                                    && aid.longValue() >= 0L
+                                    && tid.longValue() >= 0L
+                                    && !Objects.equals(aid, tid),
+                                    "*aidL", "*tidL")
+                        .out("*validStagingUpdate")
+                        .ifTrue("*validStagingUpdate",
+                                    Block.create()
+                                                .hashPartition("*aidL")
+                                                .localSelect("$$accountIdToStagedMatchesByTarget",
+                                                            Path.key("*aidL", "*tidL"))
+                                                .out("*currentStage")
+                                                .each((Object current, Map<String, Object> update) -> mergeExplicitStagingUpdate(
+                                                            current,
+                                                            update,
+                                                            System.currentTimeMillis()),
+                                                            "*currentStage",
+                                                            "*update")
+                                                .out("*mergedStage")
+                                                .each((Map<String, Object> stage) -> stage != null, "*mergedStage")
+                                                .out("*hasMergedStage")
+                                                .ifTrue("*hasMergedStage",
+                                                            Block.localTransform("$$accountIdToStagedMatchesByTarget",
+                                                                        Path.key("*aidL", "*tidL")
+                                                                                    .termVal("*mergedStage"))));
 
             stream.source("*matchRefillDepot").out("*data")
                         .macro(extractFields("*data", "*accountId", "*targetSize"))
@@ -1696,7 +2029,38 @@ public class Core implements RamaModule {
                                                                                     Path.key(
                                                                                                 "*aidL")
                                                                                                 .termVal(
-                                                                                                            "*newHeap")))
+                                                                                                            "*newHeap"))
+                                                                        .localSelect("$$accountIdToStagedMatchesByTarget",
+                                                                                    Path.key("*aidL", "*tidL"))
+                                                                        .out("*stageRaw")
+                                                                        .each((Object current,
+                                                                                    Long aid,
+                                                                                    Long tid,
+                                                                                    MatchCandidate cand,
+                                                                                    Double uncertainty,
+                                                                                    Filters viewerFilters) -> mergeStagingFromScore(
+                                                                                                current,
+                                                                                                aid,
+                                                                                                tid,
+                                                                                                cand,
+                                                                                                uncertainty,
+                                                                                                viewerFilters,
+                                                                                                System.currentTimeMillis()),
+                                                                                    "*stageRaw",
+                                                                                    "*aidL",
+                                                                                    "*tidL",
+                                                                                    "*candMaybe",
+                                                                                    "*uncertainty",
+                                                                                    "*viewerFiltersC")
+                                                                        .out("*stageMaybe")
+                                                                        .each((Map<String, Object> stage) -> stage != null,
+                                                                                    "*stageMaybe")
+                                                                        .out("*hasStageMaybe")
+                                                                        .ifTrue("*hasStageMaybe",
+                                                                                    Block.localTransform(
+                                                                                                "$$accountIdToStagedMatchesByTarget",
+                                                                                                Path.key("*aidL", "*tidL")
+                                                                                                            .termVal("*stageMaybe"))))
                                                 .each(() -> System.currentTimeMillis())
                                                 .out("*refillDoneTs")
                                                 .hashPartition("*aidL")
@@ -1837,7 +2201,36 @@ public class Core implements RamaModule {
                                                             "*tidL")
                                                 .out("*newHeap")
                                                 .localTransform("$$accountIdToCandidateHeap",
-                                                            Path.key("*aidL").termVal("*newHeap")));
+                                                            Path.key("*aidL").termVal("*newHeap"))
+                                                .localSelect("$$accountIdToStagedMatchesByTarget",
+                                                            Path.key("*aidL", "*tidL"))
+                                                .out("*stageRaw")
+                                                .each((Object current,
+                                                            Long aid,
+                                                            Long tid,
+                                                            MatchCandidate cand,
+                                                            Double uncertainty,
+                                                            Filters viewerFilters) -> mergeStagingFromScore(
+                                                                        current,
+                                                                        aid,
+                                                                        tid,
+                                                                        cand,
+                                                                        uncertainty,
+                                                                        viewerFilters,
+                                                                        System.currentTimeMillis()),
+                                                            "*stageRaw",
+                                                            "*aidL",
+                                                            "*tidL",
+                                                            "*candMaybe",
+                                                            "*uncertainty",
+                                                            "*viewerFiltersC")
+                                                .out("*stageMaybe")
+                                                .each((Map<String, Object> stage) -> stage != null, "*stageMaybe")
+                                                .out("*hasStageMaybe")
+                                                .ifTrue("*hasStageMaybe",
+                                                            Block.localTransform("$$accountIdToStagedMatchesByTarget",
+                                                                        Path.key("*aidL", "*tidL")
+                                                                                    .termVal("*stageMaybe"))));
       }
 
       private static void declareMatchmakingFollowupsTopology(Topologies topologies) {
@@ -2415,6 +2808,19 @@ public class Core implements RamaModule {
                               return new ArrayList<>(heap.subList(start, end));
                         }, "*heap", "*startIdx", "*limit").out("*results");
 
+            topologies.query("getStagedMatchesFromAccountId", "*requesterId", "*viewerId", "*limit")
+                        .out("*results")
+                        .each((Number n) -> n == null ? 0L : n.longValue(), "*viewerId").out("*viewerIdL")
+                        .hashPartition("*viewerIdL")
+                        .localSelect("$$accountIdToStagedMatchesByTarget", Path.key("*viewerIdL"))
+                        .out("*stagedRaw")
+                        .each((Map<?, ?> stagedRaw, Object limitObj) -> toSortedStagedMatches(
+                                    stagedRaw == null ? new HashMap<>() : stagedRaw,
+                                    limitObj),
+                                    "*stagedRaw", "*limit")
+                        .out("*results")
+                        .originPartition();
+
             // Cursor-aware fetch:
             // - Interpret cursor.lastIndex as "page index" (0,1,2,...)
             // - Serve up to 2 pages of results; after that, return empty.
@@ -2551,6 +2957,7 @@ public class Core implements RamaModule {
             setup.declareDepot("*authCodeDepot", Depot.hashBy(ExtractCode.class));
             setup.declareDepot("*filtersDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
             setup.declareDepot("*matchRefillDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
+            setup.declareDepot("*matchStagingDepot", Depot.hashBy("now.calypso.backend.CalypsoHelpers$ExtractMapAccountId"));
             setup.declareDepot("*matchPairRescoreDepot", Depot.hashBy("now.calypso.backend.CalypsoHelpers$ExtractMapAccountId"));
             setup.declareDepot("*matchesServeDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
             setup.declareDepot("*matchesCursorAckDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));

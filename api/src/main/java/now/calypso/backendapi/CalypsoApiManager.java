@@ -106,6 +106,7 @@ public class CalypsoApiManager {
     private final PState viewerIdToReactionByAnswerId;
     private final PState answerIdToPublicPromptAnswer;
     private final PState targetIdToFollowupByViewer;
+    private final PState accountIdToStagedMatchesByTarget;
 
     // Core Queries
     private final QueryTopologyClient<List<AccountWithId>> getAccountsFromAccountIds;
@@ -135,11 +136,13 @@ public class CalypsoApiManager {
     private final Depot signalsDepot;
     private final Depot filtersDepot;
     private final Depot matchRefillDepot;
+    private final Depot matchStagingDepot;
     private final Depot matchesServeDepot;
 
     // Matches Queries
     private final QueryTopologyClient<Filters> getFiltersFromAccountId;
     private final QueryTopologyClient<List<MatchCandidate>> getMatchesFromAccountId;
+    private final QueryTopologyClient<List<Map<String, Object>>> getStagedMatchesFromAccountId;
     private final QueryTopologyClient<Signals> getSignalsFromAccountId;
     private final QueryTopologyClient<List<Long>> getSignalAccountIds;
     private final QueryTopologyClient<AgentSession> getAgentSessionFromAccountId;
@@ -160,6 +163,12 @@ public class CalypsoApiManager {
     private static final String MATCHMAKING_FOLLOWUP_PROMPT_ID = "private.matchmaking.followup";
     private static final String MATCHMAKING_FOLLOWUP_PROMPT_PREFIX = MATCHMAKING_FOLLOWUP_PROMPT_ID + "|";
     private static final String FACECARD_REACTION_ANSWER_PREFIX = "facecard_target:";
+    private static final String STAGING_STATUS_STAGED = "staged";
+    private static final String STAGING_STATUS_RERANK_PENDING = "rerank_pending";
+    private static final String STAGING_STATUS_NEEDS_EVIDENCE = "needs_evidence";
+    private static final String STAGING_STATUS_ELIGIBLE = "eligible";
+    private static final String STAGING_STATUS_DEMOTED = "demoted";
+    private static final String STAGING_STATUS_BLOCKED = "blocked";
     private static final double MATCH_MIN_EXPLORATORY = 62.0;
     private static final double MATCH_MIN_BALANCED = 68.0;
     private static final double MATCH_MIN_FOCUSED = 76.0;
@@ -371,6 +380,20 @@ public class CalypsoApiManager {
         signalsDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*signalsDepot");
         filtersDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*filtersDepot");
         matchRefillDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*matchRefillDepot");
+        Depot tmpMatchStagingDepot = null;
+        QueryTopologyClient<List<Map<String, Object>>> tmpGetStagedMatches = null;
+        PState tmpAccountIdToStagedMatchesByTarget = null;
+        try {
+            tmpMatchStagingDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*matchStagingDepot");
+            tmpGetStagedMatches = cluster.clusterQuery(CORE_MODULE_NAME, "getStagedMatchesFromAccountId");
+            tmpAccountIdToStagedMatchesByTarget = cluster.clusterPState(CORE_MODULE_NAME,
+                    "$$accountIdToStagedMatchesByTarget");
+        } catch (Exception e) {
+            LOG.warn("[matches] staging depot/query not available in running cluster — restart the server to enable staged matching", e);
+        }
+        matchStagingDepot = tmpMatchStagingDepot;
+        getStagedMatchesFromAccountId = tmpGetStagedMatches;
+        accountIdToStagedMatchesByTarget = tmpAccountIdToStagedMatchesByTarget;
         matchesServeDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*matchesServeDepot");
         agentSessionDepot = cluster.clusterDepot(AGENT_MODULE_NAME, "*agentSessionDepot");
         privatePromptAssignmentDepot = cluster.clusterDepot(AGENT_MODULE_NAME, "*privatePromptAssignmentDepot");
@@ -6617,6 +6640,169 @@ public class CalypsoApiManager {
         return MATCH_AUTOPASS_BALANCED;
     }
 
+    private static double stagingEntranceThreshold(String mode) {
+        return Math.max(0.0, modeAwareMatchThreshold(mode) - 8.0);
+    }
+
+    private static double stagingExitThreshold(String mode) {
+        return Math.max(0.0, stagingEntranceThreshold(mode) - 5.0);
+    }
+
+    private static String normalizedStagingStatus(Object raw) {
+        String status = raw == null ? "" : raw.toString().trim();
+        if (STAGING_STATUS_STAGED.equals(status)
+                || STAGING_STATUS_RERANK_PENDING.equals(status)
+                || STAGING_STATUS_NEEDS_EVIDENCE.equals(status)
+                || STAGING_STATUS_ELIGIBLE.equals(status)
+                || STAGING_STATUS_DEMOTED.equals(status)
+                || STAGING_STATUS_BLOCKED.equals(status)) {
+            return status;
+        }
+        return STAGING_STATUS_STAGED;
+    }
+
+    private boolean matchStagingAvailable() {
+        return matchStagingDepot != null && getStagedMatchesFromAccountId != null;
+    }
+
+    private void appendMatchStagingUpdate(Map<String, Object> update) {
+        if (matchStagingDepot == null || update == null || update.isEmpty()) {
+            return;
+        }
+        matchStagingDepot.appendAsync(update).exceptionally(ex -> {
+            LOG.warn("Failed to persist match staging update viewer={} target={}",
+                    update.get("accountId"), update.get("targetAccountId"), ex);
+            return null;
+        });
+    }
+
+    private Map<String, Object> baseMatchStagingUpdate(
+            long viewerId,
+            String viewerMode,
+            long targetId,
+            String status,
+            GetMatch deterministic,
+            Double targetToViewerScore,
+            String holdReason) {
+        long now = System.currentTimeMillis();
+        LinkedHashMap<String, Object> update = new LinkedHashMap<>();
+        update.put("accountId", viewerId);
+        update.put("viewerAccountId", viewerId);
+        update.put("targetAccountId", targetId);
+        update.put("status", normalizedStagingStatus(status));
+        update.put("updatedAt", now);
+        update.put("stagingEntranceThreshold", stagingEntranceThreshold(viewerMode));
+        update.put("stagingExitThreshold", stagingExitThreshold(viewerMode));
+        update.put("escapeThreshold", modeAwareMatchThreshold(viewerMode));
+        if (holdReason != null && !holdReason.isBlank()) {
+            update.put("holdReason", holdReason.trim());
+        }
+        if (deterministic != null) {
+            update.put("mutualScore", deterministic.score);
+            update.put("effectiveScore", deterministic.score);
+            update.put("computedAt", deterministic.computedAt);
+            Map<String, Object> debug = copyScorerDebug(deterministic);
+            double viewerToTargetScore = mapDouble(debug, "viewerToTargetScore", deterministic.score);
+            update.put("deterministicScore", viewerToTargetScore);
+            if (targetToViewerScore != null && Double.isFinite(targetToViewerScore.doubleValue())) {
+                update.put("targetToViewerScore", targetToViewerScore.doubleValue());
+            }
+            if (debug.containsKey("followupPending")) {
+                update.put("followupPending", debug.get("followupPending"));
+            }
+            if (debug.containsKey("viewerPromptLikeSeen")) {
+                update.put("viewerPromptLikeSeen", debug.get("viewerPromptLikeSeen"));
+            }
+            if (debug.containsKey("targetPromptLikeSeen")) {
+                update.put("targetPromptLikeSeen", debug.get("targetPromptLikeSeen"));
+            }
+            if (debug.containsKey("viewerLikedTargetFacecard")) {
+                update.put("viewerLikedTargetFacecard", debug.get("viewerLikedTargetFacecard"));
+            }
+            if (debug.containsKey("targetLikedViewerFacecard")) {
+                update.put("targetLikedViewerFacecard", debug.get("targetLikedViewerFacecard"));
+            }
+            update.put("scorerDebug", debug);
+            if (deterministic.sharedSignals != null && !deterministic.sharedSignals.isEmpty()) {
+                update.put("sharedSignals", new ArrayList<>(deterministic.sharedSignals));
+            }
+        }
+        return update;
+    }
+
+    private void stagePairHold(
+            long viewerId,
+            String viewerMode,
+            long targetId,
+            GetMatch deterministic,
+            Double targetToViewerScore,
+            String status,
+            String reason) {
+        appendMatchStagingUpdate(baseMatchStagingUpdate(
+                viewerId,
+                viewerMode,
+                targetId,
+                status,
+                deterministic,
+                targetToViewerScore,
+                reason));
+    }
+
+    private void stagePairRerankOutcome(
+            long viewerId,
+            String viewerMode,
+            long targetId,
+            GetMatch deterministic,
+            Double targetToViewerScore,
+            MatchReranker.Decision decision,
+            GetMatch after,
+            String viewerSilhouetteHash,
+            String targetSilhouetteHash,
+            boolean fromCache) {
+        if (decision == null || deterministic == null) {
+            return;
+        }
+        boolean blocked = after == null;
+        double escapeThreshold = modeAwareMatchThreshold(viewerMode);
+        boolean eligible = after != null && after.score >= escapeThreshold;
+        Map<String, Object> update = baseMatchStagingUpdate(
+                viewerId,
+                viewerMode,
+                targetId,
+                blocked ? STAGING_STATUS_BLOCKED : eligible ? STAGING_STATUS_ELIGIBLE : STAGING_STATUS_STAGED,
+                deterministic,
+                targetToViewerScore,
+                blocked ? "pair_rerank_deprioritized"
+                        : eligible ? "pair_rerank_passed" : "pair_rerank_below_escape");
+        long now = System.currentTimeMillis();
+        update.put("lastRerankedAt", now);
+        update.put("incrementRerankCount", true);
+        update.put("scoreAtRerank", deterministic.score);
+        update.put("viewerSilhouetteHash", viewerSilhouetteHash == null ? "" : viewerSilhouetteHash);
+        update.put("targetSilhouetteHash", targetSilhouetteHash == null ? "" : targetSilhouetteHash);
+        update.put("rerankCached", fromCache);
+        update.put("rerankRecommendedUse", decision.recommendedUse);
+        update.put("rerankCompatibility", decision.finalScore == null ? 0.5 : clamp01(decision.finalScore.doubleValue()));
+        update.put("rerankConfidence", decision.confidence == null ? 0.5 : clamp01(decision.confidence.doubleValue()));
+        if (decision.fitSummaryInternal != null && !decision.fitSummaryInternal.isBlank()) {
+            update.put("rerankReason", decision.fitSummaryInternal.trim());
+        }
+        if (after != null) {
+            update.put("effectiveScore", after.score);
+            update.put("scorerDebug", copyScorerDebug(after));
+        } else {
+            update.put("effectiveScore", 0.0);
+        }
+        appendMatchStagingUpdate(update);
+    }
+
+    private static GetMatch eligibleRerankedMatch(String viewerMode, GetMatch after) {
+        if (after == null || after.score < modeAwareMatchThreshold(viewerMode)) {
+            return null;
+        }
+        return after;
+    }
+
     private static double clampSigned(double value) {
         if (Double.isNaN(value)) {
             return 0.0;
@@ -7861,11 +8047,27 @@ public class CalypsoApiManager {
             GetMatch deterministic,
             double targetToViewerScore) {
         if (deterministic == null || deterministic.account == null || deterministic.account.id == null) {
-            return CompletableFuture.completedFuture(deterministic);
+            return CompletableFuture.completedFuture(null);
         }
         if (!shouldApplyPairRerank() || (openAI == null && !MatchReranker.hasTestOverride())) {
-            return CompletableFuture.completedFuture(deterministic);
+            stagePairHold(
+                    viewerId,
+                    viewerMode,
+                    targetId,
+                    deterministic,
+                    targetToViewerScore,
+                    STAGING_STATUS_RERANK_PENDING,
+                    "pair_rerank_unavailable");
+            return CompletableFuture.completedFuture(null);
         }
+        stagePairHold(
+                viewerId,
+                viewerMode,
+                targetId,
+                deterministic,
+                targetToViewerScore,
+                STAGING_STATUS_RERANK_PENDING,
+                "pair_rerank_pending");
 
         CompletableFuture<RerankSilhouetteSnapshot> viewerSilhouetteFuture = readSilhouetteSnapshotForRerank(viewerId);
         CompletableFuture<RerankSilhouetteSnapshot> targetSilhouetteFuture = readSilhouetteSnapshotForRerank(targetId);
@@ -7906,7 +8108,15 @@ public class CalypsoApiManager {
                         viewerPromptReactionCount,
                         targetPromptReactionCount,
                         skipDetails);
-                return deterministic;
+                stagePairHold(
+                        viewerId,
+                        viewerMode,
+                        targetId,
+                        deterministic,
+                        targetToViewerScore,
+                        STAGING_STATUS_RERANK_PENDING,
+                        skipReason);
+                return null;
             }
             if (enforceSilhouetteReadiness && !silhouetteRerankReady(viewerSnapshot)) {
                 clearPairPendingRerankRetry(viewerId, targetId);
@@ -7919,7 +8129,15 @@ public class CalypsoApiManager {
                         viewerPromptReactionCount,
                         targetPromptReactionCount,
                         silhouetteRerankAuditDetails("viewer", viewerSnapshot));
-                return deterministic;
+                stagePairHold(
+                        viewerId,
+                        viewerMode,
+                        targetId,
+                        deterministic,
+                        targetToViewerScore,
+                        STAGING_STATUS_NEEDS_EVIDENCE,
+                        "viewer_silhouette_sparse");
+                return null;
             }
             if (enforceSilhouetteReadiness && (targetSnapshot == null || !targetSnapshot.available)) {
                 String skipReason = silhouettePendingReason("candidate");
@@ -7942,7 +8160,15 @@ public class CalypsoApiManager {
                         viewerPromptReactionCount,
                         targetPromptReactionCount,
                         skipDetails);
-                return deterministic;
+                stagePairHold(
+                        viewerId,
+                        viewerMode,
+                        targetId,
+                        deterministic,
+                        targetToViewerScore,
+                        STAGING_STATUS_RERANK_PENDING,
+                        skipReason);
+                return null;
             }
             if (enforceSilhouetteReadiness && !silhouetteRerankReady(targetSnapshot)) {
                 clearPairPendingRerankRetry(viewerId, targetId);
@@ -7958,7 +8184,15 @@ public class CalypsoApiManager {
                         viewerPromptReactionCount,
                         targetPromptReactionCount,
                         skipDetails);
-                return deterministic;
+                stagePairHold(
+                        viewerId,
+                        viewerMode,
+                        targetId,
+                        deterministic,
+                        targetToViewerScore,
+                        STAGING_STATUS_NEEDS_EVIDENCE,
+                        "candidate_silhouette_sparse");
+                return null;
             }
             String viewerSilhouetteHash = SILHOUETTE_RERANK_ENABLED
                     ? stableHash(silhouetteContext(viewerSilhouette))
@@ -7989,7 +8223,7 @@ public class CalypsoApiManager {
                     silhouetteHashB)) {
                 clearPairPendingRerankRetry(viewerId, targetId);
                 rememberPairInsight(canonicalA, canonicalB, cached.decision);
-                return applyPairRerankDecision(
+                GetMatch after = applyPairRerankDecision(
                         viewerId,
                         deterministic,
                         cached.decision,
@@ -7999,6 +8233,18 @@ public class CalypsoApiManager {
                         cacheKey,
                         canonicalA,
                         !viewerIsCanonicalA);
+                stagePairRerankOutcome(
+                        viewerId,
+                        viewerMode,
+                        targetId,
+                        deterministic,
+                        targetToViewerScore,
+                        cached.decision,
+                        after,
+                        viewerSilhouetteHash,
+                        targetSilhouetteHash,
+                        true);
+                return eligibleRerankedMatch(viewerMode, after);
             }
 
             MatchReranker.RerankRequest request = new MatchReranker.RerankRequest();
@@ -8035,7 +8281,15 @@ public class CalypsoApiManager {
             MatchReranker.Decision decision = firstDecisionForCandidate(result, canonicalCandidateId);
             if (decision == null) {
                 clearPairPendingRerankRetry(viewerId, targetId);
-                return deterministic;
+                stagePairHold(
+                        viewerId,
+                        viewerMode,
+                        targetId,
+                        deterministic,
+                        targetToViewerScore,
+                        STAGING_STATUS_RERANK_PENDING,
+                        "pair_rerank_no_decision");
+                return null;
             }
 
             pairRerankCacheByKey.put(cacheKey, new PairRerankCacheEntry(
@@ -8047,7 +8301,7 @@ public class CalypsoApiManager {
                     decision));
             rememberPairInsight(canonicalA, canonicalB, decision);
             clearPairPendingRerankRetry(viewerId, targetId);
-            return applyPairRerankDecision(
+            GetMatch after = applyPairRerankDecision(
                     viewerId,
                     deterministic,
                     decision,
@@ -8057,10 +8311,30 @@ public class CalypsoApiManager {
                     cacheKey,
                     canonicalA,
                     !viewerIsCanonicalA);
-        }, MATCH_RERANK_EXECUTOR)).completeOnTimeout(deterministic, MATCH_RERANK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            stagePairRerankOutcome(
+                    viewerId,
+                    viewerMode,
+                    targetId,
+                    deterministic,
+                    targetToViewerScore,
+                    decision,
+                    after,
+                    viewerSilhouetteHash,
+                    targetSilhouetteHash,
+                    false);
+            return eligibleRerankedMatch(viewerMode, after);
+        }, MATCH_RERANK_EXECUTOR)).completeOnTimeout(null, MATCH_RERANK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                 .exceptionally(ex -> {
                     LOG.warn("Failed to apply pair rerank for {} -> {}", viewerId, targetId, ex);
-                    return deterministic;
+                    stagePairHold(
+                            viewerId,
+                            viewerMode,
+                            targetId,
+                            deterministic,
+                            targetToViewerScore,
+                            STAGING_STATUS_RERANK_PENDING,
+                            isTimeoutException(ex) ? "pair_rerank_timeout" : "pair_rerank_failed");
+                    return null;
                 });
     }
 
@@ -8517,6 +8791,141 @@ public class CalypsoApiManager {
                 });
     }
 
+    private CompletableFuture<List<GetMatch>> loadEligibleStagedMatches(long requesterId, long viewerId, int limit) {
+        if (!matchStagingAvailable()) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+        int fetchLimit = Math.max(clampMatchLimit(limit), rerankPoolLimit(limit));
+        return getStagedMatchesFromAccountId.invokeAsync(requesterId, viewerId, fetchLimit)
+                .completeOnTimeout(List.of(), 4, TimeUnit.SECONDS)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to read staged matches for account {}", viewerId, ex);
+                    return List.of();
+                })
+                .thenCompose(rows -> hydrateEligibleStagedMatches(requesterId, rows, limit));
+    }
+
+    private CompletableFuture<List<GetMatch>> hydrateEligibleStagedMatches(
+            long requesterId,
+            List<Map<String, Object>> rows,
+            int limit) {
+        List<Map<String, Object>> safeRows = rows == null ? List.of() : rows;
+        ArrayList<Map<String, Object>> eligibleRows = new ArrayList<>();
+        ArrayList<Long> ids = new ArrayList<>();
+        for (Map<String, Object> row : safeRows) {
+            if (row == null || !STAGING_STATUS_ELIGIBLE.equals(normalizedStagingStatus(row.get("status")))) {
+                continue;
+            }
+            long targetId = mapLong(row, "targetAccountId", -1L);
+            if (targetId < 0L) {
+                continue;
+            }
+            if (mapLong(row, "rerankCount", 0L) <= 0L && mapLong(row, "lastRerankedAt", 0L) <= 0L) {
+                continue;
+            }
+            eligibleRows.add(row);
+            ids.add(targetId);
+            if (ids.size() >= clampMatchLimit(limit)) {
+                break;
+            }
+        }
+        if (ids.isEmpty()) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+        return getAccountsFromAccountIds.invokeAsync(requesterId, ids).thenApply(accounts -> {
+            Map<Long, AccountWithId> accountsById = new HashMap<>();
+            if (accounts != null) {
+                for (AccountWithId account : accounts) {
+                    if (account != null && account.account != null) {
+                        accountsById.put(account.accountId, account);
+                    }
+                }
+            }
+            ArrayList<GetMatch> out = new ArrayList<>();
+            for (Map<String, Object> row : eligibleRows) {
+                long targetId = mapLong(row, "targetAccountId", -1L);
+                AccountWithId account = accountsById.get(targetId);
+                if (account == null || account.account == null) {
+                    continue;
+                }
+                Map<String, Object> debug = mapObject(row, "scorerDebug");
+                if (debug == null) {
+                    debug = new HashMap<>();
+                }
+                debug.put("matchScoreSource", "stagingEligible");
+                debug.put("stagingStatus", normalizedStagingStatus(row.get("status")));
+                debug.put("stagingHoldReason", mapString(row, "holdReason"));
+                debug.put("stagingRerankCount", mapLong(row, "rerankCount", 0L));
+                debug.put("stagingLastRerankedAt", mapLong(row, "lastRerankedAt", 0L));
+                debug.put("stagingRerankRecommendedUse", mapString(row, "rerankRecommendedUse"));
+                putFiniteMetric(debug, "stagingRerankCompatibility",
+                        mapDouble(row, "rerankCompatibility", Double.NaN));
+                putFiniteMetric(debug, "stagingRerankConfidence",
+                        mapDouble(row, "rerankConfidence", Double.NaN));
+                putFiniteMetric(debug, "stagingDeterministicScore",
+                        mapDouble(row, "deterministicScore", Double.NaN));
+                putFiniteMetric(debug, "stagingMutualScore",
+                        mapDouble(row, "mutualScore", Double.NaN));
+                double score = mapDouble(row, "effectiveScore",
+                        mapDouble(row, "mutualScore", mapDouble(row, "deterministicScore", 0.0)));
+                long computedAt = mapLong(row, "computedAt", mapLong(row, "updatedAt", 0L));
+                GetMatch match = new GetMatch(new GetAccount(account), score, computedAt, debug);
+                List<String> shared = asStringList(row.get("sharedSignals"));
+                if (!shared.isEmpty()) {
+                    match.sharedSignals = shared;
+                }
+                out.add(match);
+            }
+            out.sort((a, b) -> {
+                int byScore = Double.compare(b.score, a.score);
+                if (byScore != 0) {
+                    return byScore;
+                }
+                return Long.compare(b.computedAt, a.computedAt);
+            });
+            return limitMatches(out, limit);
+        }).exceptionally(ex -> {
+            LOG.warn("Failed to hydrate staged matches", ex);
+            return List.of();
+        });
+    }
+
+    private static List<GetMatch> mergeMatchLists(List<GetMatch> first, List<GetMatch> second, int limit) {
+        LinkedHashMap<String, GetMatch> byId = new LinkedHashMap<>();
+        if (first != null) {
+            for (GetMatch match : first) {
+                putBestMatch(byId, match);
+            }
+        }
+        if (second != null) {
+            for (GetMatch match : second) {
+                putBestMatch(byId, match);
+            }
+        }
+        ArrayList<GetMatch> out = new ArrayList<>(byId.values());
+        out.sort((a, b) -> {
+            int byScore = Double.compare(b.score, a.score);
+            if (byScore != 0) {
+                return byScore;
+            }
+            return Long.compare(b.computedAt, a.computedAt);
+        });
+        return limitMatches(out, limit);
+    }
+
+    private static void putBestMatch(Map<String, GetMatch> byId, GetMatch match) {
+        if (byId == null || match == null || match.account == null || match.account.id == null
+                || match.account.id.isBlank()) {
+            return;
+        }
+        GetMatch existing = byId.get(match.account.id);
+        if (existing == null
+                || match.score > existing.score
+                || (Math.abs(match.score - existing.score) <= 1.0e-9 && match.computedAt > existing.computedAt)) {
+            byId.put(match.account.id, match);
+        }
+    }
+
     private CompletableFuture<Boolean> hasPromptLikeThroughAnswerHistory(long viewerId, long targetId) {
         return viewerIdToReactionByAnswerId.selectOneAsync(Path.key(viewerId))
                 .completeOnTimeout(null, 2, TimeUnit.SECONDS)
@@ -8699,35 +9108,34 @@ public class CalypsoApiManager {
                 .completeOnTimeout(null, 3, TimeUnit.SECONDS)
                 .exceptionally(ex -> null);
 
-        return loadRawRankedCandidates(viewerId, fetchLimit)
-                .thenCompose(ranked -> viewerFiltersFuture.thenCompose(viewerFilters -> {
-                    String viewerMode = CalypsoHelpers.getModeSelfOrNull(viewerFilters);
-                    if (ranked == null || ranked.isEmpty()) {
-                        return CompletableFuture.completedFuture(List.<GetMatch>of());
+        return loadEligibleStagedMatches(requesterId, viewerId, clamped)
+                .thenCompose(stagedEligible -> {
+                    if (stagedEligible.size() >= clamped) {
+                        return CompletableFuture.completedFuture(limitMatches(stagedEligible, clamped));
                     }
-                    List<CompletableFuture<GetMatch>> futures = new ArrayList<>(ranked.size());
-                    for (GetMatch candidate : ranked) {
-                        futures.add(evaluateMutualMatch(viewerId, viewerMode, candidate));
-                    }
-                    CompletableFuture<Void> all = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
-                    return all.thenApply(v -> {
-                        List<GetMatch> out = new ArrayList<>();
-                        for (CompletableFuture<GetMatch> future : futures) {
-                            GetMatch match = future.join();
-                            if (match != null) {
-                                out.add(match);
-                            }
-                        }
-                        out.sort((a, b) -> {
-                            int byScore = Double.compare(b.score, a.score);
-                            if (byScore != 0) {
-                                return byScore;
-                            }
-                            return Long.compare(b.computedAt, a.computedAt);
-                        });
-                        return limitMatches(out, clamped);
-                    });
-                }))
+                    return loadRawRankedCandidates(viewerId, fetchLimit)
+                            .thenCompose(ranked -> viewerFiltersFuture.thenCompose(viewerFilters -> {
+                                String viewerMode = CalypsoHelpers.getModeSelfOrNull(viewerFilters);
+                                if (ranked == null || ranked.isEmpty()) {
+                                    return CompletableFuture.completedFuture(limitMatches(stagedEligible, clamped));
+                                }
+                                List<CompletableFuture<GetMatch>> futures = new ArrayList<>(ranked.size());
+                                for (GetMatch candidate : ranked) {
+                                    futures.add(evaluateMutualMatch(viewerId, viewerMode, candidate));
+                                }
+                                CompletableFuture<Void> all = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+                                return all.thenApply(v -> {
+                                    List<GetMatch> graduated = new ArrayList<>();
+                                    for (CompletableFuture<GetMatch> future : futures) {
+                                        GetMatch match = future.join();
+                                        if (match != null) {
+                                            graduated.add(match);
+                                        }
+                                    }
+                                    return mergeMatchLists(stagedEligible, graduated, clamped);
+                                });
+                            }));
+                })
                 .completeOnTimeout(List.<GetMatch>of(), 10, TimeUnit.SECONDS)
                 .exceptionally(ex -> {
                     LOG.warn("Failed to load mutual matches for account {}", viewerId, ex);
@@ -8834,6 +9242,10 @@ public class CalypsoApiManager {
             return null;
         }
         Object raw = map.get(key);
+        return copyStringObjectMap(raw);
+    }
+
+    private static Map<String, Object> copyStringObjectMap(Object raw) {
         if (!(raw instanceof Map<?, ?> rawMap)) {
             return null;
         }
@@ -9341,6 +9753,104 @@ public class CalypsoApiManager {
                 });
     }
 
+    private CompletableFuture<Map<String, Object>> loadAdminMatchStagingRow(
+            long requesterId,
+            long viewerId,
+            long targetId) {
+        if (!matchStagingAvailable()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        if (accountIdToStagedMatchesByTarget != null) {
+            return accountIdToStagedMatchesByTarget.selectOneAsync(Path.key(viewerId, targetId))
+                    .completeOnTimeout(null, 2, TimeUnit.SECONDS)
+                    .exceptionally(ex -> {
+                        LOG.warn("Failed to load exact admin match-staging row for {} -> {}", viewerId, targetId, ex);
+                        return null;
+                    })
+                    .thenApply(CalypsoApiManager::copyStringObjectMap);
+        }
+        return getStagedMatchesFromAccountId.invokeAsync(requesterId, viewerId, 100)
+                .completeOnTimeout(List.of(), 4, TimeUnit.SECONDS)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to load admin match-staging row for {} -> {}", viewerId, targetId, ex);
+                    return List.of();
+                })
+                .thenApply(rows -> {
+                    if (rows == null || rows.isEmpty()) {
+                        return null;
+                    }
+                    for (Map<String, Object> row : rows) {
+                        if (row != null && mapLong(row, "targetAccountId", -1L) == targetId) {
+                            return new LinkedHashMap<>(row);
+                        }
+                    }
+                    return null;
+                });
+    }
+
+    private Map<String, Object> adminMatchStagingSnapshot(Map<String, Object> row, String viewerMode) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<>();
+        boolean available = matchStagingAvailable();
+        double entrance = row == null
+                ? stagingEntranceThreshold(viewerMode)
+                : mapDouble(row, "stagingEntranceThreshold", stagingEntranceThreshold(viewerMode));
+        double exit = row == null
+                ? stagingExitThreshold(viewerMode)
+                : mapDouble(row, "stagingExitThreshold", stagingExitThreshold(viewerMode));
+        double escape = row == null
+                ? modeAwareMatchThreshold(viewerMode)
+                : mapDouble(row, "escapeThreshold", modeAwareMatchThreshold(viewerMode));
+        out.put("available", available);
+        out.put("stagingEntranceThreshold", entrance);
+        out.put("stagingExitThreshold", exit);
+        out.put("escapeThreshold", escape);
+        if (!available) {
+            out.put("present", false);
+            out.put("status", "unavailable");
+            out.put("visibleMatch", false);
+            out.put("rerankEvidence", false);
+            return out;
+        }
+        if (row == null || row.isEmpty()) {
+            out.put("present", false);
+            out.put("status", "not_staged");
+            out.put("visibleMatch", false);
+            out.put("rerankEvidence", false);
+            return out;
+        }
+
+        String status = normalizedStagingStatus(row.get("status"));
+        double effectiveScore = mapDouble(row, "effectiveScore",
+                mapDouble(row, "mutualScore", mapDouble(row, "deterministicScore", 0.0)));
+        long rerankCount = mapLong(row, "rerankCount", 0L);
+        long lastRerankedAt = mapLong(row, "lastRerankedAt", 0L);
+        boolean rerankEvidence = rerankCount > 0L || lastRerankedAt > 0L;
+        out.put("present", true);
+        out.put("targetAccountId", CalypsoHelpers.serializeAccountId(mapLong(row, "targetAccountId", 0L)));
+        out.put("status", status);
+        out.put("holdReason", mapString(row, "holdReason"));
+        out.put("visibleMatch", STAGING_STATUS_ELIGIBLE.equals(status) && rerankEvidence && effectiveScore >= escape);
+        out.put("rerankEvidence", rerankEvidence);
+        out.put("rerankCount", rerankCount);
+        out.put("lastRerankedAt", lastRerankedAt);
+        out.put("updatedAt", mapLong(row, "updatedAt", 0L));
+        out.put("enteredAt", mapLong(row, "enteredAt", 0L));
+        out.put("demotedAt", mapLong(row, "demotedAt", 0L));
+        out.put("rerankInvalidatedAt", mapLong(row, "rerankInvalidatedAt", 0L));
+        out.put("rerankRecommendedUse", mapString(row, "rerankRecommendedUse"));
+        out.put("rerankReason", mapString(row, "rerankReason"));
+        out.put("rerankCached", Boolean.TRUE.equals(row.get("rerankCached")));
+        out.put("followupPending", Boolean.TRUE.equals(row.get("followupPending")));
+        putFiniteMetric(out, "deterministicScore", mapDouble(row, "deterministicScore", Double.NaN));
+        putFiniteMetric(out, "targetToViewerScore", mapDouble(row, "targetToViewerScore", Double.NaN));
+        putFiniteMetric(out, "mutualScore", mapDouble(row, "mutualScore", Double.NaN));
+        putFiniteMetric(out, "effectiveScore", effectiveScore);
+        putFiniteMetric(out, "scoreAtRerank", mapDouble(row, "scoreAtRerank", Double.NaN));
+        putFiniteMetric(out, "rerankCompatibility", mapDouble(row, "rerankCompatibility", Double.NaN));
+        putFiniteMetric(out, "rerankConfidence", mapDouble(row, "rerankConfidence", Double.NaN));
+        return out;
+    }
+
     public CompletableFuture<Map<String, Object>> getAdminPairScoreDebug(
             long requesterId,
             long viewerId,
@@ -9405,6 +9915,10 @@ public class CalypsoApiManager {
             CompletableFuture<AccountWithId> targetAccountFuture = getAccountWithId(requesterId, targetId)
                     .completeOnTimeout(null, 2, TimeUnit.SECONDS)
                     .exceptionally(ex -> null);
+            CompletableFuture<Map<String, Object>> stagingRowFuture = loadAdminMatchStagingRow(
+                    requesterId,
+                    viewerId,
+                    targetId);
 
             CompletableFuture<Void> pairAll = CompletableFuture.allOf(
                     viewerHeapFuture,
@@ -9418,7 +9932,8 @@ public class CalypsoApiManager {
                     viewerPromptLikeSeenFuture,
                     targetPromptLikeSeenFuture,
                     viewerAccountFuture,
-                    targetAccountFuture);
+                    targetAccountFuture,
+                    stagingRowFuture);
             pairFuture = pairAll.thenApply(ignored -> {
                 String viewerMode = normalizeModeForDebug(CalypsoHelpers.getModeSelfOrNull(viewerFiltersFuture.join()));
                 String targetMode = normalizeModeForDebug(CalypsoHelpers.getModeSelfOrNull(targetFiltersFuture.join()));
@@ -9451,6 +9966,7 @@ public class CalypsoApiManager {
                 pair.put("targetLikedViewerFacecard", targetLikedViewerFacecardFuture.join());
                 pair.put("viewerPromptLikeSeen", viewerPromptLikeSeenFuture.join());
                 pair.put("targetPromptLikeSeen", targetPromptLikeSeenFuture.join());
+                pair.put("staging", adminMatchStagingSnapshot(stagingRowFuture.join(), viewerMode));
 
                 if (viewerToTarget != null && targetToViewer != null) {
                     double viewerToTargetScore = viewerToTarget.getStage0Score();

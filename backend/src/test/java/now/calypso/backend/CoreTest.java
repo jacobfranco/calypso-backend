@@ -1008,6 +1008,58 @@ public class CoreTest {
         }
 
         @Test
+        public void matchStagingRoundTripByViewerAndTarget(TestInfo testInfo) throws Exception {
+                List<Class> serializations = Collections.singletonList(CalypsoSerialization.class);
+
+                try (InProcessCluster ipc = InProcessCluster.create(serializations)) {
+                        Core core = new Core();
+                        launchModuleDeterministic(ipc, core, testInfo);
+                        String moduleName = core.getClass().getName();
+
+                        Depot matchStagingDepot = ipc.clusterDepot(moduleName, "*matchStagingDepot");
+                        QueryTopologyClient<List<Map<String, Object>>> getStagedMatches = ipc.clusterQuery(moduleName,
+                                        "getStagedMatchesFromAccountId");
+
+                        Map<String, Object> first = new HashMap<>();
+                        first.put("accountId", 1L);
+                        first.put("targetAccountId", 2L);
+                        first.put("status", "rerank_pending");
+                        first.put("deterministicScore", 71.0);
+                        first.put("mutualScore", 69.0);
+                        first.put("effectiveScore", 69.0);
+                        first.put("holdReason", "pair_rerank_pending");
+                        first.put("updatedAt", 1000L);
+                        append(ipc, matchStagingDepot, first);
+
+                        Map<String, Object> eligible = new HashMap<>();
+                        eligible.put("accountId", 1L);
+                        eligible.put("targetAccountId", 2L);
+                        eligible.put("status", "eligible");
+                        eligible.put("effectiveScore", 72.5);
+                        eligible.put("scoreAtRerank", 69.0);
+                        eligible.put("rerankRecommendedUse", "rank_high");
+                        eligible.put("incrementRerankCount", true);
+                        eligible.put("updatedAt", 1100L);
+                        append(ipc, matchStagingDepot, eligible);
+
+                        TestHelpers.attainConditionPred(
+                                        () -> getStagedMatches.invoke(1L, 1L, 10),
+                                        rows -> rows != null
+                                                        && !rows.isEmpty()
+                                                        && "eligible".equals(rows.get(0).get("status")));
+
+                        List<Map<String, Object>> rows = getStagedMatches.invoke(1L, 1L, 10);
+                        assertEquals(1, rows.size());
+                        Map<String, Object> row = rows.get(0);
+                        assertEquals(2L, row.get("targetAccountId"));
+                        assertEquals("eligible", row.get("status"));
+                        assertEquals(72.5, (Double) row.get("effectiveScore"), 0.0001);
+                        assertEquals(1, ((Number) row.get("rerankCount")).intValue());
+                        assertEquals("rank_high", row.get("rerankRecommendedUse"));
+                }
+        }
+
+        @Test
         public void directMessagesRoundTripByConversation(TestInfo testInfo) throws Exception {
                 List<Class> serializations = Collections.singletonList(CalypsoSerialization.class);
 
