@@ -40,6 +40,16 @@ public class CalypsoApiController {
     @Autowired
     private TagDictionaryService tagService;
 
+    private static Map<String, Object> directMessageToMap(DirectMessage msg) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("messageId", msg.getMessageId());
+        out.put("senderId", CalypsoHelpers.serializeAccountId(msg.getSenderId()));
+        out.put("receiverId", CalypsoHelpers.serializeAccountId(msg.getReceiverId()));
+        out.put("text", msg.getText());
+        out.put("sentAt", msg.getSentAt());
+        return out;
+    }
+
     private Mono<GetToken> loginWithAccount(WebSession session, String scope, AccountWithId accountWithId) {
         // Update Session
         session.getAttributes().put("accountId", accountWithId.accountId);
@@ -1232,15 +1242,7 @@ public class CalypsoApiController {
         long targetId = CalypsoHelpers.parseAccountId(targetIdStr);
         String text = body == null ? null : (body.get("text") instanceof String ? (String) body.get("text") : null);
         return Mono.fromFuture(manager.postDirectMessage(me, accountId, targetId, text))
-                .map(msg -> {
-                    Map<String, Object> out = new LinkedHashMap<>();
-                    out.put("messageId", msg.getMessageId());
-                    out.put("senderId", msg.getSenderId() + "-a");
-                    out.put("receiverId", msg.getReceiverId() + "-a");
-                    out.put("text", msg.getText());
-                    out.put("sentAt", msg.getSentAt());
-                    return out;
-                });
+                .map(CalypsoApiController::directMessageToMap);
     }
 
     @GetMapping("/api/accounts/{id}/direct-messages/{targetId}")
@@ -1259,13 +1261,7 @@ public class CalypsoApiController {
                 .map(messages -> {
                     List<Map<String, Object>> serialized = new ArrayList<>();
                     for (DirectMessage msg : messages) {
-                        Map<String, Object> m = new LinkedHashMap<>();
-                        m.put("messageId", msg.getMessageId());
-                        m.put("senderId", msg.getSenderId() + "-a");
-                        m.put("receiverId", msg.getReceiverId() + "-a");
-                        m.put("text", msg.getText());
-                        m.put("sentAt", msg.getSentAt());
-                        serialized.add(m);
+                        serialized.add(directMessageToMap(msg));
                     }
                     Map<String, Object> out = new LinkedHashMap<>();
                     out.put("messages", serialized);

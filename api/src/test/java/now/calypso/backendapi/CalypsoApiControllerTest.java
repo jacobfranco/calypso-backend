@@ -300,6 +300,54 @@ class CalypsoApiControllerTest {
                                 });
         }
 
+        @Test
+        void postDirectMessage_returnsSerializedAccountIds() {
+                String targetId = CalypsoHelpers.serializeAccountId(8L);
+                DirectMessage message = new DirectMessage()
+                                .setMessageId("dm-1")
+                                .setSenderId(7L)
+                                .setReceiverId(8L)
+                                .setText("hello")
+                                .setSentAt(1000L);
+                when(mockManager.postDirectMessage(eq(7L), eq(7L), eq(8L), eq("hello")))
+                                .thenReturn(CompletableFuture.completedFuture(message));
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId + "/direct-messages/" + targetId)
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(Map.of("text", "hello"))
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.messageId").isEqualTo("dm-1")
+                                .jsonPath("$.senderId").isEqualTo(serializedId)
+                                .jsonPath("$.receiverId").isEqualTo(targetId);
+        }
+
+        @Test
+        void getDirectMessages_returnsSerializedAccountIds() {
+                String targetId = CalypsoHelpers.serializeAccountId(8L);
+                DirectMessage message = new DirectMessage()
+                                .setMessageId("dm-1")
+                                .setSenderId(8L)
+                                .setReceiverId(7L)
+                                .setText("hey")
+                                .setSentAt(1000L);
+                when(mockManager.fetchDirectMessages(eq(7L), eq(7L), eq(8L), eq(50)))
+                                .thenReturn(CompletableFuture.completedFuture(List.of(message)));
+
+                client.get()
+                                .uri("/api/accounts/" + serializedId + "/direct-messages/" + targetId)
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.messages[0].messageId").isEqualTo("dm-1")
+                                .jsonPath("$.messages[0].senderId").isEqualTo(targetId)
+                                .jsonPath("$.messages[0].receiverId").isEqualTo(serializedId);
+        }
+
         // ---------------------------------------------------------------------------
         // builds a valid PostFilters object we can tweak per test
         // ---------------------------------------------------------------------------
