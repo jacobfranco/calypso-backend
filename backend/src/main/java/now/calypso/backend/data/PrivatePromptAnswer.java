@@ -785,13 +785,13 @@ public class PrivatePromptAnswer implements org.apache.thrift.TBase<PrivatePromp
           case 6: // SIGNAL_TOKENS
             if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
               {
-                org.apache.thrift.protocol.TList _list56 = iprot.readListBegin();
-                struct.signalTokens = new java.util.ArrayList<java.lang.String>(_list56.size);
-                @org.apache.thrift.annotation.Nullable java.lang.String _elem57;
-                for (int _i58 = 0; _i58 < _list56.size; ++_i58)
+                org.apache.thrift.protocol.TList _list96 = iprot.readListBegin();
+                struct.signalTokens = new java.util.ArrayList<java.lang.String>(_list96.size);
+                @org.apache.thrift.annotation.Nullable java.lang.String _elem97;
+                for (int _i98 = 0; _i98 < _list96.size; ++_i98)
                 {
-                  _elem57 = iprot.readString();
-                  struct.signalTokens.add(_elem57);
+                  _elem97 = iprot.readString();
+                  struct.signalTokens.add(_elem97);
                 }
                 iprot.readListEnd();
               }
@@ -848,9 +848,9 @@ public class PrivatePromptAnswer implements org.apache.thrift.TBase<PrivatePromp
           oprot.writeFieldBegin(SIGNAL_TOKENS_FIELD_DESC);
           {
             oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRING, struct.signalTokens.size()));
-            for (java.lang.String _iter59 : struct.signalTokens)
+            for (java.lang.String _iter99 : struct.signalTokens)
             {
-              oprot.writeString(_iter59);
+              oprot.writeString(_iter99);
             }
             oprot.writeListEnd();
           }
@@ -888,9 +888,9 @@ public class PrivatePromptAnswer implements org.apache.thrift.TBase<PrivatePromp
       if (struct.isSetSignalTokens()) {
         {
           oprot.writeI32(struct.signalTokens.size());
-          for (java.lang.String _iter60 : struct.signalTokens)
+          for (java.lang.String _iter100 : struct.signalTokens)
           {
-            oprot.writeString(_iter60);
+            oprot.writeString(_iter100);
           }
         }
       }
@@ -912,13 +912,13 @@ public class PrivatePromptAnswer implements org.apache.thrift.TBase<PrivatePromp
       java.util.BitSet incoming = iprot.readBitSet(1);
       if (incoming.get(0)) {
         {
-          org.apache.thrift.protocol.TList _list61 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
-          struct.signalTokens = new java.util.ArrayList<java.lang.String>(_list61.size);
-          @org.apache.thrift.annotation.Nullable java.lang.String _elem62;
-          for (int _i63 = 0; _i63 < _list61.size; ++_i63)
+          org.apache.thrift.protocol.TList _list101 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
+          struct.signalTokens = new java.util.ArrayList<java.lang.String>(_list101.size);
+          @org.apache.thrift.annotation.Nullable java.lang.String _elem102;
+          for (int _i103 = 0; _i103 < _list101.size; ++_i103)
           {
-            _elem62 = iprot.readString();
-            struct.signalTokens.add(_elem62);
+            _elem102 = iprot.readString();
+            struct.signalTokens.add(_elem102);
           }
         }
         struct.setSignalTokensIsSet(true);

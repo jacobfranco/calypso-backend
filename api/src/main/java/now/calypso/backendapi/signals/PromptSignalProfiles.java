@@ -67,7 +67,7 @@ public final class PromptSignalProfiles {
                 "Prioritize concrete domains, activities, places, and projects. If the goal centers on doing activities in a destination, include travel plus the specific destination concept. If the answer references World Cup context, include soccer. Leave abstract ambition or direction for silhouette.",
                 6, 1, false));
         add(byId, profile("prompt.same.weird",
-                "Look for quirky identity and compatibility-style traits that are stable in dating context.",
+                "Look for quirky identity and matchStandard-style traits that are stable in dating context.",
                 5, 1, false));
         add(byId, profile("prompt.gas.station",
                 "Treat as light preference context. Emit only clear lifestyle or food preference concepts.",
@@ -170,10 +170,10 @@ public final class PromptSignalProfiles {
 
         // Synthetic prompt ids.
         add(byId, profile("matchmaking.followup",
-                "Matchmaking follow-up context. Prefer the explicitly missing concept and align intent to compatibility.",
+                "Matchmaking follow-up context. Prefer the explicitly missing concept and align intent to matchStandard.",
                 4, 1, false));
         add(byId, profile("private.matchmaking.followup",
-                "Matchmaking follow-up context. Prefer the explicitly missing concept and align intent to compatibility.",
+                "Matchmaking follow-up context. Prefer the explicitly missing concept and align intent to matchStandard.",
                 4, 1, false));
 
         BY_PROMPT_ID = Collections.unmodifiableMap(byId);

@@ -286,6 +286,101 @@ class CalypsoApiControllerTest {
         }
 
         @Test
+        void getMatchStandardQuestions_returns200() {
+                client.get()
+                                .uri("/api/match-standards/questions")
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$[0].questionId").isNotEmpty()
+                                .jsonPath("$[0].options").isArray();
+        }
+
+        @Test
+        void getMatchStandardAnswers_wrongUser_returns403() {
+                String otherId = CalypsoHelpers.serializeAccountId(8L);
+                client.get()
+                                .uri("/api/accounts/" + otherId + "/match-standards/answers")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .exchange()
+                                .expectStatus().isEqualTo(HttpStatus.FORBIDDEN);
+                verify(mockManager, never()).getMatchStandardAnswers(anyLong(), anyLong());
+        }
+
+        @Test
+        void getMatchStandardAnswers_owner_returns200() {
+                MatchStandardAnswer answer = new MatchStandardAnswer()
+                                .setAccountId(7L)
+                                .setQuestionId("standard.values.politics")
+                                .setOwnAnswerOptionIds(List.of("left"))
+                                .setAcceptableAnswerOptionIds(List.of("left", "center_left"))
+                                .setImportance(Importance.PREFERENCE)
+                                .setUpdatedAt(100L);
+                MatchStandardAnswerSet answerSet = new MatchStandardAnswerSet()
+                                .setAccountId(7L)
+                                .setAnswers(List.of(answer));
+                when(mockManager.getMatchStandardAnswers(eq(7L), eq(7L)))
+                                .thenReturn(CompletableFuture.completedFuture(answerSet));
+
+                client.get()
+                                .uri("/api/accounts/" + serializedId + "/match-standards/answers")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.accountId").isEqualTo(7)
+                                .jsonPath("$.answers[0].questionId").isEqualTo("standard.values.politics");
+        }
+
+        @Test
+        void postMatchStandardAnswer_valid_returns200() {
+                MatchStandardAnswer answer = new MatchStandardAnswer()
+                                .setAccountId(7L)
+                                .setQuestionId("standard.values.politics")
+                                .setOwnAnswerOptionIds(List.of("left"))
+                                .setAcceptableAnswerOptionIds(List.of("left", "center_left"))
+                                .setImportance(Importance.PREFERENCE)
+                                .setUpdatedAt(100L);
+                when(mockManager.postMatchStandardAnswer(any(MatchStandardAnswer.class)))
+                                .thenReturn(CompletableFuture.completedFuture(answer));
+
+                Map<String, Object> body = Map.of(
+                                "ownAnswerOptionIds", List.of("left"),
+                                "acceptableAnswerOptionIds", List.of("left", "center_left"),
+                                "importance", "PREFERENCE");
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId
+                                                + "/match-standards/answers/standard.values.politics")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(body)
+                                .exchange()
+                                .expectStatus().isOk()
+                                .expectBody()
+                                .jsonPath("$.questionId").isEqualTo("standard.values.politics")
+                                .jsonPath("$.ownAnswerOptionIds[0]").isEqualTo("left");
+        }
+
+        @Test
+        void postMatchStandardAnswer_invalidOption_returns400() {
+                Map<String, Object> body = Map.of(
+                                "ownAnswerOptionIds", List.of("made_up"),
+                                "acceptableAnswerOptionIds", List.of("left"),
+                                "importance", "PREFERENCE");
+
+                client.post()
+                                .uri("/api/accounts/" + serializedId
+                                                + "/match-standards/answers/standard.values.politics")
+                                .header("Authorization", "Bearer " + sessionToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(body)
+                                .exchange()
+                                .expectStatus().isBadRequest();
+                verify(mockManager, never()).postMatchStandardAnswer(any());
+        }
+
+        @Test
         void getSignals_managerFails_returnsEmptyPayload() {
                 when(mockManager.getSignals(eq(7L), eq(7L)))
                                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("signals unavailable")));
@@ -353,21 +448,14 @@ class CalypsoApiControllerTest {
         // ---------------------------------------------------------------------------
         private PostFilters baseFilters() {
                 PostFilters pf = new PostFilters();
+                pf.relationshipMode = new ModeFilter().setSelf("balanced");
 
                 RangeFilter age = new RangeFilter()
                                 .setSelf(25)
                                 .setMin(22)
                                 .setMax(30);
                 pf.age = age;
-
-                TagPreference wlPref = new TagPreference()
-                                .setTag("non_drinker")
-                                .setImportance(Importance.PREFERENCE);
-
-                ManyToManyFilter life = new ManyToManyFilter()
-                                .setSelf(new ArrayList<>(List.of("non_drinker"))) // ← modifiable
-                                .setPreferences(List.of(wlPref));
-                pf.lifestyle = life;
+                pf.gender = new OneToManyFilter().setSelf("woman").setSeeking(List.of("man"));
 
                 return pf;
         }
@@ -388,25 +476,6 @@ class CalypsoApiControllerTest {
                                 .expectStatus().isOk()
                                 .expectBody(GetFilters.class)
                                 .value(gf -> assertEquals(7, gf.filters.getAccountId()));
-        }
-
-        // ---------------------------------------------------------------------------
-        // unknown tag → 400 BAD_REQUEST (validator fires before manager call)
-        // ---------------------------------------------------------------------------
-        @Test
-        void postFilters_unknownTag_returns400() {
-                PostFilters bad = baseFilters();
-                bad.lifestyle.getSelf().add("made_up_tag");
-
-                client.post().uri("/api/accounts/" + serializedId + "/filters")
-                                .header("Authorization", "Bearer " + sessionToken)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(bad)
-                                .exchange()
-                                .expectStatus().isBadRequest();
-
-                // manager should NOT have been invoked
-                verify(mockManager, times(0)).postFilters(any(), anyLong());
         }
 
         // ---------------------------------------------------------------------------
@@ -464,38 +533,6 @@ class CalypsoApiControllerTest {
                 // CLT approx; negative radius to trigger validator
                 bad.location = new LocationFilter().setLat(35.2271).setLon(-80.8431).setRadiusKm(-5.0);
 
-                client.post()
-                                .uri("/api/accounts/" + serializedId + "/filters")
-                                .header("Authorization", "Bearer " + sessionToken)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(bad)
-                                .exchange()
-                                .expectStatus().isBadRequest();
-                verify(mockManager, never()).postFilters(any(), anyLong());
-        }
-
-        // duplicate tags in lifestyle.self
-        @Test
-        void postFilters_duplicateLifestyleSelf_returns400() {
-                PostFilters bad = baseFilters();
-                bad.lifestyle.setSelf(List.of("running", "running"));
-                client.post()
-                                .uri("/api/accounts/" + serializedId + "/filters")
-                                .header("Authorization", "Bearer " + sessionToken)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(bad)
-                                .exchange()
-                                .expectStatus().isBadRequest();
-                verify(mockManager, never()).postFilters(any(), anyLong());
-        }
-
-        // duplicate tags in lifestyle.preferences
-        @Test
-        void postFilters_duplicateLifestylePreferences_returns400() {
-                PostFilters bad = baseFilters();
-                TagPreference tp1 = new TagPreference().setTag("running").setImportance(Importance.PREFERENCE);
-                TagPreference tp2 = new TagPreference().setTag("running").setImportance(Importance.DEALBREAKER);
-                bad.lifestyle.setPreferences(List.of(tp1, tp2));
                 client.post()
                                 .uri("/api/accounts/" + serializedId + "/filters")
                                 .header("Authorization", "Bearer " + sessionToken)
@@ -708,51 +745,6 @@ class CalypsoApiControllerTest {
         }
 
         @Test
-        void postFilters_religionSeeking_returns400() {
-                PostFilters pf = baseFilters();
-                pf.religion = new OneToManyFilter().setSeeking(List.of("pastafarian"));
-                client.post()
-                                .uri("/api/accounts/" + serializedId + "/filters")
-                                .header("Authorization", "Bearer " + sessionToken)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(pf)
-                                .exchange()
-                                .expectStatus().isBadRequest();
-                verify(mockManager, never()).postFilters(any(), anyLong());
-        }
-
-        @Test
-        void postFilters_politicsValid_returns200() {
-                PostFilters pf = baseFilters();
-                pf.politics = new OneToManyFilter().setSelf("libertarian");
-                when(mockManager.postFilters(any(), eq(7L)))
-                                .thenReturn(CompletableFuture.completedFuture(true));
-
-                client.post()
-                                .uri("/api/accounts/" + serializedId + "/filters")
-                                .header("Authorization", "Bearer " + sessionToken)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(pf)
-                                .exchange()
-                                .expectStatus().isOk();
-                verify(mockManager).postFilters(any(), eq(7L));
-        }
-
-        @Test
-        void postFilters_politicsUnknown_returns400() {
-                PostFilters pf = baseFilters();
-                pf.politics = new OneToManyFilter().setSelf("anarcho-capitalist");
-                client.post()
-                                .uri("/api/accounts/" + serializedId + "/filters")
-                                .header("Authorization", "Bearer " + sessionToken)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(pf)
-                                .exchange()
-                                .expectStatus().isBadRequest();
-                verify(mockManager, never()).postFilters(any(), anyLong());
-        }
-
-        @Test
         void postFilters_validRelationshipMode_returns200() {
                 PostFilters pf = baseFilters();
                 pf.relationshipMode = new ModeFilter().setSelf("focused");
@@ -790,12 +782,6 @@ class CalypsoApiControllerTest {
                 String payload = """
                                 {
                                   "age": { "self": 25, "min": 22, "max": 30 },
-                                  "lifestyle": {
-                                    "self": ["non_drinker"],
-                                    "preferences": [
-                                      { "tag": "non_drinker", "importance": "PREFERENCE" }
-                                    ]
-                                  },
                                   "location": { "radiusKm": 35.0 }
                                 }
                                 """;
@@ -840,11 +826,6 @@ class CalypsoApiControllerTest {
                 pf.age = new RangeFilter().setSelf(27).setMin(23).setMax(32).setImportance(Importance.NOT_IMPORTANT);
                 // Miami approx, state-ish radius
                 pf.location = new LocationFilter().setLat(25.7617).setLon(-80.1918).setRadiusKm(250.0);
-                pf.religion = new OneToManyFilter().setSelf("agnostic").setImportance(Importance.PREFERENCE);
-                pf.politics = new OneToManyFilter().setSelf("liberal");
-                pf.lifestyle = new ManyToManyFilter().setSelf(List.of("non_drinker"))
-                                .setPreferences(List.of(new TagPreference().setTag("non_drinker")
-                                                .setImportance(Importance.PREFERENCE)));
 
                 when(mockManager.postFilters(any(), eq(7L)))
                                 .thenReturn(CompletableFuture.completedFuture(true));

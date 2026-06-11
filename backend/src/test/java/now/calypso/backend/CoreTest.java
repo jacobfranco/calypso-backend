@@ -138,10 +138,10 @@ public class CoreTest {
                         String modeSelf,
                         String genderSelf, List<String> genderSeeking,
                         int ageSelf, int ageMin, int ageMax,
-                        List<String> lifestyleSelf,
-                        List<TagPreference> lifestylePrefs,
-                        OneToManyFilter religion,
-                        OneToManyFilter politics) {
+                        Object lifestyleSelf,
+                        Object lifestylePrefs,
+                        Object religion,
+                        Object politics) {
 
                 Filters f = new Filters();
                 f.setAccountId(accountId);
@@ -167,24 +167,26 @@ public class CoreTest {
                                 .setRadiusKm(radiusKm);
                 f.setLocation(loc);
 
-                if (religion != null)
-                        f.setReligion(religion);
-                if (politics != null)
-                        f.setPolitics(politics);
-
-                if (lifestyleSelf != null || lifestylePrefs != null) {
-                        ManyToManyFilter life = new ManyToManyFilter();
-                        if (lifestyleSelf != null)
-                                life.setSelf(lifestyleSelf);
-                        if (lifestylePrefs != null)
-                                life.setPreferences(lifestylePrefs);
-                        f.setLifestyle(life);
-                }
                 return f;
         }
 
-        private static TagPreference pref(String tag, Importance imp) {
-                return new TagPreference().setTag(tag).setImportance(imp);
+        private static Object pref(String tag, Importance imp) {
+                return Map.of("tag", tag, "importance", imp.name());
+        }
+
+        private static MatchStandardAnswer compatAnswer(
+                        long accountId,
+                        String questionId,
+                        String ownAnswer,
+                        List<String> acceptableAnswers,
+                        Importance importance) {
+                return new MatchStandardAnswer()
+                                .setAccountId(accountId)
+                                .setQuestionId(questionId)
+                                .setOwnAnswerOptionIds(List.of(ownAnswer))
+                                .setAcceptableAnswerOptionIds(acceptableAnswers)
+                                .setImportance(importance)
+                                .setUpdatedAt(100L + accountId);
         }
 
         private static void append(InProcessCluster ipc, Depot d, Object o) {
@@ -253,7 +255,7 @@ public class CoreTest {
         // ---------- Tests ----------
 
         @Test
-        public void basicCompatibility_buildsHeap_and_QueryReturnsCandidate(TestInfo ti) throws Exception {
+        public void basicMatchStandard_buildsHeap_and_QueryReturnsCandidate(TestInfo ti) throws Exception {
                 List<Class> ser = List.of(CalypsoSerialization.class);
                 try (InProcessCluster ipc = InProcessCluster.create(ser)) {
                         Core core = new Core();
@@ -307,6 +309,80 @@ public class CoreTest {
         }
 
         @Test
+        public void filterSaveQueuesRefillForUpdatedViewer(TestInfo ti) throws Exception {
+                List<Class> ser = List.of(CalypsoSerialization.class);
+                try (InProcessCluster ipc = InProcessCluster.create(ser)) {
+                        Core core = new Core();
+                        launchModuleDeterministic(ipc, core, ti);
+
+                        String coreName = core.getClass().getName();
+
+                        Depot filtersDepot = ipc.clusterDepot(coreName, "*filtersDepot");
+                        PState proj = ipc.clusterPState(coreName, "$$accountIdToFiltersProjection");
+                        PState heapP = ipc.clusterPState(coreName, "$$accountIdToCandidateHeap");
+
+                        double[] AUS = CITY_LL.get("Austin, TX, USA");
+                        Filters target = mkFilters(2L, AUS[0], AUS[1], radiusKmFromToken("my_city"), "balanced",
+                                        "woman", List.of("man"), 29, 25, 35, null, null, null, null);
+                        Filters viewer = mkFilters(1L, AUS[0], AUS[1], radiusKmFromToken("my_city"), "balanced",
+                                        "man", List.of("woman"), 30, 25, 35, null, null, null, null);
+
+                        append(ipc, filtersDepot, target);
+                        awaitPStateNonNull(proj, Path.key(2L));
+
+                        append(ipc, filtersDepot, viewer);
+                        awaitPStateNonNull(proj, Path.key(1L));
+
+                        TestHelpers.attainConditionPred(
+                                        () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
+                                        heap -> heap != null
+                                                        && heap.stream().anyMatch(c -> c.getTargetAccountId() == 2L));
+                }
+        }
+
+        @Test
+        public void wideningLocationAfterEmptyPoolRefillsViewerHeap(TestInfo ti) throws Exception {
+                List<Class> ser = List.of(CalypsoSerialization.class);
+                try (InProcessCluster ipc = InProcessCluster.create(ser)) {
+                        Core core = new Core();
+                        launchModuleDeterministic(ipc, core, ti);
+
+                        String coreName = core.getClass().getName();
+
+                        Depot filtersDepot = ipc.clusterDepot(coreName, "*filtersDepot");
+                        PState proj = ipc.clusterPState(coreName, "$$accountIdToFiltersProjection");
+                        PState heapP = ipc.clusterPState(coreName, "$$accountIdToCandidateHeap");
+
+                        double[] AUS = CITY_LL.get("Austin, TX, USA");
+                        double[] BOS = CITY_LL.get("Boston, MA, USA");
+                        Filters viewerNearby = mkFilters(1L, AUS[0], AUS[1], radiusKmFromToken("my_city"), "balanced",
+                                        "man", List.of("woman"), 30, 25, 35, null, null, null, null);
+                        Filters targetFarAway = mkFilters(2L, BOS[0], BOS[1], radiusKmFromToken("my_city"), "balanced",
+                                        "woman", List.of("man"), 29, 25, 35, null, null, null, null);
+                        Filters viewerWorldwide = mkFilters(1L, AUS[0], AUS[1], 30000.0, "balanced",
+                                        "man", List.of("woman"), 30, 25, 35, null, null, null, null);
+
+                        append(ipc, filtersDepot, viewerNearby);
+                        awaitPStateNonNull(proj, Path.key(1L));
+
+                        append(ipc, filtersDepot, targetFarAway);
+                        awaitPStateNonNull(proj, Path.key(2L));
+
+                        append(ipc, filtersDepot, viewerWorldwide);
+                        TestHelpers.attainConditionPred(
+                                        () -> (Filters) proj.selectOne(Path.key(1L)),
+                                        filters -> filters != null
+                                                        && filters.getLocation() != null
+                                                        && filters.getLocation().getRadiusKm() == 30000.0);
+
+                        TestHelpers.attainConditionPred(
+                                        () -> (List<MatchCandidate>) heapP.selectOne(Path.key(1L)),
+                                        heap -> heap != null
+                                                        && heap.stream().anyMatch(c -> c.getTargetAccountId() == 2L));
+                }
+        }
+
+        @Test
         public void genderIncompatibility_yieldsNoCandidates(TestInfo ti) throws Exception {
                 List<Class> ser = List.of(CalypsoSerialization.class);
                 try (InProcessCluster ipc = InProcessCluster.create(ser)) {
@@ -338,7 +414,7 @@ public class CoreTest {
         }
 
         @Test
-        public void lifestyleDealbreaker_filtersOutNonMatchingTargets(TestInfo ti) throws Exception {
+        public void matchStandardDealbreaker_filtersOutKnownConflicts(TestInfo ti) throws Exception {
                 List<Class> ser = List.of(CalypsoSerialization.class);
                 try (InProcessCluster ipc = InProcessCluster.create(ser)) {
                         Core core = new Core();
@@ -347,8 +423,10 @@ public class CoreTest {
                         String coreName = core.getClass().getName();
 
                         Depot filtersDepot = ipc.clusterDepot(coreName, "*filtersDepot");
+                        Depot matchStandardAnswerDepot = ipc.clusterDepot(coreName, "*matchStandardAnswerDepot");
                         Depot refillDepot = ipc.clusterDepot(coreName, "*matchRefillDepot");
                         PState proj = ipc.clusterPState(coreName, "$$accountIdToFiltersProjection");
+                        PState matchStandardP = ipc.clusterPState(coreName, "$$accountIdToMatchStandardAnswers");
                         PState heapP = ipc.clusterPState(coreName, "$$accountIdToCandidateHeap");
                         double[] DEN = CITY_LL.get("Denver, CO, USA");
                         Filters viewer = mkFilters(1L, DEN[0], DEN[1], radiusKmFromToken("my_city"), "balanced", "woman", List.of("man"), 27, 22, 35, List.of("non_smoker"), List.of(pref("no_drugs", Importance.DEALBREAKER)), null, null);
@@ -363,6 +441,16 @@ public class CoreTest {
                         awaitPStateNonNull(proj, Path.key(2L));
                         awaitPStateNonNull(proj, Path.key(3L));
 
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(1L, "standard.substances.drugs",
+                                        "no_drugs", List.of("no_drugs"), Importance.DEALBREAKER));
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(2L, "standard.substances.drugs",
+                                        "social_drinker", List.of("social_drinker"), Importance.NOT_IMPORTANT));
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(3L, "standard.substances.drugs",
+                                        "no_drugs", List.of("no_drugs"), Importance.NOT_IMPORTANT));
+                        awaitPStateNonNull(matchStandardP, Path.key(1L));
+                        awaitPStateNonNull(matchStandardP, Path.key(2L));
+                        awaitPStateNonNull(matchStandardP, Path.key(3L));
+
                         requestRefill(refillDepot, 1L, 10);
 
                         TestHelpers.attainConditionPred(
@@ -370,13 +458,13 @@ public class CoreTest {
                                         heap -> heap != null && !heap.isEmpty());
 
                         List<MatchCandidate> heap = (List<MatchCandidate>) heapP.selectOne(Path.key(1L));
-                        assertEquals(1, heap.size(), "Only no-drugs-compatible targets should remain");
+                        assertEquals(1, heap.size(), "Only standards-compatible targets should remain");
                         assertEquals(3L, heap.get(0).getTargetAccountId());
                 }
         }
 
         @Test
-        public void lifestylePreference_grantsScoreBonus(TestInfo ti) throws Exception {
+        public void matchStandardPreference_grantsScoreBonus(TestInfo ti) throws Exception {
                 List<Class> ser = List.of(CalypsoSerialization.class);
                 try (InProcessCluster ipc = InProcessCluster.create(ser)) {
                         Core core = new Core();
@@ -385,8 +473,10 @@ public class CoreTest {
                         String coreName = core.getClass().getName();
 
                         Depot filtersDepot = ipc.clusterDepot(coreName, "*filtersDepot");
+                        Depot matchStandardAnswerDepot = ipc.clusterDepot(coreName, "*matchStandardAnswerDepot");
                         Depot refillDepot = ipc.clusterDepot(coreName, "*matchRefillDepot");
                         PState proj = ipc.clusterPState(coreName, "$$accountIdToFiltersProjection");
+                        PState matchStandardP = ipc.clusterPState(coreName, "$$accountIdToMatchStandardAnswers");
                         PState heapP = ipc.clusterPState(coreName, "$$accountIdToCandidateHeap");
 
                         double[] MIA = CITY_LL.get("Miami, FL, USA");
@@ -401,6 +491,16 @@ public class CoreTest {
                         awaitPStateNonNull(proj, Path.key(1L));
                         awaitPStateNonNull(proj, Path.key(2L));
                         awaitPStateNonNull(proj, Path.key(3L));
+
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(1L, "standard.substances.drugs",
+                                        "no_drugs", List.of("no_drugs"), Importance.PREFERENCE));
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(2L, "standard.substances.drugs",
+                                        "no_drugs", List.of("no_drugs"), Importance.NOT_IMPORTANT));
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(3L, "standard.substances.drugs",
+                                        "social_drinker", List.of("social_drinker"), Importance.NOT_IMPORTANT));
+                        awaitPStateNonNull(matchStandardP, Path.key(1L));
+                        awaitPStateNonNull(matchStandardP, Path.key(2L));
+                        awaitPStateNonNull(matchStandardP, Path.key(3L));
 
                         requestRefill(refillDepot, 1L, 10);
 
@@ -421,7 +521,7 @@ public class CoreTest {
                         assertTrue(preferredCand.getStage0Score() >= 0.0);
                         assertTrue(neutralCand.getStage0Score() >= 0.0);
                         assertTrue(preferredCand.getStage0Score() > neutralCand.getStage0Score(),
-                                        "Preference-aligned targets should outrank neutral ones");
+                                        "Standards-aligned targets should outrank neutral ones");
                 }
         }
 
@@ -528,21 +628,35 @@ public class CoreTest {
                         String coreName = core.getClass().getName();
 
                         Depot filtersDepot = ipc.clusterDepot(coreName, "*filtersDepot");
+                        Depot signalsDepot = ipc.clusterDepot(coreName, "*signalsDepot");
+                        Depot matchStandardAnswerDepot = ipc.clusterDepot(coreName, "*matchStandardAnswerDepot");
                         Depot refillDepot = ipc.clusterDepot(coreName, "*matchRefillDepot");
+                        PState signalsP = ipc.clusterPState(coreName, "$$accountIdToSignals");
+                        PState matchStandardP = ipc.clusterPState(coreName, "$$accountIdToMatchStandardAnswers");
                         PState heapP = ipc.clusterPState(coreName, "$$accountIdToCandidateHeap");
 
                         double[] MIA = CITY_LL.get("Miami, FL, USA");
-                        // focused vs balanced candidates → focused floor should exclude some
-                        OneToManyFilter viewerReligion = oneToMany("christian", null, Importance.DEALBREAKER);
-                        OneToManyFilter viewerPolitics = oneToMany("liberal", null, Importance.DEALBREAKER);
-                        OneToManyFilter matchReligion = oneToMany("christian", null, Importance.NOT_IMPORTANT);
-                        OneToManyFilter matchPolitics = oneToMany("liberal", null, Importance.NOT_IMPORTANT);
-                        OneToManyFilter mismatchReligion = oneToMany("muslim", null, Importance.DEALBREAKER);
-                        OneToManyFilter mismatchPolitics = oneToMany("conservative", null, Importance.DEALBREAKER);
+                        // Focused mode should keep strong explicit-signal + match standard matches
+                        // while cutting otherwise hard-filter-compatible candidates below its floor.
+                        append(ipc, filtersDepot, mkFilters(1L, MIA[0], MIA[1], radiusKmFromToken("my_city"), "focused", "woman", List.of("man"), 29, 24, 36, null, null, null, null));
+                        append(ipc, filtersDepot, mkFilters(2L, MIA[0], MIA[1], radiusKmFromToken("my_city"), "balanced", "man", List.of("woman"), 30, 24, 36, null, null, null, null));
+                        append(ipc, filtersDepot, mkFilters(3L, MIA[0], MIA[1], radiusKmFromToken("my_city"), "focused", "man", List.of("woman"), 31, 24, 36, null, null, null, null));
 
-                        append(ipc, filtersDepot, mkFilters(1L, MIA[0], MIA[1], radiusKmFromToken("my_city"), "focused", "woman", List.of("man"), 29, 24, 36, null, null, viewerReligion, viewerPolitics));
-                        append(ipc, filtersDepot, mkFilters(2L, MIA[0], MIA[1], radiusKmFromToken("my_city"), "balanced", "man", List.of("woman"), 30, 24, 36, null, null, mismatchReligion, mismatchPolitics));
-                        append(ipc, filtersDepot, mkFilters(3L, MIA[0], MIA[1], radiusKmFromToken("my_city"), "focused", "man", List.of("woman"), 31, 24, 36, null, null, matchReligion, matchPolitics));
+                        append(ipc, signalsDepot, signals(1L,
+                                        signalRecord("intentional_living", SignalIntent.SELF, 0.90),
+                                        signalRecord("outdoor_weekends", SignalIntent.SEEKING, 0.90)));
+                        append(ipc, signalsDepot, signals(3L,
+                                        signalRecord("outdoor_weekends", SignalIntent.SELF, 0.90),
+                                        signalRecord("intentional_living", SignalIntent.SEEKING, 0.90)));
+                        awaitPStateNonNull(signalsP, Path.key(1L));
+                        awaitPStateNonNull(signalsP, Path.key(3L));
+
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(1L, "standard.conflict.repair",
+                                        "talk_it_through", List.of("talk_it_through"), Importance.PREFERENCE));
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(3L, "standard.conflict.repair",
+                                        "talk_it_through", List.of("talk_it_through"), Importance.NOT_IMPORTANT));
+                        awaitPStateNonNull(matchStandardP, Path.key(1L));
+                        awaitPStateNonNull(matchStandardP, Path.key(3L));
 
                         requestRefill(refillDepot, 1L, 10);
                         TestHelpers.attainConditionPred(
@@ -667,7 +781,7 @@ public class CoreTest {
         }
 
         @Test
-        public void politicsDealbreaker_blocksIncompatibleCandidates(TestInfo ti) throws Exception {
+        public void politicsMatchStandardDealbreaker_blocksKnownConflicts(TestInfo ti) throws Exception {
                 List<Class> ser = List.of(CalypsoSerialization.class);
                 try (InProcessCluster ipc = InProcessCluster.create(ser)) {
                         Core core = new Core();
@@ -676,7 +790,9 @@ public class CoreTest {
                         String coreName = core.getClass().getName();
 
                         Depot filtersDepot = ipc.clusterDepot(coreName, "*filtersDepot");
+                        Depot matchStandardAnswerDepot = ipc.clusterDepot(coreName, "*matchStandardAnswerDepot");
                         Depot refillDepot = ipc.clusterDepot(coreName, "*matchRefillDepot");
+                        PState matchStandardP = ipc.clusterPState(coreName, "$$accountIdToMatchStandardAnswers");
                         PState heapP = ipc.clusterPState(coreName, "$$accountIdToCandidateHeap");
 
                         double[] BOS = CITY_LL.get("Boston, MA, USA");
@@ -694,6 +810,16 @@ public class CoreTest {
                         append(ipc, filtersDepot, targetOk);
                         append(ipc, filtersDepot, targetBad);
 
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(1L, "standard.values.politics",
+                                        "left", List.of("left", "center_left"), Importance.DEALBREAKER));
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(2L, "standard.values.politics",
+                                        "left", List.of("left"), Importance.NOT_IMPORTANT));
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(3L, "standard.values.politics",
+                                        "right", List.of("right"), Importance.NOT_IMPORTANT));
+                        awaitPStateNonNull(matchStandardP, Path.key(1L));
+                        awaitPStateNonNull(matchStandardP, Path.key(2L));
+                        awaitPStateNonNull(matchStandardP, Path.key(3L));
+
                         requestRefill(refillDepot, 1L, 10);
 
                         TestHelpers.attainConditionPred(
@@ -707,12 +833,12 @@ public class CoreTest {
 
                         assertTrue(ids.contains(2L), "Politically compatible target should be included");
                         assertFalse(ids.contains(3L),
-                                        "Politically incompatible target should be excluded by dealbreaker");
+                                        "Politically incompatible target should be excluded by match standard dealbreaker");
                 }
         }
 
         @Test
-        public void politicsPreference_boostsScoreForPreferredTags(TestInfo ti) throws Exception {
+        public void politicsMatchStandardPreference_boostsScoreForPreferredAnswer(TestInfo ti) throws Exception {
                 List<Class> ser = List.of(CalypsoSerialization.class);
                 try (InProcessCluster ipc = InProcessCluster.create(ser)) {
                         Core core = new Core();
@@ -721,7 +847,9 @@ public class CoreTest {
                         String coreName = core.getClass().getName();
 
                         Depot filtersDepot = ipc.clusterDepot(coreName, "*filtersDepot");
+                        Depot matchStandardAnswerDepot = ipc.clusterDepot(coreName, "*matchStandardAnswerDepot");
                         Depot refillDepot = ipc.clusterDepot(coreName, "*matchRefillDepot");
+                        PState matchStandardP = ipc.clusterPState(coreName, "$$accountIdToMatchStandardAnswers");
                         PState heapP = ipc.clusterPState(coreName, "$$accountIdToCandidateHeap");
 
                         double[] DEN = CITY_LL.get("Denver, CO, USA");
@@ -738,6 +866,16 @@ public class CoreTest {
                         append(ipc, filtersDepot, viewer);
                         append(ipc, filtersDepot, targetPreferred);
                         append(ipc, filtersDepot, targetNeutral);
+
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(1L, "standard.values.politics",
+                                        "center", List.of("left"), Importance.PREFERENCE));
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(2L, "standard.values.politics",
+                                        "left", List.of("left"), Importance.NOT_IMPORTANT));
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(3L, "standard.values.politics",
+                                        "center", List.of("center"), Importance.NOT_IMPORTANT));
+                        awaitPStateNonNull(matchStandardP, Path.key(1L));
+                        awaitPStateNonNull(matchStandardP, Path.key(2L));
+                        awaitPStateNonNull(matchStandardP, Path.key(3L));
 
                         requestRefill(refillDepot, 1L, 10);
 
@@ -759,12 +897,12 @@ public class CoreTest {
                                         .orElseThrow(() -> new AssertionError("Neutral politics candidate not found"));
 
                         assertTrue(preferred.getStage0Score() > neutral.getStage0Score(),
-                                        "Candidate matching viewer's politics preference should have higher score");
+                                        "Candidate matching viewer's politics match standard should have higher score");
                 }
         }
 
         @Test
-        public void religionDealbreaker_blocksIncompatibleCandidates(TestInfo ti) throws Exception {
+        public void religionMatchStandardDealbreaker_blocksKnownConflicts(TestInfo ti) throws Exception {
                 List<Class> ser = List.of(CalypsoSerialization.class);
                 try (InProcessCluster ipc = InProcessCluster.create(ser)) {
                         Core core = new Core();
@@ -773,7 +911,9 @@ public class CoreTest {
                         String coreName = core.getClass().getName();
 
                         Depot filtersDepot = ipc.clusterDepot(coreName, "*filtersDepot");
+                        Depot matchStandardAnswerDepot = ipc.clusterDepot(coreName, "*matchStandardAnswerDepot");
                         Depot refillDepot = ipc.clusterDepot(coreName, "*matchRefillDepot");
+                        PState matchStandardP = ipc.clusterPState(coreName, "$$accountIdToMatchStandardAnswers");
                         PState heapP = ipc.clusterPState(coreName, "$$accountIdToCandidateHeap");
 
                         double[] DEN = CITY_LL.get("Denver, CO, USA");
@@ -791,6 +931,16 @@ public class CoreTest {
                         append(ipc, filtersDepot, targetOk);
                         append(ipc, filtersDepot, targetBad);
 
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(1L, "standard.religion.identity",
+                                        "christian", List.of("christian"), Importance.DEALBREAKER));
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(2L, "standard.religion.identity",
+                                        "christian", List.of("christian"), Importance.NOT_IMPORTANT));
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(3L, "standard.religion.identity",
+                                        "muslim", List.of("muslim"), Importance.NOT_IMPORTANT));
+                        awaitPStateNonNull(matchStandardP, Path.key(1L));
+                        awaitPStateNonNull(matchStandardP, Path.key(2L));
+                        awaitPStateNonNull(matchStandardP, Path.key(3L));
+
                         requestRefill(refillDepot, 1L, 10);
 
                         TestHelpers.attainConditionPred(
@@ -804,12 +954,12 @@ public class CoreTest {
 
                         assertTrue(ids.contains(2L), "Religiously compatible target should be included");
                         assertFalse(ids.contains(3L),
-                                        "Religiously incompatible target should be excluded by dealbreaker");
+                                        "Religiously incompatible target should be excluded by match standard dealbreaker");
                 }
         }
 
         @Test
-        public void religionPreference_boostsScoreForPreferredTags(TestInfo ti) throws Exception {
+        public void religionMatchStandardPreference_boostsScoreForPreferredAnswer(TestInfo ti) throws Exception {
                 List<Class> ser = List.of(CalypsoSerialization.class);
                 try (InProcessCluster ipc = InProcessCluster.create(ser)) {
                         Core core = new Core();
@@ -818,7 +968,9 @@ public class CoreTest {
                         String coreName = core.getClass().getName();
 
                         Depot filtersDepot = ipc.clusterDepot(coreName, "*filtersDepot");
+                        Depot matchStandardAnswerDepot = ipc.clusterDepot(coreName, "*matchStandardAnswerDepot");
                         Depot refillDepot = ipc.clusterDepot(coreName, "*matchRefillDepot");
+                        PState matchStandardP = ipc.clusterPState(coreName, "$$accountIdToMatchStandardAnswers");
                         PState heapP = ipc.clusterPState(coreName, "$$accountIdToCandidateHeap");
 
                         double[] SEA = CITY_LL.get("Seattle, WA, USA");
@@ -835,6 +987,16 @@ public class CoreTest {
                         append(ipc, filtersDepot, viewer);
                         append(ipc, filtersDepot, targetPreferred);
                         append(ipc, filtersDepot, targetNeutral);
+
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(1L, "standard.religion.identity",
+                                        "agnostic", List.of("spiritual"), Importance.PREFERENCE));
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(2L, "standard.religion.identity",
+                                        "spiritual", List.of("spiritual"), Importance.NOT_IMPORTANT));
+                        append(ipc, matchStandardAnswerDepot, compatAnswer(3L, "standard.religion.identity",
+                                        "atheist", List.of("atheist"), Importance.NOT_IMPORTANT));
+                        awaitPStateNonNull(matchStandardP, Path.key(1L));
+                        awaitPStateNonNull(matchStandardP, Path.key(2L));
+                        awaitPStateNonNull(matchStandardP, Path.key(3L));
 
                         requestRefill(refillDepot, 1L, 10);
 
@@ -856,7 +1018,7 @@ public class CoreTest {
                                         .orElseThrow(() -> new AssertionError("Neutral religion candidate not found"));
 
                         assertTrue(preferred.getStage0Score() > neutral.getStage0Score(),
-                                        "Candidate matching viewer's religion preference should have higher score");
+                                        "Candidate matching viewer's religion match standard should have higher score");
                 }
         }
 

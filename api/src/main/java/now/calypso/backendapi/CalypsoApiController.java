@@ -18,6 +18,8 @@ import org.slf4j.LoggerFactory;
 
 import now.calypso.backend.CalypsoHelpers;
 import now.calypso.backend.data.*;
+import now.calypso.backendapi.matchstandards.MatchStandardAnswerValidator;
+import now.calypso.backendapi.matchstandards.MatchStandardQuestionLibrary;
 import now.calypso.backendapi.filters.*;
 import now.calypso.backendapi.pojos.*;
 import now.calypso.backendapi.prompts.PromptLibrary;
@@ -36,6 +38,9 @@ public class CalypsoApiController {
 
     @Autowired
     private FiltersValidator validator;
+
+    @Autowired
+    private MatchStandardAnswerValidator matchStandardAnswerValidator;
 
     @Autowired
     private TagDictionaryService tagService;
@@ -540,6 +545,57 @@ public class CalypsoApiController {
                 .map(filters -> new GetFilters(filters))
                 // but if it completed to null, Mono is empty → turn into 404
                 .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND)));
+    }
+
+    @GetMapping("/api/match-standards/questions")
+    public List<MatchStandardQuestion> matchStandardQuestions() {
+        return MatchStandardQuestionLibrary.all();
+    }
+
+    @GetMapping("/api/accounts/{id}/match-standards/answers")
+    public Mono<MatchStandardAnswerSet> getMatchStandardAnswers(@PathVariable("id") String idStr,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getMatchStandardAnswers(me, accountId));
+    }
+
+    @PostMapping("/api/accounts/{id}/match-standards/answers/{questionId}")
+    public Mono<MatchStandardAnswer> postMatchStandardAnswer(
+            @PathVariable("id") String idStr,
+            @PathVariable("questionId") String questionId,
+            @RequestBody PostMatchStandardAnswerRequest params,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        MatchStandardAnswer answer = matchStandardAnswerValidator.toAnswer(accountId, questionId, params);
+        return Mono.fromFuture(manager.postMatchStandardAnswer(answer));
+    }
+
+    @GetMapping("/api/accounts/{id}/match-standards/next")
+    public Mono<MatchStandardQuestion> getNextMatchStandardQuestion(
+            @PathVariable("id") String idStr,
+            @RequestParam(value = "category", required = false) String category,
+            @RequestParam(value = "starter", required = false, defaultValue = "false") boolean starter,
+            WebSession session) {
+        long accountId = CalypsoHelpers.parseAccountId(idStr);
+        Long me = session.getAttribute("accountId");
+        if (me == null || !me.equals(accountId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return Mono.fromFuture(manager.getMatchStandardAnswers(me, accountId))
+                .flatMap(answerSet -> {
+                    MatchStandardQuestion question = MatchStandardQuestionLibrary.nextQuestion(answerSet, category, starter);
+                    return question == null
+                            ? Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND))
+                            : Mono.just(question);
+                });
     }
 
     @GetMapping("/api/meta/tags/lifestyle")

@@ -90,6 +90,7 @@ public class CalypsoApiManager {
     private final Depot publicPromptAnswerDepot;
     private final Depot publicPromptReactionDepot;
     private final Depot publicPromptSelectionDepot;
+    private final Depot matchStandardAnswerDepot;
     private final Depot matchmakingFollowupAssignmentDepot;
     private final Depot matchmakingFollowupAnswerDepot;
     private final Depot silhouetteDepot;
@@ -116,6 +117,7 @@ public class CalypsoApiManager {
     private final QueryTopologyClient<List<PublicPromptAnswer>> getPublicPromptFeed;
     private final QueryTopologyClient<List<PublicPromptAnswer>> getMyPublicPromptAnswers;
     private final QueryTopologyClient<PublicPromptSelection> getPublicPromptSelection;
+    private final QueryTopologyClient<MatchStandardAnswerSet> getMatchStandardAnswersFromAccountId;
     private final QueryTopologyClient<List<Map<String, Object>>> getMatchmakingFollowupCandidatesForTarget;
     private final QueryTopologyClient<PrivatePromptAssignment> getMatchmakingFollowupAssignmentByInstanceId;
     private final QueryTopologyClient<PrivatePromptAnswer> getMatchmakingFollowupAnswerByInstanceId;
@@ -310,6 +312,7 @@ public class CalypsoApiManager {
         publicPromptAnswerDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*publicPromptAnswerDepot");
         publicPromptReactionDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*publicPromptReactionDepot");
         publicPromptSelectionDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*publicPromptSelectionDepot");
+        matchStandardAnswerDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*matchStandardAnswerDepot");
         matchmakingFollowupAssignmentDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*matchmakingFollowupAssignmentDepot");
         matchmakingFollowupAnswerDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*matchmakingFollowupAnswerDepot");
         silhouetteDepot = cluster.clusterDepot(CORE_MODULE_NAME, "*silhouetteDepot");
@@ -339,6 +342,8 @@ public class CalypsoApiManager {
         getPublicPromptFeed = cluster.clusterQuery(CORE_MODULE_NAME, "getPublicPromptFeed");
         getMyPublicPromptAnswers = cluster.clusterQuery(CORE_MODULE_NAME, "getMyPublicPromptAnswers");
         getPublicPromptSelection = cluster.clusterQuery(CORE_MODULE_NAME, "getPublicPromptSelection");
+        getMatchStandardAnswersFromAccountId = cluster.clusterQuery(CORE_MODULE_NAME,
+                "getMatchStandardAnswersFromAccountId");
         getMatchmakingFollowupCandidatesForTarget = cluster.clusterQuery(CORE_MODULE_NAME,
                 "getMatchmakingFollowupCandidatesForTarget");
         getMatchmakingFollowupAssignmentByInstanceId = cluster.clusterQuery(CORE_MODULE_NAME,
@@ -607,6 +612,18 @@ public class CalypsoApiManager {
 
     public CompletableFuture<Filters> getFilters(long requesterId, long accountId) {
         return getFiltersFromAccountId.invokeAsync(requesterId, accountId);
+    }
+
+    public CompletableFuture<MatchStandardAnswer> postMatchStandardAnswer(MatchStandardAnswer answer) {
+        if (answer == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Match standard answer is required"));
+        }
+        return matchStandardAnswerDepot.appendAsync(answer).thenApply(ignored -> answer);
+    }
+
+    public CompletableFuture<MatchStandardAnswerSet> getMatchStandardAnswers(long requesterId, long accountId) {
+        return getMatchStandardAnswersFromAccountId.invokeAsync(requesterId, accountId)
+                .thenApply(set -> set == null ? new MatchStandardAnswerSet(accountId) : set);
     }
 
     public CompletableFuture<Signals> getSignals(long requesterId, long accountId) {
@@ -7153,6 +7170,24 @@ public class CalypsoApiManager {
         return row;
     }
 
+    private static Map<String, Object> rawHeapCandidateRow(MatchCandidate candidate) {
+        if (candidate == null) {
+            return Map.of();
+        }
+        LinkedHashMap<String, Object> row = new LinkedHashMap<>();
+        row.put("targetAccountId", CalypsoHelpers.serializeAccountId(candidate.getTargetAccountId()));
+        row.put("score", candidate.getStage0Score());
+        row.put("computedAt", candidate.getComputedAt());
+        if (candidate.isSetReasons() && candidate.getReasons() != null) {
+            row.put("reasons", new ArrayList<>(candidate.getReasons()));
+        }
+        Map<String, Object> debug = scorerDebugFromCandidate(candidate);
+        if (!debug.isEmpty()) {
+            row.put("scorerDebug", debug);
+        }
+        return row;
+    }
+
     private static List<MatchCandidate> normalizeHeap(Object rawHeap, int limit) {
         if (!(rawHeap instanceof List<?> heap) || heap.isEmpty()) {
             return List.of();
@@ -7168,6 +7203,27 @@ public class CalypsoApiManager {
             }
         }
         return out;
+    }
+
+    private CompletableFuture<List<MatchCandidate>> loadRawHeapCandidates(long viewerId, int limit) {
+        return accountIdToCandidateHeap.selectOneAsync(Path.key(viewerId))
+                .completeOnTimeout(null, 5, TimeUnit.SECONDS)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to read raw candidate heap for account {}", viewerId, ex);
+                    return null;
+                })
+                .thenApply(rawHeap -> normalizeHeap(rawHeap, limit));
+    }
+
+    private CompletableFuture<List<MatchCandidate>> loadRawHeapCandidatesWithEmptyRetry(long viewerId, int limit) {
+        return loadRawHeapCandidates(viewerId, limit).thenCompose(candidates -> {
+            if (candidates != null && !candidates.isEmpty()) {
+                return CompletableFuture.completedFuture(candidates);
+            }
+            return CompletableFuture
+                    .supplyAsync(() -> null, CompletableFuture.delayedExecutor(900, TimeUnit.MILLISECONDS))
+                    .thenCompose(ignored -> loadRawHeapCandidates(viewerId, limit));
+        });
     }
 
     private static boolean isPromptLikeSeen(Object raw) {
@@ -7963,18 +8019,18 @@ public class CalypsoApiManager {
 	                    rememberPairInsight(viewerId, candidateTargetId, decision);
 	                }
 
-	                double compatibility = clamp01(
+	                double matchStandard = clamp01(
 	                        decision.finalScore == null ? 0.5 : decision.finalScore.doubleValue());
                 double confidence = clamp01(
                         decision.confidence == null ? 0.5 : decision.confidence.doubleValue());
                 double appliedWeight = FACECARD_RERANK_MAX_WEIGHT * Math.max(MATCH_RERANK_CONFIDENCE_MIN, confidence);
-                double blendedNorm = blendedRerankScore(stage2Norm, compatibility, appliedWeight, decision.recommendedUse);
+                double blendedNorm = blendedRerankScore(stage2Norm, matchStandard, appliedWeight, decision.recommendedUse);
                 double finalScore = blendedNorm * 100.0;
 
                 Map<String, Object> debug = copyScorerDebug(candidate);
                 debug.put("tier2Score", candidate.score);
                 debug.put("tier2Normalized", stage2Norm);
-                debug.put("tier3Compatibility", compatibility);
+                debug.put("tier3Compatibility", matchStandard);
                 debug.put("tier3Spark", decision.sparkScore == null ? 0.5 : clamp01(decision.sparkScore.doubleValue()));
                 debug.put("tier3Sustainability",
                         decision.sustainabilityScore == null ? 0.5 : clamp01(decision.sustainabilityScore.doubleValue()));
@@ -8014,7 +8070,7 @@ public class CalypsoApiManager {
                         rerankedMatch,
                         decision,
                         stage2Norm,
-                        compatibility,
+                        matchStandard,
                         confidence,
                         appliedWeight,
                         "facecard_stage2",
@@ -8355,11 +8411,11 @@ public class CalypsoApiManager {
 
     private static double blendedRerankScore(
             double stageNorm,
-            double compatibility,
+            double matchStandard,
             double appliedWeight,
             String recommendedUse) {
         double base = clamp01(stageNorm);
-        double blended = clamp01((base * (1.0 - appliedWeight)) + (clamp01(compatibility) * appliedWeight));
+        double blended = clamp01((base * (1.0 - appliedWeight)) + (clamp01(matchStandard) * appliedWeight));
         if ("deprioritize".equals(recommendedUse)) {
             return clamp01(Math.min(blended, base * MATCH_RERANK_BLOCKER_CAP));
         }
@@ -8391,20 +8447,20 @@ public class CalypsoApiManager {
         }
 
         double deterministicNorm = clamp01(deterministic.score / 100.0);
-        double compatibility = clamp01(decision.finalScore == null ? 0.5 : decision.finalScore.doubleValue());
+        double matchStandard = clamp01(decision.finalScore == null ? 0.5 : decision.finalScore.doubleValue());
         double confidence = clamp01(decision.confidence == null ? 0.5 : decision.confidence.doubleValue());
         double appliedWeight = MATCH_PAIR_RERANK_MAX_WEIGHT * Math.max(MATCH_RERANK_CONFIDENCE_MIN, confidence);
         boolean deprioritize = "deprioritize".equals(decision.recommendedUse);
-        double blendedNorm = blendedRerankScore(deterministicNorm, compatibility, appliedWeight, decision.recommendedUse);
+        double blendedNorm = blendedRerankScore(deterministicNorm, matchStandard, appliedWeight, decision.recommendedUse);
         boolean blocked = deprioritize
                 && confidence >= MATCH_PAIR_RERANK_BLOCK_CONFIDENCE
-                && compatibility <= MATCH_PAIR_RERANK_BLOCK_COMPATIBILITY;
+                && matchStandard <= MATCH_PAIR_RERANK_BLOCK_COMPATIBILITY;
         double finalScore = blocked ? 0.0 : blendedNorm * 100.0;
 
         Map<String, Object> debug = copyScorerDebug(deterministic);
         debug.put("tier3Applied", true);
         debug.put("tier3Surface", "matches");
-        debug.put("tier3Compatibility", compatibility);
+        debug.put("tier3Compatibility", matchStandard);
         debug.put("tier3Spark", decision.sparkScore == null ? 0.5 : clamp01(decision.sparkScore.doubleValue()));
         debug.put("tier3Sustainability",
                 decision.sustainabilityScore == null ? 0.5 : clamp01(decision.sustainabilityScore.doubleValue()));
@@ -8444,7 +8500,7 @@ public class CalypsoApiManager {
                     after,
                     decision,
                     deterministicNorm,
-                    compatibility,
+                    matchStandard,
                     confidence,
                     appliedWeight,
                     "match_mutual_min");
@@ -8459,7 +8515,7 @@ public class CalypsoApiManager {
             GetMatch after,
             MatchReranker.Decision decision,
             double stage2Norm,
-            double compatibility,
+            double matchStandard,
             double confidence,
             double appliedWeight,
             String scoreSource) {
@@ -8470,7 +8526,7 @@ public class CalypsoApiManager {
                 after,
                 decision,
                 stage2Norm,
-                compatibility,
+                matchStandard,
                 confidence,
                 appliedWeight,
                 scoreSource,
@@ -8484,7 +8540,7 @@ public class CalypsoApiManager {
             GetMatch after,
             MatchReranker.Decision decision,
             double stage2Norm,
-            double compatibility,
+            double matchStandard,
             double confidence,
             double appliedWeight,
             String scoreSource,
@@ -8509,7 +8565,7 @@ public class CalypsoApiManager {
         event.put("netChange", netChange);
         event.put("percentChange", Math.abs(beforeScore) <= 1.0e-9 ? null : (netChange / Math.abs(beforeScore)) * 100.0);
         event.put("tier2Normalized", stage2Norm);
-        event.put("tier3Compatibility", compatibility);
+        event.put("tier3Compatibility", matchStandard);
         event.put("tier3Confidence", confidence);
         event.put("tier3AppliedWeight", appliedWeight);
         event.put("recommendedUse", decision.recommendedUse);
@@ -8744,14 +8800,8 @@ public class CalypsoApiManager {
     }
 
     private CompletableFuture<List<GetMatch>> loadRawRankedCandidates(long viewerId, int limit) {
-        return accountIdToCandidateHeap.selectOneAsync(Path.key(viewerId))
-                .completeOnTimeout(null, 5, TimeUnit.SECONDS)
-                .exceptionally(ex -> {
-                    LOG.warn("Failed to read raw candidate heap for account {}", viewerId, ex);
-                    return null;
-                })
-                .thenCompose(rawHeap -> {
-                    List<MatchCandidate> top = normalizeHeap(rawHeap, limit);
+        return loadRawHeapCandidates(viewerId, limit)
+                .thenCompose(top -> {
                     if (top.isEmpty()) {
                         return CompletableFuture.completedFuture(List.<GetMatch>of());
                     }
@@ -9863,12 +9913,48 @@ public class CalypsoApiManager {
                 .invokeAsync(requesterId, viewerId)
                 .completeOnTimeout(null, 2, TimeUnit.SECONDS)
                 .exceptionally(ex -> null);
-        CompletableFuture<List<GetMatch>> topCandidatesFuture = loadRawRankedCandidates(viewerId, clamped)
+        CompletableFuture<List<MatchCandidate>> rawHeapCandidatesFuture = loadRawHeapCandidatesWithEmptyRetry(viewerId, clamped)
                 .completeOnTimeout(List.of(), 4, TimeUnit.SECONDS)
                 .exceptionally(ex -> {
-                    LOG.warn("Failed to load top candidate rows for admin pair-score {}", viewerId, ex);
+                    LOG.warn("Failed to load raw heap rows for admin pair-score {}", viewerId, ex);
                     return List.of();
                 });
+        CompletableFuture<List<GetMatch>> topCandidatesFuture = rawHeapCandidatesFuture.thenCompose(rawCandidates -> {
+            if (rawCandidates == null || rawCandidates.isEmpty()) {
+                return CompletableFuture.completedFuture(List.<GetMatch>of());
+            }
+            List<Long> ids = new ArrayList<>(rawCandidates.size());
+            Map<Long, MatchCandidate> byId = new HashMap<>();
+            for (MatchCandidate candidate : rawCandidates) {
+                if (candidate == null) {
+                    continue;
+                }
+                ids.add(candidate.getTargetAccountId());
+                byId.put(candidate.getTargetAccountId(), candidate);
+            }
+            if (ids.isEmpty()) {
+                return CompletableFuture.completedFuture(List.<GetMatch>of());
+            }
+            return getAccountsFromAccountIds.invokeAsync(viewerId, ids).thenApply(accounts -> {
+                List<AccountWithId> safeAccounts = accounts == null ? List.of() : accounts;
+                List<GetMatch> out = new ArrayList<>(safeAccounts.size());
+                for (AccountWithId accountWithId : safeAccounts) {
+                    if (accountWithId == null || accountWithId.account == null) {
+                        continue;
+                    }
+                    MatchCandidate candidate = byId.get(accountWithId.accountId);
+                    if (candidate == null) {
+                        continue;
+                    }
+                    out.add(new GetMatch(new GetAccount(accountWithId), candidate.getStage0Score(),
+                            candidate.getComputedAt(), scorerDebugFromCandidate(candidate)));
+                }
+                return out;
+            });
+        }).completeOnTimeout(List.of(), 4, TimeUnit.SECONDS).exceptionally(ex -> {
+            LOG.warn("Failed to hydrate top candidate rows for admin pair-score {}", viewerId, ex);
+            return List.of();
+        });
 
         CompletableFuture<Map<String, Object>> pairFuture;
         if (targetIdMaybe == null || targetIdMaybe.longValue() < 0L) {
@@ -9990,11 +10076,26 @@ public class CalypsoApiManager {
             });
         }
 
-        CompletableFuture<Void> all = CompletableFuture.allOf(viewerFiltersFuture, topCandidatesFuture, pairFuture);
+        CompletableFuture<Void> all = CompletableFuture.allOf(
+                viewerFiltersFuture,
+                rawHeapCandidatesFuture,
+                topCandidatesFuture,
+                pairFuture);
         return all.thenApply(ignored -> {
             String viewerMode = normalizeModeForDebug(CalypsoHelpers.getModeSelfOrNull(viewerFiltersFuture.join()));
             double viewerMatchThreshold = modeAwareMatchThreshold(viewerMode);
             double viewerAutoPassThreshold = modeAwareAutoPassThreshold(viewerMode);
+
+            List<MatchCandidate> rawHeapCandidates = rawHeapCandidatesFuture.join();
+            ArrayList<Map<String, Object>> rawRows = new ArrayList<>();
+            if (rawHeapCandidates != null) {
+                for (MatchCandidate candidate : rawHeapCandidates) {
+                    Map<String, Object> row = rawHeapCandidateRow(candidate);
+                    if (!row.isEmpty()) {
+                        rawRows.add(row);
+                    }
+                }
+            }
 
             List<GetMatch> topCandidates = topCandidatesFuture.join();
             ArrayList<Map<String, Object>> topRows = new ArrayList<>();
@@ -10012,6 +10113,10 @@ public class CalypsoApiManager {
             out.put("viewerId", CalypsoHelpers.serializeAccountId(viewerId));
             out.put("viewerMode", viewerMode);
             out.put("viewerThresholds", thresholdsMap(viewerMatchThreshold, viewerAutoPassThreshold));
+            out.put("heap", Map.of(
+                    "rawCandidateCount", rawRows.size(),
+                    "hydratedCandidateCount", topRows.size(),
+                    "rawTopCandidates", rawRows));
             out.put("topCandidates", topRows);
             out.put("pair", pairFuture.join());
             return out;
@@ -10022,6 +10127,10 @@ public class CalypsoApiManager {
             fallback.put("viewerId", CalypsoHelpers.serializeAccountId(viewerId));
             fallback.put("viewerMode", "balanced");
             fallback.put("viewerThresholds", thresholdsMap(MATCH_MIN_BALANCED, MATCH_AUTOPASS_BALANCED));
+            fallback.put("heap", Map.of(
+                    "rawCandidateCount", 0,
+                    "hydratedCandidateCount", 0,
+                    "rawTopCandidates", List.of()));
             fallback.put("topCandidates", List.of());
             fallback.put("pair", null);
             return fallback;

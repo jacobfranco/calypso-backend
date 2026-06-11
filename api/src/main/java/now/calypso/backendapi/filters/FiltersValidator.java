@@ -73,31 +73,7 @@ public class FiltersValidator {
             }
         }
 
-        // --- tag sanity & duplicates ---------------------------------------
-        checkMany(p.lifestyle, tags.lifestyleFlat(), "lifestyle");
         checkOne(p.gender, tags.gendersFlat(), "gender");
-        checkOneSelfOnly(p.religion, tags.religionsFlat(), "religion");
-        checkOneSelfOnly(p.politics, tags.politicsFlat(), "politics");
-    }
-
-    private void checkMany(ManyToManyFilter m, Set<String> allowed, String field) {
-        if (m == null)
-            return;
-
-        if (m.isSetSelf()) {
-            ensureNoDuplicates(m.getSelf(), field + ".self");
-            for (String tag : m.getSelf())
-                assertTag(tag, allowed, field + ".self");
-        }
-
-        if (m.isSetPreferences()) {
-            List<String> prefs = new ArrayList<>();
-            for (TagPreference tp : m.getPreferences())
-                prefs.add(tp.getTag());
-            ensureNoDuplicates(prefs, field + ".preferences");
-            for (TagPreference tp : m.getPreferences())
-                assertTag(tp.getTag(), allowed, field + ".preferences");
-        }
     }
 
     private void checkOne(OneToManyFilter m, Set<String> allowed, String field) {
@@ -111,32 +87,6 @@ public class FiltersValidator {
                 if (!allowed.contains(tag)) {
                     throw new IllegalArgumentException("Unknown tag '" + tag + "' in " + field + ".seeking");
                 }
-            }
-        }
-    }
-
-    private void checkOneSelfOnly(OneToManyFilter m, Set<String> allowed, String field) {
-        if (m == null)
-            return;
-        if (m.getSelf() != null && !allowed.contains(m.getSelf())) {
-            throw new IllegalArgumentException("Unknown tag '" + m.getSelf() + "' in " + field + ".self");
-        }
-        if (m.getSeeking() != null && !m.getSeeking().isEmpty()) {
-            throw new IllegalArgumentException(field + ".seeking is not supported");
-        }
-    }
-
-    private void assertTag(String tag, Set<String> allowed, String src) {
-        if (!allowed.contains(tag)) {
-            throw new IllegalArgumentException("Unknown tag '" + tag + "' in " + src);
-        }
-    }
-
-    private void ensureNoDuplicates(List<?> items, String src) {
-        Set<Object> seen = new HashSet<>();
-        for (Object i : items) {
-            if (!seen.add(i)) {
-                throw new IllegalArgumentException("Duplicate entry '" + i + "' in " + src);
             }
         }
     }

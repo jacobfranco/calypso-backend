@@ -2,15 +2,14 @@ package now.calypso.backendapi;
 
 import now.calypso.backend.*;
 import now.calypso.backend.data.ActivePrivatePrompt;
+import now.calypso.backend.data.MatchStandardAnswer;
 import now.calypso.backend.data.Importance;
 import now.calypso.backend.data.LocationFilter;
 import now.calypso.backend.data.LocationScope;
-import now.calypso.backend.data.ManyToManyFilter;
 import now.calypso.backend.data.ModeFilter;
 import now.calypso.backend.data.OneToManyFilter;
 import now.calypso.backend.data.PublicPromptAnswer;
 import now.calypso.backend.data.RangeFilter;
-import now.calypso.backend.data.TagPreference;
 import now.calypso.backend.modules.*;
 import now.calypso.backend.serialization.CalypsoSerialization;
 import now.calypso.backendapi.llm.OpenAIJson;
@@ -129,9 +128,6 @@ public class CalypsoApiApplication {
             List.of("no_kids", "open_to_kids", "non_drinker", "non_smoker", "no_drugs"),
             List.of("no_kids", "doesnt_want_kids", "regular_drinker", "non_smoker", "cannabis_user"));
 
-    private static final String[] SEED_LIFESTYLE_PREFERENCE = {
-            "non_smoker", "no_drugs", "social_drinker", "cannabis_user", "non_smoker", "regular_drinker"
-    };
     private static final String IPC_SEED_SIGNAL_EXTRACTION_ENV = "CALYPSO_IPC_SEED_SIGNAL_EXTRACTION";
     private static final int IPC_SEED_CROSS_GENDER_PROMPT_REACTION_COUNT = 10;
     private static final int[] IPC_SEED_PROMPT_REACTION_STRENGTHS = {
@@ -381,6 +377,7 @@ public class CalypsoApiApplication {
 
                 PostFilters filters = seedFilters(seedIndex, gender, mode);
                 manager.postFilters(filters, accountId).get(IPC_SEED_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                seedMatchStandardAnswers(manager, accountId, seedIndex);
                 manager.postPublicPromptSelection(accountId, SEED_PROMPT_IDS)
                         .get(IPC_SEED_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
@@ -882,6 +879,124 @@ public class CalypsoApiApplication {
         }
     }
 
+    private static void seedMatchStandardAnswers(CalypsoApiManager manager, long accountId, int idx) throws Exception {
+        List<String> lifestyle = SEED_LIFESTYLE_SELF.get(Math.floorMod(idx, SEED_LIFESTYLE_SELF.size()));
+        String politics = mapSeedPolitics(SEED_POLITICS[Math.floorMod(idx, SEED_POLITICS.length)]);
+        String religion = mapSeedReligion(SEED_RELIGIONS[Math.floorMod(idx, SEED_RELIGIONS.length)]);
+        String kidsCurrent = seedKidsCurrent(lifestyle);
+        String kidsFuture = seedKidsFuture(lifestyle);
+        String alcohol = seedAlcohol(lifestyle);
+        String smoking = lifestyle.contains("non_smoker") ? "none" : "smoke";
+        String cannabis = lifestyle.contains("cannabis_user") ? "occasional_cannabis" : "no_cannabis";
+        String drugs = seedRecreationalDrugs(lifestyle);
+
+        postSeedMatchStandardAnswer(manager, accountId, "standard.values.politics", politics,
+                List.of("left", "center_left", "center", "apolitical"), Importance.PREFERENCE);
+        postSeedMatchStandardAnswer(manager, accountId, "standard.religion.identity", religion,
+                List.of("christian", "muslim", "hindu", "buddhist", "jewish", "sikh", "spiritual", "atheist",
+                        "agnostic", "secular_humanist", "taoist", "shinto", "bahai", "jain", "indigenous",
+                        "pagan", "zoroastrian", "rastafarian", "custom_belief", "prefer_not_to_say"),
+                Importance.NOT_IMPORTANT);
+        postSeedMatchStandardAnswer(manager, accountId, "standard.kids.future", List.of(kidsCurrent, kidsFuture),
+                List.of("has_kids", "no_kids", "wants_kids", "open_to_kids", "not_sure", "doesnt_want_kids"),
+                Importance.PREFERENCE);
+        postSeedMatchStandardAnswer(manager, accountId, "standard.substances.alcohol", alcohol,
+                alcohol.equals("regular") ? List.of("social", "regular") : List.of("non_drinker", "rare", "social"),
+                Importance.PREFERENCE);
+        postSeedMatchStandardAnswer(manager, accountId, "standard.substances.smoking", smoking,
+                List.of("none"), Importance.PREFERENCE);
+        postSeedMatchStandardAnswer(manager, accountId, "standard.substances.cannabis", cannabis,
+                cannabis.equals("no_cannabis")
+                        ? List.of("no_cannabis", "cannabis_ok")
+                        : List.of("no_cannabis", "cannabis_ok", "occasional_cannabis"),
+                Importance.PREFERENCE);
+        postSeedMatchStandardAnswer(manager, accountId, "standard.substances.drugs", drugs,
+                List.of("no_drugs"), Importance.PREFERENCE);
+    }
+
+    private static void postSeedMatchStandardAnswer(CalypsoApiManager manager, long accountId, String questionId,
+            String own, List<String> acceptable, Importance importance) throws Exception {
+        postSeedMatchStandardAnswer(manager, accountId, questionId, List.of(own), acceptable, importance);
+    }
+
+    private static void postSeedMatchStandardAnswer(CalypsoApiManager manager, long accountId, String questionId,
+            List<String> own, List<String> acceptable, Importance importance) throws Exception {
+        MatchStandardAnswer answer = new MatchStandardAnswer();
+        answer.setAccountId(accountId);
+        answer.setQuestionId(questionId);
+        answer.setOwnAnswerOptionIds(own);
+        answer.setAcceptableAnswerOptionIds(acceptable);
+        answer.setImportance(importance);
+        answer.setUpdatedAt(System.currentTimeMillis());
+        manager.postMatchStandardAnswer(answer).get(IPC_SEED_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+    }
+
+    private static String mapSeedPolitics(String value) {
+        if ("liberal".equals(value)) {
+            return "center_left";
+        }
+        if ("apolitical".equals(value)) {
+            return "apolitical";
+        }
+        return "center";
+    }
+
+    private static String mapSeedReligion(String value) {
+        if ("spiritual".equals(value)) {
+            return "spiritual";
+        }
+        if ("christian".equals(value)) {
+            return "christian";
+        }
+        if ("secular_humanist".equals(value)) {
+            return "secular_humanist";
+        }
+        return "agnostic";
+    }
+
+    private static String seedKidsCurrent(List<String> lifestyle) {
+        if (lifestyle.contains("has_kids")) {
+            return "has_kids";
+        }
+        return "no_kids";
+    }
+
+    private static String seedKidsFuture(List<String> lifestyle) {
+        if (lifestyle.contains("wants_kids")) {
+            return "wants_kids";
+        }
+        if (lifestyle.contains("doesnt_want_kids")) {
+            return "doesnt_want_kids";
+        }
+        if (lifestyle.contains("open_to_kids")) {
+            return "open_to_kids";
+        }
+        return "not_sure";
+    }
+
+    private static String seedRecreationalDrugs(List<String> lifestyle) {
+        if (lifestyle.contains("psychedelics_user")) {
+            return "psychedelics_user";
+        }
+        if (lifestyle.contains("recreational_drugs")) {
+            return "recreational_drugs";
+        }
+        return "no_drugs";
+    }
+
+    private static String seedAlcohol(List<String> lifestyle) {
+        if (lifestyle.contains("regular_drinker")) {
+            return "regular";
+        }
+        if (lifestyle.contains("social_drinker")) {
+            return "social";
+        }
+        if (lifestyle.contains("non_drinker")) {
+            return "non_drinker";
+        }
+        return "rare";
+    }
+
     private static PostFilters seedFilters(int idx, String gender, String mode) {
         PostFilters filters = new PostFilters();
 
@@ -906,22 +1021,6 @@ public class CalypsoApiApplication {
         location.setRadiusKm(30000.0);
         location.setScope(LocationScope.WORLDWIDE);
         filters.location = location;
-
-        OneToManyFilter politics = new OneToManyFilter();
-        politics.setSelf(SEED_POLITICS[idx % SEED_POLITICS.length]);
-        filters.politics = politics;
-
-        OneToManyFilter religion = new OneToManyFilter();
-        religion.setSelf(SEED_RELIGIONS[idx % SEED_RELIGIONS.length]);
-        filters.religion = religion;
-
-        ManyToManyFilter lifestyle = new ManyToManyFilter();
-        lifestyle.setSelf(new ArrayList<>(SEED_LIFESTYLE_SELF.get(idx % SEED_LIFESTYLE_SELF.size())));
-        TagPreference pref = new TagPreference();
-        pref.setTag(SEED_LIFESTYLE_PREFERENCE[idx % SEED_LIFESTYLE_PREFERENCE.length]);
-        pref.setImportance(Importance.PREFERENCE);
-        lifestyle.setPreferences(List.of(pref));
-        filters.lifestyle = lifestyle;
 
         return filters;
     }
@@ -950,16 +1049,6 @@ public class CalypsoApiApplication {
         location.setRadiusKm(30000.0);
         location.setScope(LocationScope.WORLDWIDE);
         filters.location = location;
-
-        OneToManyFilter politics = new OneToManyFilter();
-        politics.setSelf("left");
-        politics.setImportance(Importance.NOT_IMPORTANT);
-        filters.politics = politics;
-
-        OneToManyFilter religion = new OneToManyFilter();
-        religion.setSelf("agnostic");
-        religion.setImportance(Importance.NOT_IMPORTANT);
-        filters.religion = religion;
 
         return filters;
     }

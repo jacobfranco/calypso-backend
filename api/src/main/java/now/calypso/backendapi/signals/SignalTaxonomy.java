@@ -84,7 +84,7 @@ public final class SignalTaxonomy {
         overrides.put("f1", HOBBIES);
         overrides.put("ufc", HOBBIES);
 
-        // Lifestyle + concrete compatibility filters
+        // Lifestyle + concrete matchStandard filters
         overrides.put("travel", LIFESTYLE);
         overrides.put("nightlife", LIFESTYLE);
         overrides.put("club", LIFESTYLE);

@@ -1,6 +1,7 @@
 package now.calypso.backendapi;
 
 import org.springframework.context.annotation.*;
+import org.springframework.core.env.Environment;
 import org.springframework.core.io.*;
 import org.springframework.http.*;
 import org.springframework.http.codec.ServerCodecConfigurer;
@@ -10,6 +11,9 @@ import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.session.*;
 import org.springframework.session.config.annotation.web.server.EnableSpringWebSession;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.reactive.CorsWebFilter;
+import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
 import org.springframework.web.reactive.config.*;
 import org.springframework.web.reactive.function.server.*;
 import org.springframework.web.server.*;
@@ -31,6 +35,12 @@ public class CalypsoApiConfig implements WebFluxConfigurer {
     public static final HashSet<String> IMAGE_EXTS = new HashSet<>(Arrays.asList("jpg", "jpeg", "png", "gif", "webp"));
     public static final HashSet<String> VIDEO_EXTS = new HashSet<>(Arrays.asList("webm", "mp4", "m4v", "mov"));
     public static final String OAUTH_CLIENT_ID = "cef6f1929499f942a173abd002a69a3a";
+    static final String CORS_ALLOWED_ORIGINS_PROPERTY = "calypso.cors.allowed-origins";
+    static final String CORS_ALLOWED_ORIGIN_PATTERNS_PROPERTY = "calypso.cors.allowed-origin-patterns";
+    private static final List<String> CORS_ALLOWED_METHODS = List.of("GET", "POST", "PUT", "PATCH", "DELETE",
+            "OPTIONS");
+    private static final List<String> CORS_ALLOWED_HEADERS = List.of(HttpHeaders.AUTHORIZATION,
+            HttpHeaders.CONTENT_TYPE, HttpHeaders.ACCEPT);
 
     public static class S3Options {
         public String bucketName;
@@ -150,6 +160,46 @@ public class CalypsoApiConfig implements WebFluxConfigurer {
                 });
             }
         };
+    }
+
+    @Bean
+    public CorsWebFilter corsWebFilter(Environment environment) {
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", corsConfiguration(environment));
+        return new CorsWebFilter(source);
+    }
+
+    static CorsConfiguration corsConfiguration(Environment environment) {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOrigins(csvProperty(environment, CORS_ALLOWED_ORIGINS_PROPERTY));
+        config.setAllowedOriginPatterns(csvProperty(environment, CORS_ALLOWED_ORIGIN_PATTERNS_PROPERTY));
+        config.setAllowedMethods(CORS_ALLOWED_METHODS);
+        config.setAllowedHeaders(CORS_ALLOWED_HEADERS);
+        config.setExposedHeaders(List.of(HttpHeaders.AUTHORIZATION));
+        config.setAllowCredentials(false);
+        config.setMaxAge(3600L);
+        return config;
+    }
+
+    private static List<String> csvProperty(Environment environment, String propertyName) {
+        String configured = environment.getProperty(propertyName);
+        if (configured == null || configured.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+        return Arrays.stream(configured.split(","))
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .map(CalypsoApiConfig::trimTrailingSlashes)
+                .distinct()
+                .toList();
+    }
+
+    private static String trimTrailingSlashes(String value) {
+        String trimmed = value;
+        while (trimmed.length() > 1 && trimmed.endsWith("/")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+        return trimmed;
     }
 
     @Bean

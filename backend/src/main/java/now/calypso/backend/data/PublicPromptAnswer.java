@@ -953,13 +953,13 @@ public class PublicPromptAnswer implements org.apache.thrift.TBase<PublicPromptA
           case 8: // SIGNAL_TOKENS
             if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
               {
-                org.apache.thrift.protocol.TList _list40 = iprot.readListBegin();
-                struct.signalTokens = new java.util.ArrayList<java.lang.String>(_list40.size);
-                @org.apache.thrift.annotation.Nullable java.lang.String _elem41;
-                for (int _i42 = 0; _i42 < _list40.size; ++_i42)
+                org.apache.thrift.protocol.TList _list80 = iprot.readListBegin();
+                struct.signalTokens = new java.util.ArrayList<java.lang.String>(_list80.size);
+                @org.apache.thrift.annotation.Nullable java.lang.String _elem81;
+                for (int _i82 = 0; _i82 < _list80.size; ++_i82)
                 {
-                  _elem41 = iprot.readString();
-                  struct.signalTokens.add(_elem41);
+                  _elem81 = iprot.readString();
+                  struct.signalTokens.add(_elem81);
                 }
                 iprot.readListEnd();
               }
@@ -1027,9 +1027,9 @@ public class PublicPromptAnswer implements org.apache.thrift.TBase<PublicPromptA
           oprot.writeFieldBegin(SIGNAL_TOKENS_FIELD_DESC);
           {
             oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRING, struct.signalTokens.size()));
-            for (java.lang.String _iter43 : struct.signalTokens)
+            for (java.lang.String _iter83 : struct.signalTokens)
             {
-              oprot.writeString(_iter43);
+              oprot.writeString(_iter83);
             }
             oprot.writeListEnd();
           }
@@ -1074,9 +1074,9 @@ public class PublicPromptAnswer implements org.apache.thrift.TBase<PublicPromptA
       if (struct.isSetSignalTokens()) {
         {
           oprot.writeI32(struct.signalTokens.size());
-          for (java.lang.String _iter44 : struct.signalTokens)
+          for (java.lang.String _iter84 : struct.signalTokens)
           {
-            oprot.writeString(_iter44);
+            oprot.writeString(_iter84);
           }
         }
       }
@@ -1104,13 +1104,13 @@ public class PublicPromptAnswer implements org.apache.thrift.TBase<PublicPromptA
       }
       if (incoming.get(1)) {
         {
-          org.apache.thrift.protocol.TList _list45 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
-          struct.signalTokens = new java.util.ArrayList<java.lang.String>(_list45.size);
-          @org.apache.thrift.annotation.Nullable java.lang.String _elem46;
-          for (int _i47 = 0; _i47 < _list45.size; ++_i47)
+          org.apache.thrift.protocol.TList _list85 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
+          struct.signalTokens = new java.util.ArrayList<java.lang.String>(_list85.size);
+          @org.apache.thrift.annotation.Nullable java.lang.String _elem86;
+          for (int _i87 = 0; _i87 < _list85.size; ++_i87)
           {
-            _elem46 = iprot.readString();
-            struct.signalTokens.add(_elem46);
+            _elem86 = iprot.readString();
+            struct.signalTokens.add(_elem86);
           }
         }
         struct.setSignalTokensIsSet(true);

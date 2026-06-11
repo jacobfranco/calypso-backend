@@ -425,14 +425,14 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
           case 2: // RECORDS
             if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
               {
-                org.apache.thrift.protocol.TList _list24 = iprot.readListBegin();
-                struct.records = new java.util.ArrayList<SignalRecord>(_list24.size);
-                @org.apache.thrift.annotation.Nullable SignalRecord _elem25;
-                for (int _i26 = 0; _i26 < _list24.size; ++_i26)
+                org.apache.thrift.protocol.TList _list64 = iprot.readListBegin();
+                struct.records = new java.util.ArrayList<SignalRecord>(_list64.size);
+                @org.apache.thrift.annotation.Nullable SignalRecord _elem65;
+                for (int _i66 = 0; _i66 < _list64.size; ++_i66)
                 {
-                  _elem25 = new SignalRecord();
-                  _elem25.read(iprot);
-                  struct.records.add(_elem25);
+                  _elem65 = new SignalRecord();
+                  _elem65.read(iprot);
+                  struct.records.add(_elem65);
                 }
                 iprot.readListEnd();
               }
@@ -468,9 +468,9 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
           oprot.writeFieldBegin(RECORDS_FIELD_DESC);
           {
             oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRUCT, struct.records.size()));
-            for (SignalRecord _iter27 : struct.records)
+            for (SignalRecord _iter67 : struct.records)
             {
-              _iter27.write(oprot);
+              _iter67.write(oprot);
             }
             oprot.writeListEnd();
           }
@@ -504,9 +504,9 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
       if (struct.isSetRecords()) {
         {
           oprot.writeI32(struct.records.size());
-          for (SignalRecord _iter28 : struct.records)
+          for (SignalRecord _iter68 : struct.records)
           {
-            _iter28.write(oprot);
+            _iter68.write(oprot);
           }
         }
       }
@@ -520,14 +520,14 @@ public class Signals implements org.apache.thrift.TBase<Signals, Signals._Fields
       java.util.BitSet incoming = iprot.readBitSet(1);
       if (incoming.get(0)) {
         {
-          org.apache.thrift.protocol.TList _list29 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRUCT);
-          struct.records = new java.util.ArrayList<SignalRecord>(_list29.size);
-          @org.apache.thrift.annotation.Nullable SignalRecord _elem30;
-          for (int _i31 = 0; _i31 < _list29.size; ++_i31)
+          org.apache.thrift.protocol.TList _list69 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRUCT);
+          struct.records = new java.util.ArrayList<SignalRecord>(_list69.size);
+          @org.apache.thrift.annotation.Nullable SignalRecord _elem70;
+          for (int _i71 = 0; _i71 < _list69.size; ++_i71)
           {
-            _elem30 = new SignalRecord();
-            _elem30.read(iprot);
-            struct.records.add(_elem30);
+            _elem70 = new SignalRecord();
+            _elem70.read(iprot);
+            struct.records.add(_elem70);
           }
         }
         struct.setRecordsIsSet(true);

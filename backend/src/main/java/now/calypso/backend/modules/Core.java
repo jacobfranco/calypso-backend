@@ -9,6 +9,7 @@ import com.rpl.rama.helpers.*;
 
 import now.calypso.backend.*;
 import now.calypso.backend.CalypsoHelpers.ExtractCode;
+import now.calypso.backend.MatchStandardScorer;
 import now.calypso.backend.data.*;
 
 import static now.calypso.backend.CalypsoHelpers.extractFields;
@@ -31,6 +32,7 @@ public class Core implements RamaModule {
       private static final double STAGING_RERANK_SCORE_INVALIDATION_DELTA = 8.0;
       private static final double FOLLOWUP_MIN_NORMALIZED_SCORE = 0.60;
       private static final int FOLLOWUP_MISSING_SIGNAL_LIMIT = 4;
+      private static final int FILTER_SAVE_REFILL_TARGET_SIZE = 120;
       private static final String ALL_ACCOUNTS_KEY = "all";
       private static final String FACECARD_REACTION_ANSWER_PREFIX = "facecard_target:";
       private static final String PUBLIC_REACTION_STRENGTH_PROMPT_SUFFIX = "|reaction_strength:";
@@ -48,12 +50,13 @@ public class Core implements RamaModule {
       private static final double SIGNAL_PRESENT_EPSILON = 1.0e-6;
       private static final double RESONANCE_POSITIVE_MAX_DELTA = 0.08;
       private static final double RESONANCE_NEGATIVE_MAX_DELTA = 0.08;
-      private static final double SCORE_WEIGHT_FILTER_FIT = 0.25;
-      private static final double SCORE_WEIGHT_VIEWER_REACTION = 0.18;
-      private static final double SCORE_WEIGHT_TARGET_REACTION = 0.08;
-      private static final double SCORE_WEIGHT_VIEWER_NEEDS = 0.17;
-      private static final double SCORE_WEIGHT_TARGET_NEEDS = 0.16;
-      private static final double SCORE_WEIGHT_SELF_OVERLAP = 0.08;
+      private static final double SCORE_WEIGHT_FILTER_FIT = 0.22;
+      private static final double SCORE_WEIGHT_VIEWER_REACTION = 0.16;
+      private static final double SCORE_WEIGHT_TARGET_REACTION = 0.07;
+      private static final double SCORE_WEIGHT_VIEWER_NEEDS = 0.15;
+      private static final double SCORE_WEIGHT_TARGET_NEEDS = 0.14;
+      private static final double SCORE_WEIGHT_SELF_OVERLAP = 0.07;
+      private static final double SCORE_WEIGHT_MATCH_STANDARD = 0.17;
       private static final double SCORE_WEIGHT_NOVELTY = 0.02;
       private static final double SCORE_WEIGHT_TOTAL = SCORE_WEIGHT_FILTER_FIT
                   + SCORE_WEIGHT_VIEWER_REACTION
@@ -61,6 +64,7 @@ public class Core implements RamaModule {
                   + SCORE_WEIGHT_VIEWER_NEEDS
                   + SCORE_WEIGHT_TARGET_NEEDS
                   + SCORE_WEIGHT_SELF_OVERLAP
+                  + SCORE_WEIGHT_MATCH_STANDARD
                   + SCORE_WEIGHT_NOVELTY;
 
       // ---------------------------
@@ -742,8 +746,8 @@ public class Core implements RamaModule {
       private static Map<String, Object> scorePair(Filters viewer,
                   long targetId,
                   Filters target,
-                  Signals viewerSignals,
-                  Signals targetSignals,
+                  Map<?, ?> viewerProfile,
+                  Map<?, ?> targetProfile,
                   double viewerToTargetReaction,
                   double targetToViewerReaction,
                   Map<?, ?> exposureMap,
@@ -761,10 +765,21 @@ public class Core implements RamaModule {
                   out.put("uncertainty", 1.0);
                   return out;
             }
-            double lifestyleBonus = CalypsoHelpers.computeLifestyleBonus(viewer, target);
-            double politicsBonus = CalypsoHelpers.computePoliticsBonus(viewer, target);
-            double religionBonus = CalypsoHelpers.computeReligionBonus(viewer, target);
-            double filterPreferenceFit = clamp01((baseScore + lifestyleBonus + politicsBonus + religionBonus) / 120.0);
+            Signals viewerSignals = profileSignals(viewerProfile);
+            Signals targetSignals = profileSignals(targetProfile);
+            Map<?, ?> viewerMatchStandardAnswers = profileMatchStandardAnswers(viewerProfile);
+            Map<?, ?> targetMatchStandardAnswers = profileMatchStandardAnswers(targetProfile);
+            double filterPreferenceFit = clamp01(baseScore / 100.0);
+            MatchStandardScorer.Breakdown matchStandard = MatchStandardScorer.score(
+                        viewerMatchStandardAnswers,
+                        targetMatchStandardAnswers);
+            if (matchStandard.hardBlocked()) {
+                  out.put("candidate", null);
+                  out.put("uncertainty", 1.0 - matchStandard.coverage());
+                  out.put("matchStandardScore", matchStandard.score());
+                  out.put("matchStandardHardBlocked", true);
+                  return out;
+            }
 
             Map<String, Double> viewerSelf = toSignalWeights(viewerSignals, false);
             Map<String, Double> viewerDesired = toSignalWeights(viewerSignals, true);
@@ -793,6 +808,7 @@ public class Core implements RamaModule {
                                     + SCORE_WEIGHT_VIEWER_NEEDS * viewerNeedsMetByTarget
                                     + SCORE_WEIGHT_TARGET_NEEDS * targetNeedsMetByViewer
                                     + SCORE_WEIGHT_SELF_OVERLAP * sharedSelfOverlap
+                                    + SCORE_WEIGHT_MATCH_STANDARD * matchStandard.score()
                                     + SCORE_WEIGHT_VIEWER_REACTION * viewerReactionScore
                                     + SCORE_WEIGHT_TARGET_REACTION * targetReactionScore
                                     + SCORE_WEIGHT_NOVELTY * noveltyScore)
@@ -823,6 +839,15 @@ public class Core implements RamaModule {
             reasons.add(String.format(Locale.ROOT, "targetReactionScore=%.3f", targetReactionScore));
             reasons.add(String.format(Locale.ROOT, "targetInterestScore=%.3f", targetInterestScore));
             reasons.add(String.format(Locale.ROOT, "noveltyScore=%.3f", noveltyScore));
+            reasons.add(String.format(Locale.ROOT, "matchStandardScore=%.3f", matchStandard.score()));
+            reasons.add(String.format(Locale.ROOT, "matchStandardSharedCount=%.3f", (double) matchStandard.sharedCount()));
+            reasons.add(String.format(Locale.ROOT, "matchStandardCoverage=%.3f", matchStandard.coverage()));
+            reasons.add(String.format(Locale.ROOT, "matchStandardKnownDealbreakerConflicts=%.3f",
+                        (double) matchStandard.knownDealbreakerConflicts()));
+            reasons.add(String.format(Locale.ROOT, "matchStandardUnknownImportantCount=%.3f",
+                        (double) matchStandard.unknownImportantCount()));
+            reasons.add(String.format(Locale.ROOT, "matchStandardKnownSoftConflicts=%.3f",
+                        (double) matchStandard.knownSoftConflicts()));
             reasons.add(String.format(Locale.ROOT, "resonanceAlignment=%.3f", resonance.alignment));
             reasons.add(String.format(Locale.ROOT, "resonanceSharedCount=%.3f", (double) resonance.sharedCount));
             reasons.add(String.format(Locale.ROOT, "resonanceDelta=%.3f", resonanceDelta));
@@ -1271,6 +1296,46 @@ public class Core implements RamaModule {
             return out;
       }
 
+      private static MatchStandardAnswerSet matchStandardAnswerSetFromMap(long accountId, Map<?, ?> raw) {
+            MatchStandardAnswerSet set = new MatchStandardAnswerSet();
+            set.setAccountId(accountId);
+            ArrayList<MatchStandardAnswer> answers = new ArrayList<>();
+            if (raw != null && !raw.isEmpty()) {
+                  for (Object value : raw.values()) {
+                        if (value instanceof MatchStandardAnswer answer) {
+                              answers.add(new MatchStandardAnswer(answer));
+                        }
+                  }
+            }
+            answers.sort((a, b) -> String.valueOf(a == null ? null : a.getQuestionId())
+                        .compareTo(String.valueOf(b == null ? null : b.getQuestionId())));
+            set.setAnswers(answers);
+            return set;
+      }
+
+      private static Map<String, Object> profileScoringContext(Signals signals, Map<?, ?> matchStandardAnswers) {
+            HashMap<String, Object> out = new HashMap<>();
+            out.put("signals", signals);
+            out.put("matchStandardAnswers", matchStandardAnswers == null ? new HashMap<>() : matchStandardAnswers);
+            return out;
+      }
+
+      private static Signals profileSignals(Map<?, ?> context) {
+            if (context == null) {
+                  return null;
+            }
+            Object raw = context.get("signals");
+            return raw instanceof Signals signals ? signals : null;
+      }
+
+      private static Map<?, ?> profileMatchStandardAnswers(Map<?, ?> context) {
+            if (context == null) {
+                  return Collections.emptyMap();
+            }
+            Object raw = context.get("matchStandardAnswers");
+            return raw instanceof Map<?, ?> map ? map : Collections.emptyMap();
+      }
+
       private static String asStringTrimmed(Object raw) {
             if (raw == null) {
                   return null;
@@ -1451,7 +1516,31 @@ public class Core implements RamaModule {
                         .each((Long aid) -> ALL_ACCOUNTS_KEY, "*aidL").out("*allKey")
                         .hashPartition("*allKey")
                         .localTransform("$$allAccountIdsGlobal",
-                                    Path.key("*allKey", "*aidL").termVal("*aidL"));
+                                    Path.key("*allKey", "*aidL").termVal("*aidL"))
+                        .hashPartition("*aidL")
+                        .each((Long aid) -> aid != null && aid.longValue() >= 0L, "*aidL")
+                        .out("*shouldRefill")
+                        .each((Long aid) -> new MatchRefillRequest()
+                                    .setAccountId(aid == null ? 0L : aid.longValue())
+                                    .setTargetSize(FILTER_SAVE_REFILL_TARGET_SIZE),
+                                    "*aidL")
+                        .out("*refillReq")
+                        .ifTrue("*shouldRefill",
+                                    Block.depotPartitionAppend("*matchRefillDepot", "*refillReq"));
+      }
+
+      private static void declareMatchStandardTopology(Topologies topologies) {
+            StreamTopology stream = topologies.stream("matchStandard");
+
+            stream.pstate("$$accountIdToMatchStandardAnswers",
+                        PState.mapSchema(Long.class, Map.class));
+
+            stream.source("*matchStandardAnswerDepot").out("*data")
+                        .macro(extractFields("*data", "*accountId", "*questionId"))
+                        .each((Number n) -> n == null ? 0L : n.longValue(), "*accountId").out("*aidL")
+                        .hashPartition("*aidL")
+                        .localTransform("$$accountIdToMatchStandardAnswers",
+                                    Path.key("*aidL", "*questionId").termVal("*data"));
       }
 
       private static void declarePublicPromptsTopology(Topologies topologies) {
@@ -1784,6 +1873,8 @@ public class Core implements RamaModule {
                         PState.mapSchema(Long.class, Map.class));
             stream.pstate("$$accountIdToRefillPending",
                         PState.mapSchema(Long.class, Boolean.class));
+            stream.pstate("$$accountIdToRefillQueued",
+                        PState.mapSchema(Long.class, Boolean.class));
             stream.pstate("$$accountIdToLastRefillAt",
                         PState.mapSchema(Long.class, Long.class));
             stream.pstate("$$viewerIdToTargetIdToUncertainty",
@@ -1828,11 +1919,15 @@ public class Core implements RamaModule {
                         .macro(extractFields("*data", "*accountId", "*targetSize"))
                         .each((Number n) -> n == null ? 0L : n.longValue(), "*accountId").out("*aidL")
                         .hashPartition("*aidL")
-                        .localSelect("$$accountIdToRefillPending", Path.key("*aidL").nullToVal(false))
-                        .out("*isPending")
-                        .each((Boolean pending) -> !Boolean.TRUE.equals(pending), "*isPending")
-                        .out("*shouldProcess")
-                        .ifTrue("*shouldProcess",
+                        .localSelect("$$accountIdToRefillPending",
+                                    Path.key("*aidL").nullToVal(false))
+                        .out("*isRefillPending")
+                        .ifTrue("*isRefillPending",
+                                    Block.localTransform("$$accountIdToRefillQueued",
+                                                Path.key("*aidL").termVal(true)))
+                        .each((Boolean pending) -> !Boolean.TRUE.equals(pending), "*isRefillPending")
+                        .out("*shouldStartRefill")
+                        .ifTrue("*shouldStartRefill",
                                     Block.create()
                                                 .localTransform("$$accountIdToRefillPending",
                                                             Path.key("*aidL").termVal(true))
@@ -1843,6 +1938,9 @@ public class Core implements RamaModule {
                                                 .localSelect("$$accountIdToSignals",
                                                             Path.key("*aidL"))
                                                 .out("*viewerSignals")
+                                                .localSelect("$$accountIdToMatchStandardAnswers",
+                                                            Path.key("*aidL"))
+                                                .out("*viewerMatchStandardAnswers")
                                                 .localSelect("$$accountIdToExposure", Path.key("*aidL"))
                                                 .out("*exposures")
                                                 .each((Map<?, ?> ex) -> ex == null ? new HashMap<>() : ex,
@@ -1896,6 +1994,9 @@ public class Core implements RamaModule {
                                                                         .localSelect("$$accountIdToSignals",
                                                                                     Path.key("*tidL"))
                                                                         .out("*targetSignals")
+                                                                        .localSelect("$$accountIdToMatchStandardAnswers",
+                                                                                    Path.key("*tidL"))
+                                                                        .out("*targetMatchStandardAnswers")
                                                                         .localSelect("$$viewerIdToTargetIdToReactionScore",
                                                                                     Path.key("*tidL", "*aidL")
                                                                                                 .nullToVal(0.0))
@@ -1923,6 +2024,18 @@ public class Core implements RamaModule {
                                                                                     : null,
                                                                                     "*targetSignals")
                                                                         .out("*targetSignalsC")
+                                                                        .each((Signals signals, Map<?, ?> matchStandardAnswers) -> profileScoringContext(
+                                                                                    signals,
+                                                                                    matchStandardAnswers),
+                                                                                    "*viewerSignalsC",
+                                                                                    "*viewerMatchStandardAnswers")
+                                                                        .out("*viewerProfile")
+                                                                        .each((Signals signals, Map<?, ?> matchStandardAnswers) -> profileScoringContext(
+                                                                                    signals,
+                                                                                    matchStandardAnswers),
+                                                                                    "*targetSignalsC",
+                                                                                    "*targetMatchStandardAnswers")
+                                                                        .out("*targetProfile")
                                                                         .each((Map<?, ?> reactionMap, Long tid) -> {
                                                                               if (reactionMap == null || tid == null)
                                                                                     return 0.0;
@@ -1935,16 +2048,16 @@ public class Core implements RamaModule {
                                                                         .each((Filters viewer,
                                                                                     Long tid,
                                                                                     Filters target,
-                                                                                    Signals viewerSignals,
-                                                                                    Signals targetSignals,
+                                                                                    Map<?, ?> viewerProfile,
+                                                                                    Map<?, ?> targetProfile,
                                                                                     Double viewerToTargetReaction,
                                                                                     Double targetToViewerReaction,
                                                                                     Map<?, ?> exposures) -> scorePair(
                                                                                                 viewer,
                                                                                                 tid == null ? 0L : tid,
                                                                                                 target,
-                                                                                                viewerSignals,
-                                                                                                targetSignals,
+                                                                                                viewerProfile,
+                                                                                                targetProfile,
                                                                                                 viewerToTargetReaction == null
                                                                                                             ? 0.0
                                                                                                             : viewerToTargetReaction,
@@ -1956,8 +2069,8 @@ public class Core implements RamaModule {
                                                                                     "*viewerFiltersC",
                                                                                     "*tidL",
                                                                                     "*targetFiltersC",
-                                                                                    "*viewerSignalsC",
-                                                                                    "*targetSignalsC",
+                                                                                    "*viewerProfile",
+                                                                                    "*targetProfile",
                                                                                     "*viewerToTargetReaction",
                                                                                     "*targetToViewerReaction",
                                                                                     "*exposuresSafe")
@@ -2067,8 +2180,24 @@ public class Core implements RamaModule {
                                                 .localTransform("$$accountIdToLastRefillAt",
                                                             Path.key("*aidL").termVal(
                                                                         "*refillDoneTs"))
+                                                .localSelect("$$accountIdToRefillQueued",
+                                                            Path.key("*aidL").nullToVal(false))
+                                                .out("*hasQueuedRefill")
+                                                .localTransform("$$accountIdToRefillQueued",
+                                                            Path.key("*aidL").termVal(false))
                                                 .localTransform("$$accountIdToRefillPending",
-                                                            Path.key("*aidL").termVal(false)));
+                                                            Path.key("*aidL").termVal(false))
+                                                .each((Long aid, Number targetSize) -> new MatchRefillRequest()
+                                                            .setAccountId(aid == null ? 0L : aid.longValue())
+                                                            .setTargetSize(targetSize == null
+                                                                        ? FILTER_SAVE_REFILL_TARGET_SIZE
+                                                                        : targetSize.intValue()),
+                                                            "*aidL",
+                                                            "*targetSize")
+                                                .out("*queuedRefillReq")
+                                                .ifTrue("*hasQueuedRefill",
+                                                            Block.depotPartitionAppend("*matchRefillDepot",
+                                                                        "*queuedRefillReq")));
 
             stream.source("*matchPairRescoreDepot").out("*data")
                         .each((Object data) -> toStringObjectMap(data), "*data").out("*req")
@@ -2090,6 +2219,8 @@ public class Core implements RamaModule {
                                                 .out("*viewerFilters")
                                                 .localSelect("$$accountIdToSignals", Path.key("*aidL"))
                                                 .out("*viewerSignals")
+                                                .localSelect("$$accountIdToMatchStandardAnswers", Path.key("*aidL"))
+                                                .out("*viewerMatchStandardAnswers")
                                                 .localSelect("$$accountIdToExposure", Path.key("*aidL"))
                                                 .out("*exposures")
                                                 .each((Map<?, ?> ex) -> ex == null ? new HashMap<>() : ex,
@@ -2103,6 +2234,8 @@ public class Core implements RamaModule {
                                                 .out("*targetFilters")
                                                 .localSelect("$$accountIdToSignals", Path.key("*tidL"))
                                                 .out("*targetSignals")
+                                                .localSelect("$$accountIdToMatchStandardAnswers", Path.key("*tidL"))
+                                                .out("*targetMatchStandardAnswers")
                                                 .localSelect("$$viewerIdToTargetIdToReactionScore",
                                                             Path.key("*tidL", "*aidL").nullToVal(0.0))
                                                 .out("*targetToViewerReaction")
@@ -2126,19 +2259,31 @@ public class Core implements RamaModule {
                                                             : null,
                                                             "*targetSignals")
                                                 .out("*targetSignalsC")
+                                                .each((Signals signals, Map<?, ?> matchStandardAnswers) -> profileScoringContext(
+                                                            signals,
+                                                            matchStandardAnswers),
+                                                            "*viewerSignalsC",
+                                                            "*viewerMatchStandardAnswers")
+                                                .out("*viewerProfile")
+                                                .each((Signals signals, Map<?, ?> matchStandardAnswers) -> profileScoringContext(
+                                                            signals,
+                                                            matchStandardAnswers),
+                                                            "*targetSignalsC",
+                                                            "*targetMatchStandardAnswers")
+                                                .out("*targetProfile")
                                                 .each((Filters viewer,
                                                             Long tid,
                                                             Filters target,
-                                                            Signals viewerSignals,
-                                                            Signals targetSignals,
+                                                            Map<?, ?> viewerProfile,
+                                                            Map<?, ?> targetProfile,
                                                             Double viewerToTargetReaction,
                                                             Double targetToViewerReaction,
                                                             Map<?, ?> exposures) -> scorePair(
                                                                         viewer,
                                                                         tid == null ? 0L : tid,
                                                                         target,
-                                                                        viewerSignals,
-                                                                        targetSignals,
+                                                                        viewerProfile,
+                                                                        targetProfile,
                                                                         viewerToTargetReaction == null
                                                                                     ? 0.0
                                                                                     : viewerToTargetReaction,
@@ -2150,8 +2295,8 @@ public class Core implements RamaModule {
                                                             "*viewerFiltersC",
                                                             "*tidL",
                                                             "*targetFiltersC",
-                                                            "*viewerSignalsC",
-                                                            "*targetSignalsC",
+                                                            "*viewerProfile",
+                                                            "*targetProfile",
                                                             "*viewerToTargetReaction",
                                                             "*targetToViewerReaction",
                                                             "*exposuresSafe")
@@ -2783,6 +2928,20 @@ public class Core implements RamaModule {
                         .originPartition()
                         .each((Filters f) -> f, "*filtersRaw").out("*filters");
 
+            topologies.query("getMatchStandardAnswersFromAccountId", "*requesterId", "*accountId")
+                        .out("*answerSet")
+                        .each((Number n) -> n == null ? 0L : n.longValue(), "*accountId").out("*accountIdL")
+                        .hashPartition("*accountIdL")
+                        .localSelect("$$accountIdToMatchStandardAnswers", Path.key("*accountIdL"))
+                        .out("*answersRaw")
+                        .originPartition()
+                        .each((Long accountIdL, Map<?, ?> answersRaw) -> matchStandardAnswerSetFromMap(
+                                    accountIdL == null ? 0L : accountIdL.longValue(),
+                                    answersRaw),
+                                    "*accountIdL",
+                                    "*answersRaw")
+                        .out("*answerSet");
+
             topologies.query("getMatchesFromAccountId", "*viewerId", "*startIdx", "*limit").out("*results")
                         // Normalize viewer id to Long before partitioning/reads
                         .each((Number n) -> n == null ? 0L : n.longValue(), "*viewerId").out("*viewerIdL")
@@ -2956,6 +3115,7 @@ public class Core implements RamaModule {
             setup.declareDepot("*applicationDepot", Depot.hashBy(CalypsoHelpers.ExtractClientId.class));
             setup.declareDepot("*authCodeDepot", Depot.hashBy(ExtractCode.class));
             setup.declareDepot("*filtersDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
+            setup.declareDepot("*matchStandardAnswerDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
             setup.declareDepot("*matchRefillDepot", Depot.hashBy(CalypsoHelpers.ExtractAccountId.class));
             setup.declareDepot("*matchStagingDepot", Depot.hashBy("now.calypso.backend.CalypsoHelpers$ExtractMapAccountId"));
             setup.declareDepot("*matchPairRescoreDepot", Depot.hashBy("now.calypso.backend.CalypsoHelpers$ExtractMapAccountId"));
@@ -2978,6 +3138,7 @@ public class Core implements RamaModule {
             declareApplicationTopology(topologies);
             declareAuthTopology(topologies);
             declareFiltersTopology(topologies);
+            declareMatchStandardTopology(topologies);
             declareMatchesServeAndCursorTopology(topologies);
             declareMatchesRefillTopology(topologies);
             declareMatchmakingFollowupsTopology(topologies);

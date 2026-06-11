@@ -799,13 +799,13 @@ public class PromptDefinition implements org.apache.thrift.TBase<PromptDefinitio
           case 5: // TAGS
             if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
               {
-                org.apache.thrift.protocol.TList _list32 = iprot.readListBegin();
-                struct.tags = new java.util.ArrayList<java.lang.String>(_list32.size);
-                @org.apache.thrift.annotation.Nullable java.lang.String _elem33;
-                for (int _i34 = 0; _i34 < _list32.size; ++_i34)
+                org.apache.thrift.protocol.TList _list72 = iprot.readListBegin();
+                struct.tags = new java.util.ArrayList<java.lang.String>(_list72.size);
+                @org.apache.thrift.annotation.Nullable java.lang.String _elem73;
+                for (int _i74 = 0; _i74 < _list72.size; ++_i74)
                 {
-                  _elem33 = iprot.readString();
-                  struct.tags.add(_elem33);
+                  _elem73 = iprot.readString();
+                  struct.tags.add(_elem73);
                 }
                 iprot.readListEnd();
               }
@@ -865,9 +865,9 @@ public class PromptDefinition implements org.apache.thrift.TBase<PromptDefinitio
           oprot.writeFieldBegin(TAGS_FIELD_DESC);
           {
             oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRING, struct.tags.size()));
-            for (java.lang.String _iter35 : struct.tags)
+            for (java.lang.String _iter75 : struct.tags)
             {
-              oprot.writeString(_iter35);
+              oprot.writeString(_iter75);
             }
             oprot.writeListEnd();
           }
@@ -917,9 +917,9 @@ public class PromptDefinition implements org.apache.thrift.TBase<PromptDefinitio
       if (struct.isSetTags()) {
         {
           oprot.writeI32(struct.tags.size());
-          for (java.lang.String _iter36 : struct.tags)
+          for (java.lang.String _iter76 : struct.tags)
           {
-            oprot.writeString(_iter36);
+            oprot.writeString(_iter76);
           }
         }
       }
@@ -944,13 +944,13 @@ public class PromptDefinition implements org.apache.thrift.TBase<PromptDefinitio
       }
       if (incoming.get(1)) {
         {
-          org.apache.thrift.protocol.TList _list37 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
-          struct.tags = new java.util.ArrayList<java.lang.String>(_list37.size);
-          @org.apache.thrift.annotation.Nullable java.lang.String _elem38;
-          for (int _i39 = 0; _i39 < _list37.size; ++_i39)
+          org.apache.thrift.protocol.TList _list77 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
+          struct.tags = new java.util.ArrayList<java.lang.String>(_list77.size);
+          @org.apache.thrift.annotation.Nullable java.lang.String _elem78;
+          for (int _i79 = 0; _i79 < _list77.size; ++_i79)
           {
-            _elem38 = iprot.readString();
-            struct.tags.add(_elem38);
+            _elem78 = iprot.readString();
+            struct.tags.add(_elem78);
           }
         }
         struct.setTagsIsSet(true);

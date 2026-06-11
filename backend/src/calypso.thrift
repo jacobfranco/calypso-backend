@@ -82,9 +82,6 @@ struct Filters {
   3: required OneToManyFilter gender;              // self + seeking genders
   4: required RangeFilter age;                     // self + desired age range
   5: required LocationFilter location;             // self location + scope (e.g. city, state)
-  6: optional OneToManyFilter religion;            // self label + importance level
-  7: optional OneToManyFilter politics;            // same as above
-  8: optional ManyToManyFilter lifestyle;          // tags like "vegan", "non-drinker"
 }
 
 // For filters like gender, religion, politics
@@ -125,6 +122,40 @@ struct LocationFilter {
 
 struct ModeFilter {
   1: required string self;              // "focused", "balanced", "exploratory"
+}
+
+enum MatchStandardQuestionAnswerType {
+  SINGLE_CHOICE = 1,
+  MULTI_CHOICE  = 2
+}
+
+struct MatchStandardOption {
+  1: required string optionId;
+  2: required string text;
+}
+
+struct MatchStandardQuestion {
+  1: required string questionId;
+  2: required string category;
+  3: required string text;
+  4: required MatchStandardQuestionAnswerType answerType;
+  5: required list<MatchStandardOption> options;
+  6: optional i32 version;
+  7: optional list<string> tags;
+}
+
+struct MatchStandardAnswer {
+  1: required AccountId accountId;
+  2: required string questionId;
+  3: required list<string> ownAnswerOptionIds;
+  4: required list<string> acceptableAnswerOptionIds;
+  5: required Importance importance;
+  6: required Timestamp updatedAt;
+}
+
+struct MatchStandardAnswerSet {
+  1: required AccountId accountId;
+  2: optional list<MatchStandardAnswer> answers;
 }
 
 enum SignalIntent {

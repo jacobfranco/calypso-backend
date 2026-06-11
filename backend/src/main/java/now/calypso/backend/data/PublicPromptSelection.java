@@ -500,13 +500,13 @@ public class PublicPromptSelection implements org.apache.thrift.TBase<PublicProm
           case 2: // SELECTED_PROMPT_IDS
             if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
               {
-                org.apache.thrift.protocol.TList _list48 = iprot.readListBegin();
-                struct.selectedPromptIds = new java.util.ArrayList<java.lang.String>(_list48.size);
-                @org.apache.thrift.annotation.Nullable java.lang.String _elem49;
-                for (int _i50 = 0; _i50 < _list48.size; ++_i50)
+                org.apache.thrift.protocol.TList _list88 = iprot.readListBegin();
+                struct.selectedPromptIds = new java.util.ArrayList<java.lang.String>(_list88.size);
+                @org.apache.thrift.annotation.Nullable java.lang.String _elem89;
+                for (int _i90 = 0; _i90 < _list88.size; ++_i90)
                 {
-                  _elem49 = iprot.readString();
-                  struct.selectedPromptIds.add(_elem49);
+                  _elem89 = iprot.readString();
+                  struct.selectedPromptIds.add(_elem89);
                 }
                 iprot.readListEnd();
               }
@@ -552,9 +552,9 @@ public class PublicPromptSelection implements org.apache.thrift.TBase<PublicProm
         oprot.writeFieldBegin(SELECTED_PROMPT_IDS_FIELD_DESC);
         {
           oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRING, struct.selectedPromptIds.size()));
-          for (java.lang.String _iter51 : struct.selectedPromptIds)
+          for (java.lang.String _iter91 : struct.selectedPromptIds)
           {
-            oprot.writeString(_iter51);
+            oprot.writeString(_iter91);
           }
           oprot.writeListEnd();
         }
@@ -584,9 +584,9 @@ public class PublicPromptSelection implements org.apache.thrift.TBase<PublicProm
       oprot.writeI64(struct.accountId);
       {
         oprot.writeI32(struct.selectedPromptIds.size());
-        for (java.lang.String _iter52 : struct.selectedPromptIds)
+        for (java.lang.String _iter92 : struct.selectedPromptIds)
         {
-          oprot.writeString(_iter52);
+          oprot.writeString(_iter92);
         }
       }
       oprot.writeI64(struct.updatedAt);
@@ -598,13 +598,13 @@ public class PublicPromptSelection implements org.apache.thrift.TBase<PublicProm
       struct.accountId = iprot.readI64();
       struct.setAccountIdIsSet(true);
       {
-        org.apache.thrift.protocol.TList _list53 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
-        struct.selectedPromptIds = new java.util.ArrayList<java.lang.String>(_list53.size);
-        @org.apache.thrift.annotation.Nullable java.lang.String _elem54;
-        for (int _i55 = 0; _i55 < _list53.size; ++_i55)
+        org.apache.thrift.protocol.TList _list93 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
+        struct.selectedPromptIds = new java.util.ArrayList<java.lang.String>(_list93.size);
+        @org.apache.thrift.annotation.Nullable java.lang.String _elem94;
+        for (int _i95 = 0; _i95 < _list93.size; ++_i95)
         {
-          _elem54 = iprot.readString();
-          struct.selectedPromptIds.add(_elem54);
+          _elem94 = iprot.readString();
+          struct.selectedPromptIds.add(_elem94);
         }
       }
       struct.setSelectedPromptIdsIsSet(true);

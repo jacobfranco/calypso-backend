@@ -181,7 +181,7 @@ public final class SignalExtractionPolicy {
                 || lowered.contains("marker")
                 || lowered.contains("primary filter")
                 || lowered.contains("filter for")
-                || lowered.contains("compatibility")
+                || lowered.contains("match standard")
                 || lowered.contains("belonging");
         boolean genericDomain = lowered.contains("lifestyle")
                 || lowered.contains("cultural")

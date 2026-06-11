@@ -167,48 +167,6 @@ public class CalypsoHelpers {
         return (f != null && f.isSetAge() && f.getAge().isSetMax()) ? f.getAge().getMax() : 99;
     }
 
-    // ---- OneToMany helpers (religion/politics) ----
-    public static String getOneToManySelf(OneToManyFilter x) {
-        return (x != null && x.isSetSelf()) ? x.getSelf() : null;
-    }
-
-    public static List<String> getOneToManySeeking(OneToManyFilter x) {
-        return (x != null && x.isSetSeeking()) ? x.getSeeking() : Collections.emptyList();
-    }
-
-    public static Importance getOneToManyImportance(OneToManyFilter x) {
-        return (x != null && x.isSetImportance()) ? x.getImportance() : Importance.NOT_IMPORTANT;
-    }
-
-    // ---- Tags helpers ----
-    public static List<String> getSelfTags(Filters f) {
-        Set<String> s = new LinkedHashSet<>();
-        if (f != null && f.isSetLifestyle() && f.getLifestyle().isSetSelf())
-            f.getLifestyle().getSelf().forEach(t -> {
-                if (t != null)
-                    s.add(t);
-            });
-        return new ArrayList<>(s);
-    }
-
-    public static List<String> getTagDealbreakers(Filters f) {
-        List<String> out = new ArrayList<>();
-        if (f != null && f.isSetLifestyle() && f.getLifestyle().isSetPreferences())
-            for (TagPreference p : f.getLifestyle().getPreferences())
-                if (p != null && p.isSetTag() && p.isSetImportance() && p.getImportance() == Importance.DEALBREAKER)
-                    out.add(p.getTag());
-        return out;
-    }
-
-    public static List<String> getTagPreferences(Filters f) {
-        List<String> out = new ArrayList<>();
-        if (f != null && f.isSetLifestyle() && f.getLifestyle().isSetPreferences())
-            for (TagPreference p : f.getLifestyle().getPreferences())
-                if (p != null && p.isSetTag() && p.isSetImportance() && p.getImportance() == Importance.PREFERENCE)
-                    out.add(p.getTag());
-        return out;
-    }
-
     public static double jaccard(List<String> a, List<String> b) {
         if (a == null || b == null || a.isEmpty() || b.isEmpty())
             return 0.0;
@@ -238,7 +196,7 @@ public class CalypsoHelpers {
     }
 
     // =====================================================
-    // New: struct-based compatibility helpers for Matches
+    // Struct-based hard filter helpers for Matches.
     // =====================================================
 
     public static OneToManyFilter getGender(Filters f) {
@@ -387,195 +345,8 @@ public class CalypsoHelpers {
         return true;
     }
 
-    private static OneToManyFilter getPolitics(Filters f) {
-        return (f != null && f.isSetPolitics()) ? f.getPolitics() : null;
-    }
-
-    private static OneToManyFilter getReligion(Filters f) {
-        return (f != null && f.isSetReligion()) ? f.getReligion() : null;
-    }
-
-    private static ManyToManyFilter getLifestyleFilter(Filters f) {
-        return (f != null && f.isSetLifestyle()) ? f.getLifestyle() : null;
-    }
-
-    private static Set<String> getManySelfTags(ManyToManyFilter filter) {
-        if (filter == null || !filter.isSetSelf())
-            return Collections.emptySet();
-        LinkedHashSet<String> tags = new LinkedHashSet<>();
-        for (String tag : filter.getSelf()) {
-            if (tag != null)
-                tags.add(tag);
-        }
-        return tags;
-    }
-
-    private static boolean manyDealbreakersSatisfied(ManyToManyFilter prefsHolder, Set<String> otherSelfTags) {
-        if (prefsHolder == null || !prefsHolder.isSetPreferences())
-            return true;
-        Set<String> tags = (otherSelfTags == null) ? Collections.emptySet() : otherSelfTags;
-        for (TagPreference pref : prefsHolder.getPreferences()) {
-            if (pref == null || !pref.isSetTag() || !pref.isSetImportance())
-                continue;
-            if (pref.getImportance() == Importance.DEALBREAKER) {
-                String tag = pref.getTag();
-                if (tag == null || !tags.contains(tag)) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
-    private static double preferenceBonusFrom(ManyToManyFilter prefsHolder, Set<String> otherSelfTags, double weight) {
-        if (prefsHolder == null || !prefsHolder.isSetPreferences() || weight <= 0.0)
-            return 0.0;
-        Set<String> tags = (otherSelfTags == null) ? Collections.emptySet() : otherSelfTags;
-        double bonus = 0.0;
-        for (TagPreference pref : prefsHolder.getPreferences()) {
-            if (pref == null || !pref.isSetTag() || !pref.isSetImportance())
-                continue;
-            if (pref.getImportance() == Importance.PREFERENCE && tags.contains(pref.getTag())) {
-                bonus += weight;
-            }
-        }
-        return bonus;
-    }
-
-    private static boolean oneToManyMatches(OneToManyFilter prefsHolder, String otherSelf) {
-        if (prefsHolder == null)
-            return false;
-        List<String> seeking = getOneToManySeeking(prefsHolder);
-        if (seeking != null && !seeking.isEmpty()) {
-            return otherSelf != null && seeking.contains(otherSelf);
-        }
-        String self = getOneToManySelf(prefsHolder);
-        return self != null && otherSelf != null && self.equals(otherSelf);
-    }
-
-    private static boolean oneToManyDealbreakerSatisfied(OneToManyFilter prefsHolder, String otherSelf) {
-        if (prefsHolder == null)
-            return true;
-        if (getOneToManyImportance(prefsHolder) != Importance.DEALBREAKER)
-            return true;
-        List<String> seeking = getOneToManySeeking(prefsHolder);
-        if (seeking != null && !seeking.isEmpty()) {
-            return otherSelf != null && seeking.contains(otherSelf);
-        }
-        String self = getOneToManySelf(prefsHolder);
-        return self != null && otherSelf != null && self.equals(otherSelf);
-    }
-
-    public static boolean politicsCompatible(Filters viewer, Filters target) {
-        OneToManyFilter vp = getPolitics(viewer);
-        OneToManyFilter tp = getPolitics(target);
-        String vSelf = getOneToManySelf(vp);
-        String tSelf = getOneToManySelf(tp);
-        return oneToManyDealbreakerSatisfied(vp, tSelf)
-                && oneToManyDealbreakerSatisfied(tp, vSelf);
-    }
-
-    public static boolean religionCompatible(Filters viewer, Filters target) {
-        OneToManyFilter vr = getReligion(viewer);
-        OneToManyFilter tr = getReligion(target);
-        String vSelf = getOneToManySelf(vr);
-        String tSelf = getOneToManySelf(tr);
-        return oneToManyDealbreakerSatisfied(vr, tSelf)
-                && oneToManyDealbreakerSatisfied(tr, vSelf);
-    }
-
-    public static boolean lifestyleCompatible(Filters viewer, Filters target) {
-        ManyToManyFilter vl = getLifestyleFilter(viewer);
-        ManyToManyFilter tl = getLifestyleFilter(target);
-
-        Set<String> viewerTags = getManySelfTags(vl);
-        Set<String> targetTags = getManySelfTags(tl);
-
-        if (!manyDealbreakersSatisfied(vl, targetTags))
-            return false;
-        if (!manyDealbreakersSatisfied(tl, viewerTags))
-            return false;
-        return true;
-    }
-
-    public static double computeLifestyleBonus(Filters viewer, Filters target) {
-        ManyToManyFilter vl = getLifestyleFilter(viewer);
-        ManyToManyFilter tl = getLifestyleFilter(target);
-
-        Set<String> viewerTags = getManySelfTags(vl);
-        Set<String> targetTags = getManySelfTags(tl);
-
-        double bonus = 0.0;
-        bonus += preferenceBonusFrom(vl, targetTags, 6.0);
-        bonus += preferenceBonusFrom(tl, viewerTags, 3.0);
-        return bonus;
-    }
-
-
-    public static double computePoliticsBonus(Filters viewer, Filters target) {
-        OneToManyFilter vp = getPolitics(viewer);
-        OneToManyFilter tp = getPolitics(target);
-
-        double bonus = 0.0;
-        String tSelf = getOneToManySelf(tp);
-        String vSelf = getOneToManySelf(vp);
-
-        if (vp != null) {
-            boolean match = oneToManyMatches(vp, tSelf);
-            Importance vImp = getOneToManyImportance(vp);
-            bonus += alignmentDelta(vImp, match, 10.0, 20.0, 15.0, 30.0);
-        }
-        if (tp != null) {
-            boolean match = oneToManyMatches(tp, vSelf);
-            Importance tImp = getOneToManyImportance(tp);
-            bonus += alignmentDelta(tImp, match, 5.0, 10.0, 8.0, 16.0);
-        }
-
-        return bonus;
-    }
-
-    public static double computeReligionBonus(Filters viewer, Filters target) {
-        OneToManyFilter vr = getReligion(viewer);
-        OneToManyFilter tr = getReligion(target);
-
-        double bonus = 0.0;
-        String tSelf = getOneToManySelf(tr);
-        String vSelf = getOneToManySelf(vr);
-
-        if (vr != null) {
-            boolean match = oneToManyMatches(vr, tSelf);
-            Importance vImp = getOneToManyImportance(vr);
-            bonus += alignmentDelta(vImp, match, 10.0, 20.0, 15.0, 30.0);
-        }
-        if (tr != null) {
-            boolean match = oneToManyMatches(tr, vSelf);
-            Importance tImp = getOneToManyImportance(tr);
-            bonus += alignmentDelta(tImp, match, 5.0, 10.0, 8.0, 16.0);
-        }
-
-        return bonus;
-    }
-
-    private static double alignmentDelta(
-            Importance importance,
-            boolean match,
-            double preferenceMatch,
-            double dealbreakerMatch,
-            double preferenceMismatch,
-            double dealbreakerMismatch) {
-        if (importance == null)
-            return 0.0;
-        if (importance == Importance.DEALBREAKER) {
-            return match ? dealbreakerMatch : -dealbreakerMismatch;
-        }
-        if (importance == Importance.PREFERENCE) {
-            return match ? preferenceMatch : -preferenceMismatch;
-        }
-        return 0.0;
-    }
-
     /**
-     * Base compatibility for Matches:
+     * Base hard-filter compatibility for Matches:
      * - returns -1.0 if any hard constraint fails
      * - returns a flat high score (100.0) otherwise
      */
@@ -589,12 +360,6 @@ public class CalypsoHelpers {
         if (!withinRadius(viewer, target))
             return -1.0;
         if (!modesCompatible(viewer, target))
-            return -1.0;
-        if (!politicsCompatible(viewer, target))
-            return -1.0;
-        if (!religionCompatible(viewer, target))
-            return -1.0;
-        if (!lifestyleCompatible(viewer, target))
             return -1.0;
         return 100.0;
     }

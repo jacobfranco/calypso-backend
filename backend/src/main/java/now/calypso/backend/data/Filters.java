@@ -15,9 +15,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
   private static final org.apache.thrift.protocol.TField GENDER_FIELD_DESC = new org.apache.thrift.protocol.TField("gender", org.apache.thrift.protocol.TType.STRUCT, (short)3);
   private static final org.apache.thrift.protocol.TField AGE_FIELD_DESC = new org.apache.thrift.protocol.TField("age", org.apache.thrift.protocol.TType.STRUCT, (short)4);
   private static final org.apache.thrift.protocol.TField LOCATION_FIELD_DESC = new org.apache.thrift.protocol.TField("location", org.apache.thrift.protocol.TType.STRUCT, (short)5);
-  private static final org.apache.thrift.protocol.TField RELIGION_FIELD_DESC = new org.apache.thrift.protocol.TField("religion", org.apache.thrift.protocol.TType.STRUCT, (short)6);
-  private static final org.apache.thrift.protocol.TField POLITICS_FIELD_DESC = new org.apache.thrift.protocol.TField("politics", org.apache.thrift.protocol.TType.STRUCT, (short)7);
-  private static final org.apache.thrift.protocol.TField LIFESTYLE_FIELD_DESC = new org.apache.thrift.protocol.TField("lifestyle", org.apache.thrift.protocol.TType.STRUCT, (short)8);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new FiltersStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new FiltersTupleSchemeFactory();
@@ -27,9 +24,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
   public @org.apache.thrift.annotation.Nullable OneToManyFilter gender; // required
   public @org.apache.thrift.annotation.Nullable RangeFilter age; // required
   public @org.apache.thrift.annotation.Nullable LocationFilter location; // required
-  public @org.apache.thrift.annotation.Nullable OneToManyFilter religion; // optional
-  public @org.apache.thrift.annotation.Nullable OneToManyFilter politics; // optional
-  public @org.apache.thrift.annotation.Nullable ManyToManyFilter lifestyle; // optional
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
@@ -37,10 +31,7 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     RELATIONSHIP_MODE((short)2, "relationshipMode"),
     GENDER((short)3, "gender"),
     AGE((short)4, "age"),
-    LOCATION((short)5, "location"),
-    RELIGION((short)6, "religion"),
-    POLITICS((short)7, "politics"),
-    LIFESTYLE((short)8, "lifestyle");
+    LOCATION((short)5, "location");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -66,12 +57,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
           return AGE;
         case 5: // LOCATION
           return LOCATION;
-        case 6: // RELIGION
-          return RELIGION;
-        case 7: // POLITICS
-          return POLITICS;
-        case 8: // LIFESTYLE
-          return LIFESTYLE;
         default:
           return null;
       }
@@ -117,7 +102,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
   // isset id assignments
   private static final int __ACCOUNTID_ISSET_ID = 0;
   private byte __isset_bitfield = 0;
-  private static final _Fields[] optionals = {_Fields.RELIGION,_Fields.POLITICS,_Fields.LIFESTYLE};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
@@ -131,12 +115,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
         new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, RangeFilter.class)));
     tmpMap.put(_Fields.LOCATION, new org.apache.thrift.meta_data.FieldMetaData("location", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, LocationFilter.class)));
-    tmpMap.put(_Fields.RELIGION, new org.apache.thrift.meta_data.FieldMetaData("religion", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
-        new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, OneToManyFilter.class)));
-    tmpMap.put(_Fields.POLITICS, new org.apache.thrift.meta_data.FieldMetaData("politics", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
-        new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, OneToManyFilter.class)));
-    tmpMap.put(_Fields.LIFESTYLE, new org.apache.thrift.meta_data.FieldMetaData("lifestyle", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
-        new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, ManyToManyFilter.class)));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(Filters.class, metaDataMap);
   }
@@ -178,15 +156,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     if (other.isSetLocation()) {
       this.location = new LocationFilter(other.location);
     }
-    if (other.isSetReligion()) {
-      this.religion = new OneToManyFilter(other.religion);
-    }
-    if (other.isSetPolitics()) {
-      this.politics = new OneToManyFilter(other.politics);
-    }
-    if (other.isSetLifestyle()) {
-      this.lifestyle = new ManyToManyFilter(other.lifestyle);
-    }
   }
 
   @Override
@@ -202,9 +171,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     this.gender = null;
     this.age = null;
     this.location = null;
-    this.religion = null;
-    this.politics = null;
-    this.lifestyle = null;
   }
 
   public long getAccountId() {
@@ -330,81 +296,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     }
   }
 
-  @org.apache.thrift.annotation.Nullable
-  public OneToManyFilter getReligion() {
-    return this.religion;
-  }
-
-  public Filters setReligion(@org.apache.thrift.annotation.Nullable OneToManyFilter religion) {
-    this.religion = religion;
-    return this;
-  }
-
-  public void unsetReligion() {
-    this.religion = null;
-  }
-
-  /** Returns true if field religion is set (has been assigned a value) and false otherwise */
-  public boolean isSetReligion() {
-    return this.religion != null;
-  }
-
-  public void setReligionIsSet(boolean value) {
-    if (!value) {
-      this.religion = null;
-    }
-  }
-
-  @org.apache.thrift.annotation.Nullable
-  public OneToManyFilter getPolitics() {
-    return this.politics;
-  }
-
-  public Filters setPolitics(@org.apache.thrift.annotation.Nullable OneToManyFilter politics) {
-    this.politics = politics;
-    return this;
-  }
-
-  public void unsetPolitics() {
-    this.politics = null;
-  }
-
-  /** Returns true if field politics is set (has been assigned a value) and false otherwise */
-  public boolean isSetPolitics() {
-    return this.politics != null;
-  }
-
-  public void setPoliticsIsSet(boolean value) {
-    if (!value) {
-      this.politics = null;
-    }
-  }
-
-  @org.apache.thrift.annotation.Nullable
-  public ManyToManyFilter getLifestyle() {
-    return this.lifestyle;
-  }
-
-  public Filters setLifestyle(@org.apache.thrift.annotation.Nullable ManyToManyFilter lifestyle) {
-    this.lifestyle = lifestyle;
-    return this;
-  }
-
-  public void unsetLifestyle() {
-    this.lifestyle = null;
-  }
-
-  /** Returns true if field lifestyle is set (has been assigned a value) and false otherwise */
-  public boolean isSetLifestyle() {
-    return this.lifestyle != null;
-  }
-
-  public void setLifestyleIsSet(boolean value) {
-    if (!value) {
-      this.lifestyle = null;
-    }
-  }
-
   @Override
   public void setFieldValue(_Fields field, @org.apache.thrift.annotation.Nullable java.lang.Object value) {
     switch (field) {
@@ -448,30 +339,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       }
       break;
 
-    case RELIGION:
-      if (value == null) {
-        unsetReligion();
-      } else {
-        setReligion((OneToManyFilter)value);
-      }
-      break;
-
-    case POLITICS:
-      if (value == null) {
-        unsetPolitics();
-      } else {
-        setPolitics((OneToManyFilter)value);
-      }
-      break;
-
-    case LIFESTYLE:
-      if (value == null) {
-        unsetLifestyle();
-      } else {
-        setLifestyle((ManyToManyFilter)value);
-      }
-      break;
-
     }
   }
 
@@ -493,15 +360,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
 
     case LOCATION:
       return getLocation();
-
-    case RELIGION:
-      return getReligion();
-
-    case POLITICS:
-      return getPolitics();
-
-    case LIFESTYLE:
-      return getLifestyle();
 
     }
     throw new java.lang.IllegalStateException();
@@ -525,12 +383,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       return isSetAge();
     case LOCATION:
       return isSetLocation();
-    case RELIGION:
-      return isSetReligion();
-    case POLITICS:
-      return isSetPolitics();
-    case LIFESTYLE:
-      return isSetLifestyle();
     }
     throw new java.lang.IllegalStateException();
   }
@@ -593,33 +445,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
         return false;
     }
 
-    boolean this_present_religion = true && this.isSetReligion();
-    boolean that_present_religion = true && that.isSetReligion();
-    if (this_present_religion || that_present_religion) {
-      if (!(this_present_religion && that_present_religion))
-        return false;
-      if (!this.religion.equals(that.religion))
-        return false;
-    }
-
-    boolean this_present_politics = true && this.isSetPolitics();
-    boolean that_present_politics = true && that.isSetPolitics();
-    if (this_present_politics || that_present_politics) {
-      if (!(this_present_politics && that_present_politics))
-        return false;
-      if (!this.politics.equals(that.politics))
-        return false;
-    }
-
-    boolean this_present_lifestyle = true && this.isSetLifestyle();
-    boolean that_present_lifestyle = true && that.isSetLifestyle();
-    if (this_present_lifestyle || that_present_lifestyle) {
-      if (!(this_present_lifestyle && that_present_lifestyle))
-        return false;
-      if (!this.lifestyle.equals(that.lifestyle))
-        return false;
-    }
-
     return true;
   }
 
@@ -644,18 +469,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     hashCode = hashCode * 8191 + ((isSetLocation()) ? 131071 : 524287);
     if (isSetLocation())
       hashCode = hashCode * 8191 + location.hashCode();
-
-    hashCode = hashCode * 8191 + ((isSetReligion()) ? 131071 : 524287);
-    if (isSetReligion())
-      hashCode = hashCode * 8191 + religion.hashCode();
-
-    hashCode = hashCode * 8191 + ((isSetPolitics()) ? 131071 : 524287);
-    if (isSetPolitics())
-      hashCode = hashCode * 8191 + politics.hashCode();
-
-    hashCode = hashCode * 8191 + ((isSetLifestyle()) ? 131071 : 524287);
-    if (isSetLifestyle())
-      hashCode = hashCode * 8191 + lifestyle.hashCode();
 
     return hashCode;
   }
@@ -714,36 +527,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     }
     if (isSetLocation()) {
       lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.location, other.location);
-      if (lastComparison != 0) {
-        return lastComparison;
-      }
-    }
-    lastComparison = java.lang.Boolean.compare(isSetReligion(), other.isSetReligion());
-    if (lastComparison != 0) {
-      return lastComparison;
-    }
-    if (isSetReligion()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.religion, other.religion);
-      if (lastComparison != 0) {
-        return lastComparison;
-      }
-    }
-    lastComparison = java.lang.Boolean.compare(isSetPolitics(), other.isSetPolitics());
-    if (lastComparison != 0) {
-      return lastComparison;
-    }
-    if (isSetPolitics()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.politics, other.politics);
-      if (lastComparison != 0) {
-        return lastComparison;
-      }
-    }
-    lastComparison = java.lang.Boolean.compare(isSetLifestyle(), other.isSetLifestyle());
-    if (lastComparison != 0) {
-      return lastComparison;
-    }
-    if (isSetLifestyle()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.lifestyle, other.lifestyle);
       if (lastComparison != 0) {
         return lastComparison;
       }
@@ -807,36 +590,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       sb.append(this.location);
     }
     first = false;
-    if (isSetReligion()) {
-      if (!first) sb.append(", ");
-      sb.append("religion:");
-      if (this.religion == null) {
-        sb.append("null");
-      } else {
-        sb.append(this.religion);
-      }
-      first = false;
-    }
-    if (isSetPolitics()) {
-      if (!first) sb.append(", ");
-      sb.append("politics:");
-      if (this.politics == null) {
-        sb.append("null");
-      } else {
-        sb.append(this.politics);
-      }
-      first = false;
-    }
-    if (isSetLifestyle()) {
-      if (!first) sb.append(", ");
-      sb.append("lifestyle:");
-      if (this.lifestyle == null) {
-        sb.append("null");
-      } else {
-        sb.append(this.lifestyle);
-      }
-      first = false;
-    }
     sb.append(")");
     return sb.toString();
   }
@@ -868,15 +621,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
     }
     if (location != null) {
       location.validate();
-    }
-    if (religion != null) {
-      religion.validate();
-    }
-    if (politics != null) {
-      politics.validate();
-    }
-    if (lifestyle != null) {
-      lifestyle.validate();
     }
   }
 
@@ -962,33 +706,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 6: // RELIGION
-            if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
-              struct.religion = new OneToManyFilter();
-              struct.religion.read(iprot);
-              struct.setReligionIsSet(true);
-            } else { 
-              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
-            }
-            break;
-          case 7: // POLITICS
-            if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
-              struct.politics = new OneToManyFilter();
-              struct.politics.read(iprot);
-              struct.setPoliticsIsSet(true);
-            } else { 
-              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
-            }
-            break;
-          case 8: // LIFESTYLE
-            if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
-              struct.lifestyle = new ManyToManyFilter();
-              struct.lifestyle.read(iprot);
-              struct.setLifestyleIsSet(true);
-            } else { 
-              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
-            }
-            break;
           default:
             org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
         }
@@ -1031,27 +748,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
         struct.location.write(oprot);
         oprot.writeFieldEnd();
       }
-      if (struct.religion != null) {
-        if (struct.isSetReligion()) {
-          oprot.writeFieldBegin(RELIGION_FIELD_DESC);
-          struct.religion.write(oprot);
-          oprot.writeFieldEnd();
-        }
-      }
-      if (struct.politics != null) {
-        if (struct.isSetPolitics()) {
-          oprot.writeFieldBegin(POLITICS_FIELD_DESC);
-          struct.politics.write(oprot);
-          oprot.writeFieldEnd();
-        }
-      }
-      if (struct.lifestyle != null) {
-        if (struct.isSetLifestyle()) {
-          oprot.writeFieldBegin(LIFESTYLE_FIELD_DESC);
-          struct.lifestyle.write(oprot);
-          oprot.writeFieldEnd();
-        }
-      }
       oprot.writeFieldStop();
       oprot.writeStructEnd();
     }
@@ -1075,26 +771,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       struct.gender.write(oprot);
       struct.age.write(oprot);
       struct.location.write(oprot);
-      java.util.BitSet optionals = new java.util.BitSet();
-      if (struct.isSetReligion()) {
-        optionals.set(0);
-      }
-      if (struct.isSetPolitics()) {
-        optionals.set(1);
-      }
-      if (struct.isSetLifestyle()) {
-        optionals.set(2);
-      }
-      oprot.writeBitSet(optionals, 3);
-      if (struct.isSetReligion()) {
-        struct.religion.write(oprot);
-      }
-      if (struct.isSetPolitics()) {
-        struct.politics.write(oprot);
-      }
-      if (struct.isSetLifestyle()) {
-        struct.lifestyle.write(oprot);
-      }
     }
 
     @Override
@@ -1114,22 +790,6 @@ public class Filters implements org.apache.thrift.TBase<Filters, Filters._Fields
       struct.location = new LocationFilter();
       struct.location.read(iprot);
       struct.setLocationIsSet(true);
-      java.util.BitSet incoming = iprot.readBitSet(3);
-      if (incoming.get(0)) {
-        struct.religion = new OneToManyFilter();
-        struct.religion.read(iprot);
-        struct.setReligionIsSet(true);
-      }
-      if (incoming.get(1)) {
-        struct.politics = new OneToManyFilter();
-        struct.politics.read(iprot);
-        struct.setPoliticsIsSet(true);
-      }
-      if (incoming.get(2)) {
-        struct.lifestyle = new ManyToManyFilter();
-        struct.lifestyle.read(iprot);
-        struct.setLifestyleIsSet(true);
-      }
     }
   }
 
